@@ -5,6 +5,8 @@ Mixed:     ros2 launch iponic_bringup pc.launch.py use_fake:=true fake_robots:="
 Real arms: ros2 launch iponic_bringup pc.launch.py use_fake:=true fake_arms:="arm3"
 All real:  ros2 launch iponic_bringup pc.launch.py use_fake:=false
 
+record:=PATH keeps a record of the FMS for tools/replay.py.
+
 fake_arms: arm1 and arm2 together start the fake workcell server and their vision nodes (one
 fill_basket server answers for both, so listing only one of them is an error). arm3 starts the
 fake outbound arm.
@@ -21,6 +23,7 @@ def _setup(context):
     get = lambda name: LaunchConfiguration(name).perform(context)  # noqa: E731
     use_fake = get("use_fake").lower() == "true"
     use_sim_clock = use_fake and get("use_sim_clock").lower() == "true"
+    record = get("record")
 
     actions = [
         Node(
@@ -28,6 +31,7 @@ def _setup(context):
             executable="fms_node",
             name="fms_node",
             output="screen",
+            arguments=["--record", record] if record else [],
             parameters=[{
                 "use_sim_time": use_sim_clock,
                 "robots": get("robots").split(),
@@ -69,6 +73,7 @@ def generate_launch_description():
         "map_file": "",
         "params_file": "",
         "contract_file": "",
+        "record": "",
     }
     declared = [DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()]
     return LaunchDescription([*declared, OpaqueFunction(function=_setup)])

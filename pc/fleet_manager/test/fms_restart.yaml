@@ -3,26 +3,25 @@
 # test_fms_restart.py next to this file does the killing.
 #
 # The robots are slow because the timeout runs on the wall clock: at this speed factor and the
-# usual speed a move ends by itself in a second, before the timeout could stop it.
+# usual speed a move ends by itself in a second, before the timeout could stop it. Here all three
+# are still under way when the timeout comes, the one with the shortest way left too.
 #
 # A new FMS knows nothing of baskets or orders in progress, so a basket can be filled twice. That
 # is why the stock is large and the number of shipped orders is not fixed.
 seed: 7
 speed_factor: 5.0
-timeout_s: 900
+timeout_s: 1500
 stock: {arm1: {A: 40, B: 40}, arm2: {C: 40, D: 40}}
 orders:
   - {at_s: 0, id: O-001, items: {A: 1, C: 1}}
-  - {at_s: 0, id: O-002, items: {B: 1, D: 1}}
-  - {at_s: 5, id: O-003, items: {A: 2}}
 robots:
-  pinky1: {start: P-6, speed_mps: 0.05, pose_noise_m: 0.03}
-  pinky2: {start: P-5, speed_mps: 0.05, pose_noise_m: 0.03}
-  pinky3: {start: P-4, speed_mps: 0.05, pose_noise_m: 0.03}
+  pinky1: {start: P-6, speed_mps: 0.02, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.02, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.02, pose_noise_m: 0.03}
 arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
 dock: {duration_s: 3.0, error_cm: 1.0}
 faults:
-  - {at_s: 35, robot: pinky3, type: comm_loss, duration_s: 70}
+  - {at_s: 50, robot: pinky3, type: comm_loss, duration_s: 70}
 expect:
   all_orders_finished: true
   orders_shipped_min: 1

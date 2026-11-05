@@ -47,6 +47,7 @@ COMM_LOST = "COMM_LOST"
 RECOVERING = "RECOVERING"
 PLACEMENT_CONFLICT = "PLACEMENT_CONFLICT"
 NO_FAULT = "NONE"  # what /fleet/robots says when nothing is wrong
+ON_A_GOAL = ("MOVING", "DOCKING")  # what a robot says in its state report
 _COMM_REASON = {COMM_LOST: "NO_STATE", RECOVERING: "CHECKING_POSE"}
 
 RUN = "RUN"
@@ -406,7 +407,7 @@ class TrafficCore:
                 and now - self._startup_since >= self.params.startup_wait_s):
             self._missing_reported = True
             self._event("ERROR", "ROBOT_NOT_REPORTING",
-                        f"nothing moves until {silent} report a position")
+                        f"nothing moves until {silent} report a position and stand still")
         return False
 
     def _event(self, level, code, detail, robot="") -> None:
@@ -419,8 +420,11 @@ class TrafficCore:
         """Take the zone it reports from, or stay off the map and try again at the next report.
 
         A refused robot stands there with no lock, so _everyone_reported keeps everybody still
-        until it has moved or the operator has cleared it.
+        until it has moved or the operator has cleared it. The same goes for a robot on a goal
+        this FMS did not give it.
         """
+        if m.robot_state in ON_A_GOAL:
+            return
         cell = self.site.nearest_cell(m.x, m.y, radius=self.params.release_distance_m)
         zone = self._zone(cell)
         in_the_way = self.zones.holders_around(zone, m.name)
@@ -819,7 +823,9 @@ class TrafficCore:
 
     def _step_parked(self, m: _Mission) -> None:
         """Keep advancing into free cells so the parking entrance stays clear."""
-        if self._park_goal(m, m.path[m.idx]):
+        if m.settle_idx is not None:  # found on the lane into this spot
+            self._issue_move(m)
+        elif self._park_goal(m, m.path[m.idx]):
             self._start_park_leg(m)
 
     def _drive(self, m: _Mission) -> None:

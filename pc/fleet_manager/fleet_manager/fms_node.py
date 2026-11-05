@@ -7,6 +7,7 @@ fleet_params.yaml.
 """
 from __future__ import annotations
 
+import argparse
 import time
 from functools import partial
 
@@ -38,6 +39,7 @@ from fleet_interfaces.srv import ConfirmClear, ReportOrder
 from rclpy.action import ActionClient
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 from std_msgs.msg import Header
 
 from fleet_manager import adapters
@@ -45,7 +47,7 @@ from fleet_manager.goal_tracker import GoalTracker, ReportOutbox
 
 
 class FmsNode(Node):
-    def __init__(self):
+    def __init__(self, record=None):
         super().__init__("fms_node")
         self.declare_parameter("robots", ["pinky1", "pinky2", "pinky3"])
         self.declare_parameter("contract_file", "")
@@ -61,6 +63,11 @@ class FmsNode(Node):
         self.core = FmsCore(
             self.site, load_params(self.get_parameter("params_file").value or None),
             robots, self._now)
+        self._record_file = None
+        if record:
+            # One line at a time, so a killed process leaves a record that just ends.
+            self._record_file = open(record, "w", buffering=1, encoding="utf-8")
+            self.core.record_to(lambda line: self._record_file.write(line + "\n"))
 
         self._goals = GoalTracker()
         self._reports = ReportOutbox()
@@ -78,6 +85,11 @@ class FmsNode(Node):
                               + params.heartbeat_period_s)
         self.create_timer(params.heartbeat_period_s, self._publish_heartbeat,
                           clock=Clock(clock_type=ClockType.STEADY_TIME))
+
+    def destroy_node(self) -> None:
+        if self._record_file:
+            self._record_file.close()
+        super().destroy_node()
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
@@ -255,8 +267,12 @@ class FmsNode(Node):
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="The FMS node.")
+    parser.add_argument("--record", default=None, metavar="PATH",
+                        help="keep a record for tools/replay.py, one JSON line per input")
+    args = parser.parse_args(remove_ros_args()[1:])
     rclpy.init()
-    node = FmsNode()
+    node = FmsNode(record=args.record)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

@@ -34,7 +34,7 @@ WALL_TIMEOUT_S = 420
 STILL_M = 0.001
 SILENT_S = 0.5
 SLACK_S = 1.0  # a loaded machine delivers late: the last beat, the kill and the stop are all real
-PINKY3_SILENT_AT_S = 35.0  # the comm_loss in fms_restart.yaml
+PINKY3_SILENT_S = (50.0, 120.0)  # the comm_loss in fms_restart.yaml
 SCENARIO = Path(__file__).parent / "fms_restart.yaml"  # means nothing without the kill below
 
 
@@ -146,7 +146,7 @@ def test_robots_stop_without_the_fms_and_a_new_one_waits_for_all_of_them(probe, 
     try:
         assert wait_for(lambda: len(probe.moving()) == len(ROBOTS), 120), probe.state
         print(f"killing at {probe.sim_now:.1f} s, moving: {probe.moving()}")
-        assert probe.sim_now < 60, "the new FMS has to find pinky3 silent, which lasts until 105"
+        assert probe.sim_now < PINKY3_SILENT_S[1], "the new FMS has to find pinky3 silent"
         os.killpg(fms.pid, signal.SIGKILL)
         killed = time.monotonic()
         fms.wait()
@@ -155,21 +155,22 @@ def test_robots_stop_without_the_fms_and_a_new_one_waits_for_all_of_them(probe, 
         took = {r: probe.moved[r] - killed for r in ROBOTS}
         print(f"robots moved for this long after the kill: {took}")
         assert all(t <= timeout_s + SLACK_S for t in took.values()), took
-        assert max(took.values()) >= timeout_s - period_s - 0.1, f"no robot was cut off: {took}"
+        # Nobody got there by itself: the last beat is at most one period before the kill.
+        assert min(took.values()) >= timeout_s - period_s - 0.1, f"not all were cut off: {took}"
         assert not probe.moving(), probe.state
 
         # One report before the silence and the new FMS would call it a comm loss instead.
-        assert wait_for(lambda: probe.sim_now > PINKY3_SILENT_AT_S, 60), probe.sim_now
+        assert wait_for(lambda: probe.sim_now > PINKY3_SILENT_S[0], 60), probe.sim_now
         still = dict(probe.moved)
         fms = start_fms()
         assert wait_for(lambda: "ROBOT_NOT_REPORTING" in probe.codes, 60), probe.codes
         print(f"the new FMS misses a robot at {probe.sim_now:.1f} s")
-        assert probe.sim_now < 105, "pinky3 came back before the new FMS said it was missing"
+        assert probe.sim_now < PINKY3_SILENT_S[1], "pinky3 came back before it was missed"
         assert probe.moved == still, "a robot moved while the new FMS was still waiting for one"
 
         assert wait_for(lambda: any(probe.moved[r] > still[r] for r in ROBOTS), 60)
         print(f"robots move again at {probe.sim_now:.1f} s")
-        assert probe.sim_now >= 105, "a robot moved before pinky3 was back"
+        assert probe.sim_now >= PINKY3_SILENT_S[1], "a robot moved before pinky3 was back"
         fakes.wait(timeout=WALL_TIMEOUT_S)
     finally:
         stop(fms)

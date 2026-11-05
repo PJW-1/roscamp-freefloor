@@ -4,8 +4,11 @@ No fake robots here: this checks the wrapper's plumbing, not the scenarios. It j
 so it runs only when the caller has isolated it from the robot network.
 """
 import os
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -28,9 +31,11 @@ from fleet_interfaces.srv import ReportOrder  # noqa: E402
 from fleet_manager.fms_node import FmsNode  # noqa: E402
 from rclpy.action import ActionServer, CancelResponse  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
-from rclpy.executors import MultiThreadedExecutor  # noqa: E402
+from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from std_msgs.msg import Header  # noqa: E402
+
+REPLAY = Path(__file__).parents[3] / "tools" / "replay.py"
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("ROS_DOMAIN_ID", "") in ("", "6")
@@ -240,6 +245,36 @@ def test_a_robot_counts_only_once_its_goals_can_reach_it():
         world.destroy_node()
         node.destroy_node()
         rclpy.shutdown()
+
+
+def test_a_record_of_the_running_node_plays_back_to_the_same_commands(tmp_path):
+    """One thread for the node, as in main(): a record is one call after another, and on several
+    threads the result of a goal can run alongside a tick."""
+    record = tmp_path / "fms.jsonl"
+    rclpy.init(args=["--ros-args", "-p", "robots:=[pinky1]", "-p", "tick_hz:=50.0"])
+    node = FmsNode(record=record)
+    world = World(node.contract, load_site_map(), "Q")
+    executors = [SingleThreadedExecutor(), MultiThreadedExecutor(num_threads=4)]
+    executors[0].add_node(node)
+    executors[1].add_node(world)
+    threads = [threading.Thread(target=e.spin, daemon=True) for e in executors]
+    for thread in threads:
+        thread.start()
+    try:
+        publish(world, "RUN", {"A": 1, "C": 2})
+        assert wait_for(lambda: world.reports), f"fills {world.fills}, swaps {world.swaps}"
+    finally:
+        for executor, thread in zip(executors, threads, strict=True):
+            executor.shutdown()
+            thread.join(timeout=5)
+        world.destroy_node()
+        node.destroy_node()
+        rclpy.shutdown()
+    played = subprocess.run([sys.executable, str(REPLAY), str(record)], capture_output=True,
+                            text=True, timeout=120)
+    assert played.returncode == 0, played.stdout + played.stderr
+    assert "same as recorded" in played.stdout
+    assert '"out": "ReportOrderCmd"' in record.read_text(encoding="utf-8")
 
 
 def test_the_heartbeat_comes_twice_a_second(graph):

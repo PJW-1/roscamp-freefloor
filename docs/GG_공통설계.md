@@ -65,7 +65,8 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
   - 할 일이 없는 로봇은 heartbeat가 없어도 아무것도 하지 않고 상태 보고를 계속한다. 멈춘 뒤 온 새 목표는 받는다.
   - 시간은 벽시계로 잰다. 프로세스를 감시하는 값이기 때문이다.
   - 통신 두절도 같다. FMS가 살아 있어도 heartbeat를 못 받으면 멈춘다.
-  - **FMS 쪽 약속:** 시작한 뒤 `heartbeat_timeout_s + heartbeat_period_s`(2 s) 동안 heartbeat를 내지 않고 상태 보고도 받지 않는다. 이전 FMS의 목표로 달리던 로봇이 그 사이에 모두 멈춘다. 그 뒤 로봇의 `move_to`, `dock` 서버를 찾았고 전원이 보고해야 움직이기 시작한다.
+  - **FMS 쪽 약속:** 시작한 뒤 `heartbeat_timeout_s + heartbeat_period_s`(2 s) 동안 heartbeat를 내지 않고 상태 보고도 받지 않는다. 이전 FMS의 목표로 달리던 로봇은 보통 그 사이에 멈춘다. 늦게 수락된 목표나 감속 중인 로봇은 아직 움직일 수 있으므로 침묵만 믿지 않는다. 그 뒤 로봇의 `move_to`, `dock` 서버를 찾았고, 전원이 위치를 보고했고, `MOVING`이나 `DOCKING`이 아니어야 지도에 올리고 움직이기 시작한다.
+  - **이 계약이 보장하지 않는 것:** 마지막 heartbeat 뒤 도착한 목표는 수락 시각부터 다시 `heartbeat_timeout_s`를 센다. heartbeat는 best effort라 3번 연달아 잃으면 FMS가 살아 있어도 멈춘다. 멈춘 로봇의 감속 거리는 timeout에 들어 있지 않다.
 
 run_mode는 FMS가 OrderBoard로 받는다. 삭제된 것: TaskBoard, StationCount, BoxArray, ArmTransfer, ReportDone, `/{arm}/load`, `/{arm}/unload`, `/central/tasks`, `/central/report_done`.
 

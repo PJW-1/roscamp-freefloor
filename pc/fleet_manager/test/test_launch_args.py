@@ -33,7 +33,7 @@ def test_file_overrides_are_forwarded_to_the_fake_launch():
     context.launch_configurations.update({
         "use_fake": "true", "use_sim_clock": "true", "scenario": "basic_orders",
         "robots": "pinky1", "fake_robots": "pinky1", "fake_arms": "arm1", "fake_central": "true",
-        "result_dir": "/tmp/x", **FILES,
+        "result_dir": "/tmp/x", "record": "", **FILES,
     })
     include = next(a for a in module._setup(context) if isinstance(a, IncludeLaunchDescription))
 

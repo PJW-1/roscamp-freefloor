@@ -1,6 +1,7 @@
 """Traffic on the default map: diagonal lanes, a two-way avenue, and a crossing with no node."""
 import pytest
 from core_helpers import cmds, codes
+from fleet_core.commands import EventOut
 from fleet_core.params import load_params
 from fleet_core.site_map import load_site_map
 from fleet_core.traffic_core import TrafficCore
@@ -365,3 +366,43 @@ def test_a_robot_found_within_d_of_a_node_is_on_that_node():
     assert move_of(core.tick(), "r1")[0].target_id == "A"
     assert held(core, "r1") == ["W", "AVENUE"]
 
+
+def test_a_robot_found_on_the_lane_into_a_parking_spot_finishes_that_lane():
+    core = TrafficCore(load_site_map(), load_params(), ["a", "b"], lambda: 0.0)
+    place(core, "b", "P-4")
+    place(core, "a", "Q", 0.26, "P-3")
+    core.on_run_mode("RUN")
+    move = move_of(core.tick(), "a")[0]
+    assert move.target_id == "P-3"
+    place(core, "a", "P-3")
+    core.on_move_result("a", move.goal_id, True, "")
+    assert move_of(core.tick(), "a") == []
+
+
+@pytest.mark.parametrize("state", ["MOVING", "DOCKING"])
+def test_a_robot_still_on_somebodys_goal_goes_on_the_map_when_it_has_stopped(state):
+    """A goal of the FMS before this one, one that came late or a robot still braking: the new FMS
+    knows nothing of it, so it waits, and so does everybody else."""
+    site = load_site_map()
+    core = TrafficCore(site, load_params(), ["r1"], lambda: 0.0)
+    x, y = site.cell_pose("W")
+    core.on_robot_state("r1", x, y, 0.0, state)
+    assert not core.robot_view("r1")["on_map"]
+    assert not core.everyone_placed
+    core.on_robot_state("r1", x, y, 0.0, "IDLE")
+    assert core.robot_view("r1")["on_map"]
+
+
+def test_a_robot_that_keeps_moving_is_called_out_like_a_silent_one():
+    site = load_site_map()
+    now = [0.0]
+    core = TrafficCore(site, load_params(), ["r1"], lambda: now[0])
+    x, y = site.cell_pose("W")
+    core.on_robot_state("r1", x, y, 0.0, "MOVING")
+    core.on_run_mode("RUN")
+    core.tick()
+    now[0] = load_params().startup_wait_s
+    core.on_robot_state("r1", x, y, 0.0, "MOVING")
+    events = [e for e in core.tick() if isinstance(e, EventOut)]
+    assert [e.code for e in events] == ["ROBOT_NOT_REPORTING"]
+    assert "stand still" in events[0].detail

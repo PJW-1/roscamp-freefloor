@@ -21,6 +21,7 @@ SCENARIOS = ["basic_orders", "order_burst", "shared_lane_failure", "stock_shorta
 WALL_TIMEOUT_S = 420
 FIRST_DOMAIN = 50  # one domain per scenario, inside the range kept free of the robot network
 CHECKER = Path(__file__).parents[3] / "scripts" / "check_interfaces.py"
+REPLAY = Path(__file__).parents[3] / "tools" / "replay.py"
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
@@ -36,7 +37,8 @@ def test_scenario_finishes_and_matches_the_contract(scenario, tmp_path):
     with log_path.open("w", encoding="utf-8") as log:
         launch = subprocess.Popen(
             ["ros2", "launch", "iponic_bringup", "pc.launch.py", "use_fake:=true",
-             f"scenario:={scenario}", f"result_dir:={tmp_path}"],
+             f"scenario:={scenario}", f"result_dir:={tmp_path}",
+             f"record:={tmp_path / 'fms.jsonl'}"],
             env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
         )
         try:
@@ -67,4 +69,8 @@ def test_scenario_finishes_and_matches_the_contract(scenario, tmp_path):
             seen = [row["fault"] for row in csv.DictReader(f) if row["robot"] == "pinky2"]
         assert seen[0] == "NONE" and seen[-1] == "NONE", seen
         assert "COMM_LOST" in seen, f"the comm loss never showed on /fleet/robots: {seen}"
-
+    played = subprocess.run([sys.executable, str(REPLAY), str(tmp_path / "fms.jsonl")],
+                            capture_output=True, text=True, timeout=120)
+    print(f"{scenario}: {played.stdout}")
+    assert played.returncode == 0, played.stdout + played.stderr
+    assert "same as recorded" in played.stdout
