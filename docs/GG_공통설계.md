@@ -4,7 +4,7 @@
 - 기준 UR: Confluence "주제1 : GG(Give Gift)" 페이지(425992, UR-01~14). 배터리·홈 복귀는 UR-10, 관리자 실시간 확인은 UR-11, 오류 알림은 UR-12, 충돌·간섭 방지는 UR-13, 이력 확인은 UR-14. 2785281(UR-01~15)은 더 이상 쓰지 않습니다.
 - 기준 SR: Confluence "System Requirements" 페이지(819201, SR-01~38, UR 칸 포함). UR 칸의 "-"는 최종 UR에 대응 항목이 없다는 뜻입니다. "Copy of System Requirements"는 작업본이며 기준이 아닙니다.
 - 계층(2026-11-05, v17 FMS 통합 판, 팀 합의 전): 사용자(화면) → 서버(central, FMS) → 로봇(핑키, 로봇팔). 위가 아래를 부르고 아래는 상태와 결과만 올린다. FMS는 프로세스 하나(`fms_node`)이고, 그 안에 주문 진행을 맡는 `orchestrator_core`와 교통 제어를 맡는 `traffic_core`가 파이썬 호출로 연결된다. 코드도 이 구조로 나눴다(11절). 이 문서와 Confluence가 다른 것으로 확인한 항목은 12절에 모았고, 어느 쪽으로 맞출지는 아직 정하지 않았다.
-- 최종 갱신: 2026-11-05. orchestrator와 fleet을 FMS 한 프로세스로 합치고, 둘 사이의 ROS 액션(`/fleet/dispatch`)과 서비스(`/fleet/release`), 중계 토픽(`/fleet/events`, `/orchestrator/*`)을 없앴다(4절). 지시서 "FMS 선행 작업"의 1~7번이 끝난 코드에 맞춰 전체를 고쳤다. 어긋났던 문장과 숫자의 근거는 `docs/worklog_2026-11-05.md`에 있다. 작업본은 저장소 `docs/GG_공통설계.md`이고 Drive 원본(2026-11-05 00:51 수정, 40 KB)은 고치지 않았다.
+- 최종 갱신: 2026-11-06. 코드 검토에서 찾은 결함 8건을 고치고 새 값과 이벤트를 반영했다(`docs/worklog_2026-11-06.md`). 2026-11-05: orchestrator와 fleet을 FMS 한 프로세스로 합치고, 둘 사이의 ROS 액션(`/fleet/dispatch`)과 서비스(`/fleet/release`), 중계 토픽(`/fleet/events`, `/orchestrator/*`)을 없앴다(4절). 지시서 "FMS 선행 작업"의 1~7번이 끝난 코드에 맞춰 전체를 고쳤다. 어긋났던 문장과 숫자의 근거는 `docs/worklog_2026-11-05.md`에 있다. 작업본은 저장소 `docs/GG_공통설계.md`이고 Drive 원본(2026-11-05 00:51 수정, 40 KB)은 고치지 않았다.
 
 ## 0. 용어와 컴포넌트
 
@@ -409,7 +409,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 
 | 검증 | 결과 |
 |---|---|
-| 단위·통합 시험 | `b6d75d9`. 780건, 실패 0, 오류 0, 건너뜀 0(`fleet_core` 477, `fake_robots` 262, `fleet_manager` 41, `colcon test` 675 s) |
+| 단위·통합 시험 | `2620dce`. 867건, 실패 0, 오류 0, 건너뜀 0(`fleet_core` 529, `fake_robots` 262, `fleet_manager` 76, `colcon test` 722 s) |
 | 시나리오 6개(기본 지도, 실제 launch) | `b6d75d9`(위 시험 안에서 실행). 전부 심판 통과, 조기 해제 0, near 0. 출고는 `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6, `operator_recovery` 4/4 |
 | 전수 검사, 로봇 2대 (상태, 교착, 기아) | `fa94eb6`. `oneway_loop` (34407, 0, 0). `oneway_shortcut` 묶음 끔 (69497, 36, 30), 켬 (62615, 0, 0). 기본 지도 끔 (36573, 432, 396), 켬 (37078, 0, 0). 충돌쌍을 넘는 FIFO에서도 켬은 0이다 |
 | 전수 검사, 로봇 3대 | `oneway_loop`은 `c9f46ab` 전의 복사본, 나머지는 `c9f46ab`이고, 기본 지도 묶음 켬만 `fc133b1`(코드는 `b6d75d9`와 같다)에서 다시 돌려 같은 값을 얻었다. `oneway_loop` (6295143, 0, 0), 끝까지. 기본 지도 묶음 켬 (5074536, 0, 0), 끝까지. `oneway_shortcut` 묶음 켬 (15871223, 0, 0), 끝까지. `oneway_shortcut`과 기본 지도의 묶음 끔은 교착이 나오는 것까지 확인했다(첫 교착에서 멈춤). 표는 작업 기록 3번 |
