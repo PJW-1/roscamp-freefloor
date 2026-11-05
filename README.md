@@ -146,6 +146,7 @@ Python 패키지의 `setup.py`에는 `tests_require=['pytest']`를 넣어야 합
 - `move_to`에 새 목표가 오면 이전 목표를 멈추고 `success=false`, `reason=CANCELED`로 끝냅니다.
 - 멈춰서 진행할 수 없으면 반드시 실패나 `TIMEOUT` 결과를 돌려줍니다. 관제에는 이동과 도킹 목표의 시간 제한이 없습니다.
 - `/pinkyN/state`를 끊기지 않게 발행합니다. 일정 시간(`comm_timeout_s`) 동안 오지 않으면 통신 두절로 판단합니다.
+- 이동이나 도킹 목표를 실행하는 동안 `/fms/heartbeat`가 `heartbeat_timeout_s`(1.5초) 넘게 오지 않으면 그 목표를 취소하고 멈춥니다. 목표 수락도 FMS가 살아 있다는 증거로 칩니다. 자세한 내용은 `docs/GG_공통설계.md` 4절에 있습니다.
 - 상태 값은 `RobotState.STATE_*` 상수를 씁니다.
 - `dock_id`는 스테이션 이름(`WORK`, `OUTBOUND`)입니다.
 
