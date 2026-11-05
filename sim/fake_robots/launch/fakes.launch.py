@@ -10,13 +10,12 @@ one fill_basket server answers for both. arm3 starts the fake outbound arm.
 import os
 
 from ament_index_python.packages import get_package_share_directory
+from fake_robots.common import split_fake_arms
 from fleet_core.site_map import load_site_map
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, Shutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-
-from fake_robots.common import split_fake_arms
 
 ALL_ROBOTS = "pinky1 pinky2 pinky3"
 ALL_ARMS = "arm1 arm2 arm3"

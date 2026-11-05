@@ -26,8 +26,10 @@ from fleet_interfaces.msg import (  # noqa: E402
     RobotState,
     RobotStatus,
 )
-from fleet_interfaces.srv import ReportOrder  # noqa: E402
-from fleet_interfaces.srv import ConfirmClear  # noqa: E402
+from fleet_interfaces.srv import (
+    ConfirmClear,  # noqa: E402
+    ReportOrder,  # noqa: E402
+)
 from fleet_manager import adapters  # noqa: E402
 
 
