@@ -116,7 +116,8 @@ def replay(path) -> Result:
     counts = tuple(_count(produced, key) for key in ("in", "inside", "out"))
     if not head.get("recorded") and not any("inside" in e or "out" in e for e in rest):
         return Result(*counts, False, True, cut_line=cut_line)
-    for number, (old, new) in enumerate(zip(lines, produced, strict=False), start=1):
+    # Not the first line: the core was built from it, and it is no decision of the core.
+    for number, (old, new) in enumerate(zip(lines[1:], produced[1:], strict=False), start=2):
         if old != new:
             return Result(*counts, True, False, number, old, new, cut_line=cut_line)
     if len(lines) > len(produced):

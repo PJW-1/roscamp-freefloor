@@ -1,5 +1,6 @@
 """tools/pressure_sweep.py without ROS: scenario variants, result files, the table."""
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -87,11 +88,57 @@ def test_the_robot_network_cannot_be_reached_by_accident():
     assert env["ROS_AUTOMATIC_DISCOVERY_RANGE"] == "LOCALHOST"
     with pytest.raises(ValueError):
         sweep.ros_env(6, {})
+    assert "ROS_STATIC_PEERS" not in sweep.ros_env(80, {"ROS_STATIC_PEERS": "192.168.4.2"})
+
+
+class FakeLaunch:
+    """What subprocess.Popen gives back, for a launch that writes `files` and then ends or not."""
+
+    def __init__(self, folder, ends=True, files=False):
+        self.pid, self._folder, self._ends, self._files = 1, folder, ends, files
+
+    def __call__(self, *_args, **_kwargs):
+        if self._files:
+            results(self._folder)
+        return self
+
+    def wait(self, timeout=None):
+        if not self._ends and timeout == 1.0:
+            raise subprocess.TimeoutExpired("ros2", timeout)
+        return 0
+
+
+def test_a_run_that_dies_does_not_show_the_last_run_in_that_folder(tmp_path, monkeypatch):
+    case = sweep.Case("basic_orders", 0.0, 0.0, 0.2)
+    folder = tmp_path / case.name
+    folder.mkdir()
+    results(folder)
+    monkeypatch.setattr(sweep.subprocess, "Popen", FakeLaunch(folder))
+    assert not sweep.run_case(case, 80, tmp_path, 1.0).finished
+
+
+def test_a_run_cut_at_the_wall_is_not_a_result(tmp_path, monkeypatch):
+    """A launch told to stop can still write its files, with the run half done."""
+    case = sweep.Case("basic_orders", 0.0, 0.0, 0.2)
+    folder = tmp_path / case.name
+    folder.mkdir()
+    monkeypatch.setattr(sweep.subprocess, "Popen", FakeLaunch(folder, ends=False, files=True))
+    monkeypatch.setattr(sweep.os, "killpg", lambda *_: None)
+    assert not sweep.run_case(case, 80, tmp_path, 1.0).finished
+
+
+def test_a_run_that_ended_is_read(tmp_path, monkeypatch):
+    case = sweep.Case("basic_orders", 0.0, 0.0, 0.2)
+    folder = tmp_path / case.name
+    folder.mkdir()
+    monkeypatch.setattr(sweep.subprocess, "Popen", FakeLaunch(folder, files=True))
+    assert sweep.run_case(case, 80, tmp_path, 1.0).finished
 
 
 def test_every_combination_is_asked_for_once():
     cases = sweep.cases(["a", "b"], [0.0, 0.5], [0.0, 0.03, 0.05], [0.2])
     assert len(cases) == 12 == len(set(cases))
+    assert len(sweep.cases(["a"], [0.0, 0.0], [0.0], [0.2])) == 1, "two runs in one folder"
 
 
 def test_a_release_distance_the_core_would_refuse_is_not_run():

@@ -412,8 +412,8 @@ def test_a_robot_that_keeps_moving_is_called_out_like_a_silent_one():
 
 @pytest.mark.parametrize("d", [0.1, 0.16])
 def test_a_release_distance_within_two_radii_is_refused(d):
-    """A robot just past it still touches one at the node it left. Every pair of lanes meeting
-    at a node turns into a conflict pair, and all that shows is robots refused at the start."""
+    """Every pair of lanes meeting at a node turns into a conflict pair, and all that shows is
+    robots refused at the start: the waiting line cannot hold them next to each other."""
     with pytest.raises(ValueError, match="twice the robot radius"):
         TrafficCore(load_site_map(), replace(load_params(), release_distance_m=d), ["r1"],
                     lambda: 0.0)

@@ -228,14 +228,18 @@ def test_commands_in_the_file_are_compared_whatever_the_first_line_says(run, tmp
     head = json.loads(lines[0])
     del head["recorded"]
     lines[0] = json.dumps(head)
+    copy = tmp_path / "old.jsonl"
+    copy.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = replay.replay(copy)
+    assert result.compared and result.same, result
+
     position = next(n for n, line in enumerate(lines) if '"out": "MoveCmd"' in line)
     entry = json.loads(lines[position])
     entry["x"] += 1.0
     lines[position] = json.dumps(entry)
-    copy = tmp_path / "old.jsonl"
     copy.write_text("\n".join(lines) + "\n", encoding="utf-8")
     result = replay.replay(copy)
-    assert result.compared and not result.same
+    assert (result.same, result.line) == (False, position + 1)
 
 
 def test_a_file_that_is_not_there_is_refused(tmp_path):

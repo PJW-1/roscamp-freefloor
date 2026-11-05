@@ -44,6 +44,7 @@ ROBOT_NETWORK_DOMAIN = 6
 RADIUS_M = yaml.safe_load(DEFAULT_PARAMS.read_text(encoding="utf-8"))["robot_radius_m"]
 TOP_SPEED_MPS = 0.2
 TICK_S = 0.1
+RESULT_FILES = ("summary.json", "safety.json", "events.csv")
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,8 @@ def required_distance(tau: float, eps: float) -> float:
 def cases(scenarios, taus, epss, ds, stop: float = 0.0) -> list[Case]:
     if min(ds) <= 2 * RADIUS_M:
         raise ValueError(f"d has to exceed 2r = {2 * RADIUS_M} m, or TrafficCore refuses to start")
-    return [Case(s, t, e, d, stop) for s in scenarios for d in ds for t in taus for e in epss]
+    wanted = (Case(s, t, e, d, stop) for s in scenarios for d in ds for t in taus for e in epss)
+    return list(dict.fromkeys(wanted))  # the same case twice would write to one folder
 
 
 def variant(data: dict, tau: float, eps: float, stop: float = 0.0) -> dict:
@@ -105,8 +107,10 @@ def write_params(path: Path, d: float) -> Path:
 def ros_env(domain: int, base=None) -> dict:
     if domain == ROBOT_NETWORK_DOMAIN:
         raise ValueError(f"domain {domain} is the robot network")
-    return {**(os.environ if base is None else base), "ROS_DOMAIN_ID": str(domain),
-            "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST"}
+    env = {**(os.environ if base is None else base), "ROS_DOMAIN_ID": str(domain),
+           "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST"}
+    env.pop("ROS_STATIC_PEERS", None)  # LOCALHOST still reaches those
+    return env
 
 
 def read_row(case: Case, folder: Path) -> Row:
@@ -145,6 +149,8 @@ def table(rows: list[Row]) -> str:
 def run_case(case: Case, domain: int, out: Path, wall_s: float) -> Row:
     folder = out / case.name
     folder.mkdir(parents=True, exist_ok=True)
+    for name in RESULT_FILES:  # a run that dies must not show the results of the last one
+        (folder / name).unlink(missing_ok=True)
     data = yaml.safe_load((SCENARIOS / f"{case.scenario}.yaml").read_text(encoding="utf-8"))
     scenario = folder / "scenario.yaml"
     scenario.write_text(yaml.safe_dump(variant(data, case.tau, case.eps, case.stop)),
@@ -164,6 +170,7 @@ def run_case(case: Case, domain: int, out: Path, wall_s: float) -> Row:
             except subprocess.TimeoutExpired:
                 os.killpg(launch.pid, signal.SIGKILL)
                 launch.wait()
+            return Row(case, finished=False)  # told to stop, it can still write its files
     return read_row(case, folder)
 
 
@@ -185,7 +192,9 @@ def main() -> int:
     def one(item):
         number, case = item
         row = run_case(case, args.first_domain + number % args.jobs, args.out, args.wall)
-        print(f"{case.name}: early {row.early} near {row.near} pass {row.passed}", flush=True)
+        result = (f"early {row.early} near {row.near} pass {row.passed}" if row.finished
+                  else "did not finish")
+        print(f"{case.name}: {result}", flush=True)
         return row
 
     # Runs of one job slot go one after another, so two runs never share a domain.

@@ -130,8 +130,8 @@ class TrafficCore:
         if params.release_distance_m <= 2 * params.robot_radius_m:
             raise ValueError(
                 f"the release distance ({params.release_distance_m} m) must exceed twice the "
-                f"robot radius ({params.robot_radius_m} m), or a robot just past it still "
-                "touches one at the node it left")
+                f"robot radius ({params.robot_radius_m} m), or all lanes meeting at a node become "
+                "conflict pairs and no two robots can stand on neighbouring nodes")
         self.site = site
         self.params = params
         self.zones = ZoneManager(site.zones, clock, site.conflict_pairs(
