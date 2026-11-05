@@ -28,8 +28,8 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fms_node`)이고, �
 | 컴포넌트 | 실체 | 어디서 | 갖는 상태 | 제공 | 호출, 구독 |
 |---|---|---|---|---|---|
 | 화면(고객, 관리자) | 없음. central과 HTTP로 잇는 것은 제안(v17) | 관제 PC(제안) | 없음 | 주문과 조작 입력, 상태 표시 | central |
-| central | `pc/central`은 빈 패키지. 시험: `fake_central_node` | 관제 PC | 주문, 재고 기록, 이력. DB는 제안이고 central만 쓴다 | `/central/submit_order`, `/central/set_run_mode`, `/central/report_order` 서비스. `/central/orders`, `/central/events` 발행 | `/fleet/confirm_clear`. `/fleet/robots`, `/fleet/assignments`, `/fleet/zones` 구독 |
-| FMS (`fms_node`) | `pc/fleet_manager`의 노드 1개와 `pc/fleet_core` | 관제 PC | 노드 자체는 진행 중인 목표 핸들과 못 보낸 보고뿐이다. 나머지는 아래 두 모듈. 프로세스가 죽으면 전부 사라진다(7절) | `/fleet/robots`, `/fleet/assignments`, `/fleet/zones`, `/fms/heartbeat`, `/central/events` 발행. `/fleet/confirm_clear` 서비스 | `/{pinky}/move_to`, `/{pinky}/dock`, `/workcell/fill_basket`, `/arm3/swap_basket` 액션. `/central/report_order` 서비스. `/central/orders`, `/{pinky}/state` 구독 |
+| central | `pc/central`은 빈 패키지. 시험: `fake_central_node` | 관제 PC | 주문, 재고 기록, 이력. DB는 제안이고 central만 쓴다 | `/central/submit_order`, `/central/set_run_mode`, `/central/report_order` 서비스. `/central/orders`, `/central/events` 발행 | 계획: `/fleet/confirm_clear` 호출, `/fleet/robots`, `/fleet/assignments`, `/fleet/zones` 구독. `fake_central_node`는 이 중 아무것도 하지 않는다(11절) |
+| FMS (`fms_node`) | `pc/fleet_manager`의 노드 1개와 `pc/fleet_core` | 관제 PC | 노드 자체가 가진 것은 진행 중인 목표 핸들, 못 보낸 보고, 액션 서버를 찾은 로봇 목록, 마지막으로 낸 `/fleet/zones`와 `/fleet/assignments`, 시작 침묵 기한이다. 나머지는 아래 두 모듈. 프로세스가 죽으면 전부 사라진다(7절) | `/fleet/robots`, `/fleet/assignments`, `/fleet/zones`, `/fms/heartbeat`, `/central/events` 발행. `/fleet/confirm_clear` 서비스 | `/{pinky}/move_to`, `/{pinky}/dock`, `/workcell/fill_basket`, `/arm3/swap_basket` 액션. `/central/report_order` 서비스. `/central/orders`, `/{pinky}/state` 구독 |
 | `orchestrator_core` | 모듈 `fleet_core/orchestrator_core.py` | FMS 안 | 대기 주문, 로봇별 묶인 주문과 담은 것·결품, `basket[robot]`, 팔 작업과 재시도 횟수 | `on_order_board`, `on_fill_result`, `on_swap_result`, `on_dispatch_feedback`, `on_dispatch_result`, `on_robot_removed` | 명령을 내놓는다: `DispatchCmd`, `CancelDispatchCmd`, `ReleaseCmd`, `RobotFaultCmd`, `FillCmd`, `SwapCmd`, `ReportOrderCmd` |
 | `traffic_core` | 모듈 `fleet_core/traffic_core.py`, `zones.py`, `dispatcher.py`, `deadlock.py` | FMS 안 | 로봇별 임무 단계, 경로, 진행 중 목표, 고장. 구역 잠금과 대기열. 열린 호출. 주문과 바구니는 모른다 | `on_robot_state`, `on_move_result`, `on_goal_rejected`, `on_dock_result`, `on_dispatch`, `on_dispatch_cancel`, `on_release`, `on_run_mode`, `on_robot_fault`, `confirm_clear` | 명령을 내놓는다: `MoveCmd`, `DockCmd`, `CancelCmd`, `DispatchFeedback`, `DispatchResult` |
 | `FmsCore` | 클래스 `fleet_core/fms_core.py` | FMS 안 | 목표 번호, 호출 하나 동안 고정된 시각, 기록 대상 | 노드가 부르는 입구. `tick()`, 뷰, `record_to` | 두 모듈 |
@@ -73,19 +73,19 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fms_node`)이고, �
 | `COMM_RESTORED` | INFO | traffic | 보고가 돌아왔다. 위치를 확인하고 이어 간다 |
 | `ZONE_WAIT_LONG` | WARN | traffic | 구역 하나를 `zone_wait_warn_s` 넘게 기다린다 |
 | `ZONES_CLEARED` | INFO | traffic | `confirm_clear`로 잠금을 풀었다 |
-| `LANE_ERROR` | WARN | traffic | 레인에서 `lane_error_warn_m` 넘게 벗어났다. 해제를 막지는 않는다 |
+| `LANE_ERROR` | WARN | traffic | 이동 목표 중에 레인에서 `lane_error_warn_m` 넘게 벗어난 보고가 `release_confirm_samples`번 이어졌다. 목표당 한 번 낸다. 해제를 막지는 않는다 |
 | `DEADLOCK_DETECTED` | ERROR | traffic | 대기 고리를 찾았다 |
 | `DEADLOCK_RETREAT` | ERROR | traffic | 로봇 1대가 아직 들어가지 않은 구역을 포기한다 |
 | `DEADLOCK_UNRESOLVED` | ERROR | traffic | 풀지 못했다. 관리자가 봐야 한다 |
 | `PLACEMENT_CONFLICT` | ERROR | traffic | 시작 때 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있다. 해결될 때까지 전원이 기다린다 |
 | `RECOVERY_CONFLICT` | ERROR | traffic | 복구한 로봇이 다른 로봇이 쥔 구역 안에 있다 |
-| `ROBOT_NOT_REPORTING` | ERROR | traffic | `startup_wait_s`가 지나도 위치를 보고하고 멈춰 서지 않은 로봇이 있다. 전원이 기다린다 |
+| `ROBOT_NOT_REPORTING` | ERROR | traffic | `startup_wait_s`가 지나도 위치를 보고하고 멈춰 서지 않은 로봇이 있다(`PLACEMENT_CONFLICT`로 거부된 로봇은 빼고 센다). 전원이 기다린다 |
 | `ORDER_BOUND` | INFO | orchestrator | 주문을 로봇에 묶었다. detail은 주문 ID |
 | `ORDER_REQUEUED` | INFO | orchestrator | 치운 로봇의 주문을 대기 맨 앞으로 되돌렸다 |
 | `FILL_RETRY`, `SWAP_RETRY` | WARN | orchestrator | 팔 작업이 실패해 다시 보낸다 |
 | `FILL_FAILED`, `SWAP_FAILED` | ERROR | orchestrator | 재시도를 다 썼거나 담은 일부를 내보낼 수 없다 |
 | `ARM_NO_RESULT` | ERROR | orchestrator | 취소한 팔 작업의 결과가 끝내 안 왔다. 바구니 내용을 알 수 없다 |
-| `NO_ROBOT_AVAILABLE` | WARN | orchestrator | 주문은 있는데 쓸 수 있는 로봇이 없다 |
+| `NO_ROBOT_AVAILABLE` | WARN | orchestrator | 주문은 있는데 지도에 올라 고장이 아닌 로봇이 없다. 전원이 통신 두절일 때는 돌아올 수 있으므로 내지 않는다 |
 | `ORDER_ACCEPTED`, `ORDER_SHIPPED` | INFO | central | 주문을 받았다, 출고했다 |
 | `ORDER_REJECTED`, `ORDER_PARTIAL`, `ORDER_HELD` | WARN | central | 거절, 일부 출고, 보류 |
 | `OUT_OF_STOCK`, `STOCK_MISMATCH` | WARN | central | 재고 기록도 0, 기록은 있는데 실제로 없음 |
@@ -159,14 +159,14 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `on_dispatch(goal_id, station_id, robot_id="")`: orchestrator → traffic. 로봇을 스테이션으로 보내 달라는 요청. `robot_id`가 비면 traffic이 고른다.
 - `on_dispatch_cancel(goal_id)`: orchestrator → traffic. 아직 끝나지 않은 요청을 취소한다.
 - `on_release(robot)`: orchestrator → traffic. 스테이션에서 할 일이 끝난 로봇을 놓아준다.
-- `DispatchFeedback(goal_id, robot_id, phase)`, `DispatchResult(goal_id, success, robot_id, reason, error_x_cm, error_y_cm, error_yaw_deg)`: traffic → orchestrator. 반대 방향 보고. `phase`는 `NO_ROBOT` 하나뿐이다. 합치기 전 판의 CALLED, EN_ROUTE, QUEUED, DOCKING은 읽는 곳이 없어 만들지 않았다. 결과가 success면 그 로봇은 도크에 서서(AT_STATION) `on_dispatch(robot_id 지정)`나 `on_release`를 기다린다. 실패 이유 `reason`: `NOT_AVAILABLE`(쓸 수 없는 로봇), `BUSY`(이미 다른 요청이 있음), `CANCELED`, `ROBOT_REMOVED`.
+- `DispatchFeedback(goal_id, robot_id, phase)`, `DispatchResult(goal_id, success, robot_id, reason, error_x_cm, error_y_cm, error_yaw_deg)`: traffic → orchestrator. 반대 방향 보고. `phase`는 `NO_ROBOT` 하나뿐이다. 합치기 전 판의 CALLED, EN_ROUTE, QUEUED, DOCKING은 읽는 곳이 없어 만들지 않았다. 결과가 success면 그 로봇은 도크에 서서(AT_STATION) `on_dispatch(robot_id 지정)`나 `on_release`를 기다린다. 실패 이유 `reason`: `NOT_AVAILABLE`(쓸 수 없는 로봇), `BUSY`(이미 다른 요청이 있음), `CANCELED`, `ROBOT_REMOVED`, `REJECTED`(이동 목표 거절이 재시도 한도까지 이어짐), `DOCK_FAILED`(도킹 실패가 재시도 한도까지 이어짐). 그 밖에는 고정된 값이 아니다. 이동 실패가 재시도 한도에 닿으면 이동 결과의 `reason`을, `on_robot_fault`로 ERROR가 되면 그때 받은 이유를 그대로 넣는다.
 
 두 모듈 사이는 위가 전부이고, `traffic_core`는 `orchestrator_core`를 import하지 않으며 주문과 바구니 타입을 쓰지 않는다(경계 시험 `test_fms_boundary.py`). 다만 다음 세 가지는 이 호출로 표현할 수 없어 둘을 묶는 `FmsCore`가 따로 전달한다. 지시서의 "네 호출"에 없는 항목이므로 팀에 알린다.
 - `on_run_mode(mode)`: central의 STOP/PAUSE/RUN을 두 모듈에 각각 넘긴다. 주문과 상관없이 달리던 로봇도 멈춰야 하므로 dispatch 취소로는 안 된다.
 - `on_robot_removed(robot)`: `confirm_clear`가 받아들여지면 orchestrator에 알린다. 담기나 교환 중이면 돌려줄 dispatch가 이미 끝나 있기 때문이다.
 - `on_robot_fault(robot, reason)`: 팔 재시도가 소진되어 orchestrator가 ERROR로 판단하면 traffic에 알린다. 통신 두절 판단과 호출 후보, "남은 로봇 없음" 판단이 이 상태를 본다.
 
-바깥 인터페이스 (`contract.yaml`과 같고 이번 구조 변경으로 이름, 타입, QoS가 바뀌지 않는다):
+바깥 인터페이스 (`contract.yaml`과 같다. 기존 항목의 이름, 타입, QoS는 이번 구조 변경으로 바뀌지 않았고, 더한 것은 지시서 4, 5번의 `/fleet/robots`와 `/fms/heartbeat` 둘이다):
 - `/central/submit_order` SubmitOrder 서비스: UI → central. 재고 기록에 없거나 용량 초과면 거절
 - `/central/set_run_mode` 서비스: UI → central (RUN / PAUSE / STOP)
 - `/central/orders` OrderBoard 토픽(run_mode, 최종 보고가 안 된 주문을 오래된 순서로): central → FMS
@@ -204,10 +204,10 @@ run_mode는 FMS가 OrderBoard로 받는다. 삭제된 것: TaskBoard, StationCou
 - 구역마다 FIFO다. 충돌쌍에는 FIFO를 넓혀 쌍 전체의 요청 순서를 따른다. 한쪽이 계속 바빠도 다른 쪽이 굶지 않게 하려는 것이고, 지시서의 "레인별 FIFO"보다 넓다. 이 순서로 대기 고리가 생기는지는 지도마다 전수 검사로 본다(11절).
 - 해제: 로봇 위치 p를 그 구역을 떠나는 레인(시작 노드 p_i, 단위 벡터 u)에 투영해 s = (p − p_i)·u를 구한다. s > d(`release_distance_m`)가 `release_confirm_samples`번 연속이면 해제한다. 떠나는 레인이 경로에 없으면(앞쪽 구역, 손으로 옮긴 로봇) 구역 중심선에서 d 이상이어야 한다.
 - 근거식: d ≥ r + ε + v·(τ + tick), d ≥ 2r + ε. r은 반경, ε은 위치 오차, v는 속도, τ는 보고 지연, tick은 관제 주기다. 뒤의 식은 앞 로봇이 해제 지점 근처에 서고 뒤 로봇이 노드까지 오는 경우이고, 시험으로 만들지는 않았다. d ≤ 2r이면 `TrafficCore`가 시작을 거부한다. d는 실측 전 값이다. 압박 시험 표는 작업 기록 7번에 있고, 실측 ε과 τ가 나오면 그 표로 d를 정한다.
-- 이탈 e = |(p − p_i) − s·u|는 해제 조건이 아니다. `lane_error_warn_m`을 넘으면 `LANE_ERROR`만 낸다. 05 레인 시뮬과 같다. 레인을 크게 벗어난 로봇도 s > d면 해제한다는 뜻이므로, 실측 e를 본 뒤 다시 판단한다(13절).
+- 이탈 e = |(p − p_i) − s·u|는 해제 조건이 아니다. 이동 목표 중에 `lane_error_warn_m`을 넘는 보고가 `release_confirm_samples`번 이어지면 목표당 한 번 `LANE_ERROR`만 낸다. 05 레인 시뮬과 같다. 레인을 크게 벗어난 로봇도 s > d면 해제한다는 뜻이므로, 실측 e를 본 뒤 다시 판단한다(13절).
 - 가장 짧은 레인이 d 이하이면 레인 끝에 서도 해제되지 않으므로 `TrafficCore`가 시작을 거부한다. 기본 지도의 가장 짧은 레인은 0.4 m다.
 
-시작과 재시작: 전원이 지도에 올라야 움직이기 시작한다. 로봇은 위치를 보고하고 `MOVING`이나 `DOCKING`이 아닐 때 지도에 오른다. `startup_wait_s`가 지나도 안 오른 로봇이 있으면 `ROBOT_NOT_REPORTING`을 낸다. 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있으면 지도에 올리지 않고 `PLACEMENT_CONFLICT`를 내며, 그 로봇이 움직이거나 관리자가 치울 때까지 **전원이 기다린다**(정책, 팀 확인 필요). 노드에서 d보다 멀리 서 있으면 먼저 그 레인의 끝으로 간다. 전원이 오르기 전에는 `/fleet/zones`를 내지 않는다. FMS는 잠금을 아직 모르며, 모르는 것과 빈 것은 다르다.
+시작과 재시작: 전원이 지도에 올라야 움직이기 시작한다. 로봇은 위치를 보고하고 `MOVING`이나 `DOCKING`이 아닐 때 지도에 오른다. `startup_wait_s`가 지나도 안 오른 로봇이 있으면 `ROBOT_NOT_REPORTING`을 낸다. 아래의 `PLACEMENT_CONFLICT`로 거부된 로봇은 이미 보고했으므로 여기서 세지 않는다. 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있으면 지도에 올리지 않고 `PLACEMENT_CONFLICT`를 내며, 그 로봇이 움직이거나 관리자가 치울 때까지 **전원이 기다린다**(정책, 팀 확인 필요). 노드에서 d보다 멀리 서 있으면 먼저 그 레인의 끝으로 간다. 전원이 오르기 전에는 `/fleet/zones`를 내지 않는다. FMS는 잠금을 아직 모르며, 모르는 것과 빈 것은 다르다.
 
 교착 처리: 대기 고리가 있는 동안 새 호출과 새 이동 단계를 내지 않는다. 이미 보낸 이동 목표는 그대로 두고, 아래의 포기 대상 로봇만 목표를 취소한다. 고리가 생기고 `deadlock_grace_s`가 지나면 우선순위가 가장 낮은 로봇 1대에서 아직 들어가지 않은 구역을 포기 대상으로 정하고, 대상이 있으면 이동 목표를 취소한다(`DEADLOCK_RETREAT`). 실제 해제는 `recover_check_s` 뒤에 위치 보고로 벗어난 것이 확인된 구역만 한다. 들어간 구역에서 물러나는 동작은 없다. 포기할 구역이 없으면 바로 `DEADLOCK_UNRESOLVED`로 알린다. 재확인 때 구역이 하나라도 해제되면 이 이벤트는 나지 않는다. 아무것도 해제하지 못했어도 대상 중 하나라도 해제 여유 밖에 있으면 재확인을 반복하며, 이 대기에는 시간 제한이 없다. 아무것도 해제하지 못했고 모든 대상의 해제 여유 안에 들어가 있으면 `DEADLOCK_UNRESOLVED`로 알린다(7절, SR-13과 다른 점은 12절).
 우선순위 입력: 스테이션에 서 있는지(AT_STATION)와 출고 구역으로 가는 요청을 받았는지만 본다. 주문과 바구니는 보지 않는다.
@@ -215,7 +215,7 @@ orchestrator로 옮긴 것(5-1절): 주문 묶기, FILLING/SWAPPING, 팔 재시�
 삭제: 양쪽 물량 비율 배정(Rebalancer의 2:1, flip), 상자 개수, 비전 개수로 적재량 추정(`_moved_by_vision`).
 
 호출(dispatch 처리):
-- 로봇 이름 없는 `on_dispatch(goal, WORK)`는 열린 호출로 쌓인다. traffic은 매 주기 열린 호출 수만큼 로봇을 고른다. 후보는 할당이 없는 사용 가능 로봇(AT_STATION이면 `on_release`를 받은 로봇)이고, 레인을 따른 거리가 가장 짧은 로봇을 고른다(`score_distance_weight`, `score_same_call`). 대기 칸에서는 앞 로봇을 추월할 수 없으므로 앞 로봇부터 호출한다. 고장 난 로봇 뒤의 대기 로봇은 호출하지 않는다. 호출은 주기마다 다시 계산하므로 더 가까운 로봇이 생기면 호출이 옮겨 갈 수 있다. 사용 가능 로봇이 하나도 없으면 호출을 연 채 기다리고 `DispatchFeedback(phase=NO_ROBOT)`을 보낸다(멈춤 한 번에 한 번). orchestrator가 이것을 받아 `NO_ROBOT_AVAILABLE`(WARN)을 낸다.
+- 로봇 이름 없는 `on_dispatch(goal, WORK)`는 열린 호출로 쌓인다. traffic은 매 주기 열린 호출 수만큼 로봇을 고른다. 후보는 할당이 없는 사용 가능 로봇(AT_STATION이면 `on_release`를 받은 로봇)이고, 점수가 가장 낮은 로봇을 고른다. 점수는 담기 도크까지 레인을 따른 거리에 `score_distance_weight`를 곱한 값이고, 이미 호출된 로봇이면 `score_same_call`을 더한다. 대기 칸에서는 앞 로봇을 추월할 수 없으므로 앞 로봇부터 호출한다. 고장 난 로봇 뒤의 대기 로봇은 호출하지 않는다. 호출은 주기마다 다시 계산하므로 다른 로봇이 이 보정을 넘을 만큼 가까워지면 호출이 옮겨 간다. 고를 로봇이 없으면 호출을 연 채 기다린다. 지도에 올라 고장이 아닌 로봇이 하나도 없을 때만 `DispatchFeedback(phase=NO_ROBOT)`을 보낸다(멈춤 한 번에 한 번). 전원이 통신 두절인 경우는 돌아올 수 있으므로 보내지 않는다. orchestrator가 이것을 받아 `NO_ROBOT_AVAILABLE`(WARN)을 낸다.
 - 호출이 줄었는데(`on_dispatch_cancel`) 그 로봇이 스테이션 `commit` 노드(기본 지도는 W)의 구역을 쥐기 전이면 대기 구간으로 돌린다. 쥐었으면 끝까지 가서 도킹 없이 대기 구간으로 간다.
 - 도킹을 마치면 `DispatchResult`(success, robot_id, 도킹 오차)를 돌려주고 로봇은 AT_STATION이 된다. 다음 `on_dispatch`(robot_id 지정)나 `on_release`가 올 때까지 도크를 비우지 않는다.
 - `on_dispatch(goal, OUTBOUND, robot_id=X)`는 지정한 로봇을 보낸다. `on_release(X)`를 받은 로봇은 다음 주기의 호출 후보가 된다. 뽑히면 바로 작업공간으로 가고(작업 도크에 서 있었으면 그 자리에서 결과를 돌려준다), 안 뽑히면 대기 구간으로 간다. 합치기 전 판의 "밀린 주문이면 orchestrator가 그 로봇을 지정해 다시 부른다"는 쓰지 않는다. 대기 칸에 더 가까운 로봇이 있어도 먼 로봇을 부르게 되어 지금 동작과 달라지기 때문이다.
@@ -374,17 +374,17 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 
 검증은 세 층이다(11-05 PDF). 같은 규칙을 전수 검사(`tools/model_check.py`, 설계), 가짜 노드 시나리오(`sim/scenarios`, 통합), 기록 재생(`tools/replay.py`, 현장)으로 확인한다. 실물 기록은 아직 없어서 세 번째 층은 가짜 노드의 기록으로만 돌렸다. 이 프로토타입의 숫자는 모두 가짜 로봇에서 나온 것이다.
 
-결과(전부 가짜 로봇, 코드 `ba725ce`):
+결과(전부 가짜 로봇. 숫자를 얻은 코드는 줄마다 적었다):
 
 | 검증 | 결과 |
 |---|---|
-| 단위·통합 시험 | 779건, 실패 0, 오류 0, 건너뜀 0(`fleet_core` 476, `fake_robots` 262, `fleet_manager` 41, `colcon test` 674 s) |
-| 시나리오 6개(기본 지도, 실제 launch) | 전부 심판 통과, 조기 해제 0, near 0. 출고는 `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6, `operator_recovery` 4/4 |
-| 전수 검사, 로봇 2대 (상태, 교착, 기아) | `oneway_loop` (34407, 0, 0). `oneway_shortcut` 묶음 끔 (69497, 36, 30), 켬 (62615, 0, 0). 기본 지도 끔 (36573, 432, 396), 켬 (37078, 0, 0). 충돌쌍을 넘는 FIFO에서도 켬은 0이다 |
-| 전수 검사, 로봇 3대 | `oneway_loop` (6295143, 0, 0), 끝까지. `oneway_shortcut`과 기본 지도의 묶음 끔은 교착이 나오는 것까지 확인했다(첫 교착에서 멈춤). 두 지도의 묶음 켬은 이 문서를 쓸 때 아직 돌고 있다. 결과는 작업 기록 3번에 적는다 |
-| 기록 재생 | 시나리오 6개 모두 기록과 같은 명령 |
-| FMS 재시작 | 죽인 뒤 세 대 모두 1.5 s 안에 정지(5회 측정, 최대 1.49 s, 벽시계). 새 FMS는 전원 보고부터 다시 시작 |
-| 압박 시험 | d 0.2에서 τ 0.5, ε 0.05까지 전 조합 조기 해제 0, near 0, 교착 0(조합마다 시드 1개). d 0.17, ε 0.05에서 심판 기준 위반 1회. d ≤ 2r은 시작 거부. 표는 작업 기록 7번 |
+| 단위·통합 시험 | `ba725ce`. 779건, 실패 0, 오류 0, 건너뜀 0(`fleet_core` 476, `fake_robots` 262, `fleet_manager` 41, `colcon test` 674 s) |
+| 시나리오 6개(기본 지도, 실제 launch) | `ba725ce`(위 시험 안에서 실행). 전부 심판 통과, 조기 해제 0, near 0. 출고는 `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6, `operator_recovery` 4/4 |
+| 전수 검사, 로봇 2대 (상태, 교착, 기아) | `fa94eb6`. `oneway_loop` (34407, 0, 0). `oneway_shortcut` 묶음 끔 (69497, 36, 30), 켬 (62615, 0, 0). 기본 지도 끔 (36573, 432, 396), 켬 (37078, 0, 0). 충돌쌍을 넘는 FIFO에서도 켬은 0이다 |
+| 전수 검사, 로봇 3대 | `oneway_loop`은 `c9f46ab` 전의 복사본, 나머지는 `c9f46ab`. 새 코드로 다시 돌리지 않았다. `oneway_loop` (6295143, 0, 0), 끝까지. `oneway_shortcut`과 기본 지도의 묶음 끔은 교착이 나오는 것까지 확인했다(첫 교착에서 멈춤). 두 지도의 묶음 켬은 이 문서를 쓸 때 아직 돌고 있다. 결과는 작업 기록 3번에 적는다 |
+| 기록 재생 | `ba725ce`(위 시험 안에서 실행). 시나리오 6개 모두 기록과 같은 명령 |
+| FMS 재시작 | 죽인 뒤 세 대 모두 1.5 s 안에 정지(벽시계, 5회 측정, 최대 1.49 s. 3회는 `fa94eb6`, 2회는 `1f56911`). 새 FMS는 전원 보고부터 다시 시작. `ba725ce`의 전체 시험에서도 통과했지만 이 시험의 판정선은 1.5 s에 여유 1 s를 더한 값이고 그 실행의 초는 적어 두지 않았다 |
+| 압박 시험 | `78011a2`(그 뒤 `traffic_core.py`의 변경은 오류 문구뿐이다). d 0.2에서 τ 0.5, ε 0.05까지 전 조합 조기 해제 0, near 0, 교착 0(조합마다 시드 1개). d 0.17, ε 0.05에서 심판 기준 위반 1회. d ≤ 2r은 시작 거부. 표는 작업 기록 7번 |
 
 모델이 다루지 않는 것은 작업 기록 3번에 있다. 전수 검사는 추상 모델이고, 재시작의 숫자는 즉시 서는 `FakePinky`의 값이며, 압박 시험의 near는 앞 로봇이 d 근처에 서는 경우를 만들지 않았다.
 
@@ -405,7 +405,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 | SR-13 (MUST) | 핑키 1대를 양보시켜 길 막힘을 자동으로 풀고, 안 되면 관리자에게 알린다 | 5절의 `DEADLOCK_RETREAT`는 아직 들어가지 않은 구역의 예약만 포기한다. 들어간 구역에서 물러나는 동작은 없다 | 이것으로 충족한다고 볼지, 양보 주행을 만들지. 구현 전이라 일단 둔다(2026-11-04) |
 | SR-03 (MUST) | 주문 상태: 대기, 배정, 담는 중, 운반 중, 출고 완료, 보류, 실패 | 5-1절: PENDING, BOUND, FILLING, TO_OUTBOUND, SWAPPING, SHIPPED, PARTIAL, HELD. "실패"가 없고, SWAPPING과 PARTIAL이 SR에 없다 | 상태 대응표와 "실패"의 뜻 |
 | SR-17 (MUST) | 핑키 상태: 대기, 이동, 도킹, 담기 대기, 출고 대기, 오류 + 원인 | `/fleet/robots`(제안)로 전부 나타낼 수 있다. 위에서부터 먼저 맞는 것을 쓴다: `fault` ≠ NONE이면 오류 + `fault_reason`, `task_type` = FILL이면 담기 대기, SWAP이면 출고 대기, `fsm_state` = DOCKING이면 도킹, MOVING이면 이동, 나머지는 대기. 이 규칙의 구현은 화면 몫이다 | 메시지를 팀이 받아들일지 |
-| SR-36 (MUST) | 관리 프로그램과 별개의 비상 정지 | 이 문서와 `contract.yaml`에 경로가 없다. STOP은 화면, central, FMS를 거친다. `/fms/heartbeat`는 FMS가 죽은 경우만 다룬다 | 경로와 듣는 쪽 |
+| SR-36 (MUST) | 관리 프로그램과 별개의 비상 정지 | 이 문서와 `contract.yaml`에 경로가 없다. STOP은 화면, central, FMS를 거친다. `/fms/heartbeat`는 FMS나 통신이 끊겼을 때 로봇이 혼자 서는 장치이고 비상 정지 경로를 대신하지 않는다 | 경로와 듣는 쪽 |
 | SR-27 (MUST) | 상품의 종류, 위치, 수량과 트레이·바구니 위치 인식 | `/{arm}/vision/items`는 arm1, arm2의 상품만 다룬다. 트레이·바구니 인식과 arm3의 인식 인터페이스가 없다 | 어디서 어떤 토픽으로 낼지 |
 | SR-21 (MUST) | 핑키가 조금 어긋나게 서도 위치를 맞춰 담는다 | dispatch 결과에 도킹 오차가 있지만 `FillCmd`와 FillBasket goal에는 전달할 필드가 없다 | 오차를 넘길지, 카메라로 보정할지 |
 | SR-31 (MUST) | 지도 위 핑키 위치 표시 | `/fleet/robots`의 x, y, yaw(제안, 1 Hz, 마지막 보고 값) | 메시지를 팀이 받아들일지, 1 Hz로 충분한지 |
