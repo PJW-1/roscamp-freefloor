@@ -27,7 +27,7 @@ from fleet_interfaces.msg import (  # noqa: E402
     RobotStatusArray,
     ZoneStateArray,
 )
-from fleet_interfaces.srv import ReportOrder  # noqa: E402
+from fleet_interfaces.srv import ConfirmClear, ReportOrder  # noqa: E402
 from fleet_manager.fms_node import FmsNode  # noqa: E402
 from rclpy.action import ActionServer, CancelResponse  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
@@ -278,6 +278,19 @@ def test_a_record_of_the_running_node_plays_back_to_the_same_commands(tmp_path):
     assert played.returncode == 0, played.stdout + played.stderr
     assert "same as recorded" in played.stdout
     assert '"out": "ReportOrderCmd"' in record.read_text(encoding="utf-8")
+
+
+def test_a_zone_that_does_not_exist_is_refused_and_the_node_lives_on(graph):
+    """The node takes any exception from a callback as fatal, so one typo ended the process."""
+    fms = graph.fms
+    client = graph.create_client(ConfirmClear, fms.contract.name("confirm_clear"))
+    assert client.wait_for_service(timeout_sec=10.0)
+    assert wait_for(lambda: fms.core.traffic.robot_view("pinky1")["on_map"]), "never on the map"
+    future = client.call_async(ConfirmClear.Request(
+        robot_id="pinky1", zone_ids=["NOPE"], note="typo"))
+    assert wait_for(future.done, 10.0), "no reply: the callback raised"
+    assert not future.result().accepted
+    assert fms.core.traffic.robot_view("pinky1")["fault"] == ""
 
 
 def test_the_heartbeat_comes_twice_a_second(graph):

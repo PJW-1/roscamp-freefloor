@@ -94,6 +94,29 @@ def test_confirm_clear_reaches_both_cores():
     assert core.confirm_clear("nobody", [], "typo") is None
 
 
+def test_a_refused_confirm_clear_keeps_the_order_on_its_robot():
+    core, _ = make({"r1": (4, 3)}, [O1])
+    drive(core, "r1", lambda: core.robot_view("r1")["order"] == "O-001")
+    assert core.confirm_clear("r1", ["NOPE"], "typo") is None
+    assert core.confirm_clear("r1", [], "forgot the list") is None
+    assert core.robot_view("r1")["order"] == "O-001"
+    assert core.robot_view("r1")["state"] != "OUT_OF_SERVICE"
+
+
+def test_clearing_a_robot_in_two_calls_puts_its_order_back_once():
+    core, _ = make({"r1": (4, 3)}, [O1])
+    drive(core, "r1", lambda: core.robot_view("r1")["order"] == "O-001")
+    held = core.zones.held_by("r1")
+    assert held
+    core.confirm_clear("r1", ["Z-OUT"], "a zone it does not hold")
+    first = [c.code for c in core.tick() if hasattr(c, "code")]
+    core.confirm_clear("r1", held, "the one it does")
+    second = [c.code for c in core.tick() if hasattr(c, "code")]
+    assert first.count("ORDER_REQUEUED") == 1
+    assert "ORDER_REQUEUED" not in second
+    assert core.zones.held_by("r1") == []
+
+
 def test_a_robot_faulted_by_the_arm_stops_being_available_to_traffic():
     core, now = make({"r1": (4, 3)}, [O1])
     out = drive(core, "r1", lambda: core.robot_view("r1")["order"] == "O-001")
@@ -194,7 +217,7 @@ def test_an_error_shows_its_cause():
 
 def test_a_cleared_robot_is_out_of_service_with_no_task():
     core, _ = make({"r1": (4, 3)})
-    core.confirm_clear("r1", [], "lifted off")
+    core.confirm_clear("r1", core.zones.held_by("r1"), "lifted off")
     view = status(core, "r1")
     assert (view.fault, view.fault_reason, view.task_type) == ("OUT_OF_SERVICE", "lifted off", "")
 

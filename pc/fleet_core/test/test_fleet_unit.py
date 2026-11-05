@@ -1295,6 +1295,46 @@ def test_confirm_clear_for_an_unknown_robot_changes_nothing():
     place(core, "r1", (9, 5))
     assert core.confirm_clear("pinky9", ["Q-OUT-2"], note="typo") is None
     assert core.zones.holder("Q-OUT-2") == "r1"
+    assert "CLEAR_REFUSED" in codes(core.tick()), "the service has no field to say why"
+
+
+def test_confirm_clear_with_a_zone_that_does_not_exist_changes_nothing():
+    """A typo in one name must not take the fleet manager down or half clear the robot."""
+    core, _ = started({"r1": (9, 5), "r2": (3, 4)})
+    core.tick()
+    held = core.zones.held_by("r1")
+    assert core.confirm_clear("r1", [*held, "NOPE"], "typo") is None
+    assert core.zones.held_by("r1") == held
+    assert view(core, "r1")["state"] != "OUT_OF_SERVICE"
+    out = core.tick()
+    assert "CLEAR_REFUSED" in codes(out)
+    assert "ZONES_CLEARED" not in codes(out)
+
+
+def test_confirm_clear_with_no_zones_is_refused_while_the_robot_holds_some():
+    """Nothing would ever free them: an out of service robot releases nothing by pose."""
+    core, _ = started({"r1": (9, 5), "r2": (3, 4)})
+    core.tick()
+    held = core.zones.held_by("r1")
+    assert held
+    assert core.confirm_clear("r1", [], "forgot the list") is None
+    assert core.zones.held_by("r1") == held
+    assert view(core, "r1")["state"] != "OUT_OF_SERVICE"
+    assert "CLEAR_REFUSED" in codes(core.tick())
+
+
+def test_confirm_clear_with_some_of_the_zones_warns_and_another_call_frees_the_rest():
+    """The operator may mean it, so it stands, but what stays locked has to be said."""
+    core, _ = started({"r1": (9, 5), "r2": (3, 4)})
+    core.tick()
+    held = core.zones.held_by("r1")
+    assert len(held) >= 2
+    assert core.confirm_clear("r1", held[:1], "one first") == held[:1]
+    assert view(core, "r1")["state"] == "OUT_OF_SERVICE"
+    assert "ZONES_STILL_HELD" in codes(core.tick())
+    assert core.confirm_clear("r1", held[1:], "and the rest") == held[1:]
+    assert core.zones.held_by("r1") == []
+    assert "ZONES_STILL_HELD" not in codes(core.tick())
 
 
 def test_confirm_clear_cancels_a_running_job_and_ignores_its_result():

@@ -94,6 +94,9 @@ class ZoneManager:
         for zone in self._queue:
             self.cancel_request(robot, zone)
 
+    def exists(self, zone: str) -> bool:
+        return zone in self._holder
+
     def holder(self, zone: str) -> str | None:
         return self._holder[zone]
 

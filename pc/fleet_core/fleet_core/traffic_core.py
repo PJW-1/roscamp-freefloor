@@ -261,11 +261,15 @@ class TrafficCore:
     def confirm_clear(self, robot, zone_ids, note="") -> list[str] | None:
         """The operator cleared a stuck robot. The one release not judged by pose.
 
-        Returns the zones released, or None if there is no such robot.
+        Returns the zones released, or None if it was refused and nothing changed. No zones is
+        right for a robot that never got on the map. Only some of its zones is taken as meant,
+        with a warning, and another call frees the rest.
         """
-        m = self._missions.get(robot)
-        if m is None:
+        refusal = self._clear_refusal(robot, zone_ids)
+        if refusal:
+            self._event("WARN", "CLEAR_REFUSED", f"{refusal}: {note}", robot)
             return None
+        m = self._missions[robot]
         released = [z for z in zone_ids if self.zones.release(robot, z)]
         m.outside.clear()
         self.zones.cancel_all_requests(robot)
@@ -277,10 +281,24 @@ class TrafficCore:
         m.called = False
         m.hold = False
         self._event("INFO", "ZONES_CLEARED", f"released {released}: {note}", robot)
+        still_held = self.zones.held_by(robot)
+        if still_held:
+            # Nothing else frees them: this robot is no longer judged by its pose.
+            self._event("WARN", "ZONES_STILL_HELD", f"{still_held} stay locked", robot)
         if m.dispatch:
             self._out.append(DispatchResult(m.dispatch.goal_id, False, robot, "ROBOT_REMOVED"))
             m.dispatch = None
         return released
+
+    def _clear_refusal(self, robot, zone_ids) -> str:
+        if robot not in self._missions:
+            return "no such robot"
+        unknown = [z for z in zone_ids if not self.zones.exists(z)]
+        if unknown:
+            return f"no such zone {unknown}"
+        if not zone_ids and self.zones.held_by(robot):
+            return f"no zones listed while it holds {self.zones.held_by(robot)}"
+        return ""
 
     # ---- outputs ------------------------------------------------------------------------
 
