@@ -12,6 +12,7 @@ from fleet_core.commands import (  # noqa: E402
     MoveCmd,
     OrderRecord,
     ReportOrderCmd,
+    RobotStatusView,
     SwapCmd,
     ZoneView,
 )
@@ -23,6 +24,7 @@ from fleet_interfaces.msg import (  # noqa: E402
     OrderBoard,
     OrderItem,
     RobotState,
+    RobotStatus,
 )
 from fleet_interfaces.srv import ReportOrder  # noqa: E402
 from fleet_interfaces.srv import ConfirmClear  # noqa: E402
@@ -117,9 +119,23 @@ def test_item_lists_add_up_a_kind_named_twice():
 
 
 def test_robot_report_reads_every_field_the_core_needs():
-    msg = RobotState(state=RobotState.STATE_MOVING)
+    msg = RobotState(state=RobotState.STATE_MOVING, battery=87.5)
     msg.pose.x, msg.pose.y, msg.pose.theta = 1.0, 2.0, 0.5
-    assert adapters.robot_report(msg) == (1.0, 2.0, 0.5, RobotState.STATE_MOVING)
+    assert adapters.robot_report(msg) == (1.0, 2.0, 0.5, RobotState.STATE_MOVING, 87.5)
+
+
+def test_every_field_of_the_robot_status_reaches_the_message():
+    view = RobotStatusView("pinky2", "MOVING", "TO_OUTBOUND", "O-003", "ERROR", "DOCK_FAILED",
+                           "AVENUE", ("pinky1", "pinky3"), 87.5, 1.5, 2.5, 0.25)
+    msg = adapters.robots_to_msg([view], 12.5)
+    assert msg.stamp.sec == 12 and msg.stamp.nanosec == 500_000_000
+    out = msg.robots[0]
+    assert (out.robot_id, out.fsm_state, out.task_type, out.order_id) == (
+        "pinky2", "MOVING", "TO_OUTBOUND", "O-003")
+    assert (out.fault, out.fault_reason) == (RobotStatus.FAULT_ERROR, "DOCK_FAILED")
+    assert (out.wait_zone, list(out.wait_robots)) == ("AVENUE", ["pinky1", "pinky3"])
+    assert (out.battery, out.x, out.y, out.yaw) == (87.5, 1.5, 2.5, 0.25)
+
 
 
 def test_action_results_are_read_here_and_not_in_the_node():

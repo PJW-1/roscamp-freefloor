@@ -103,6 +103,10 @@ class ZoneManager:
     def held_by(self, robot: str) -> list[str]:
         return list(self._held.get(robot, ()))
 
+    def waiting_for(self, robot: str) -> str | None:
+        """The zone it queues for. A robot asks for its next zone only when it holds no other."""
+        return next((zone for zone, who in self._arrived if who == robot), None)
+
     def snapshot(self) -> dict[str, dict]:
         return {
             zone: {

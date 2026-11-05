@@ -30,6 +30,7 @@ from fleet_interfaces.msg import (
     FleetEvent,
     OrderBoard,
     RobotState,
+    RobotStatusArray,
     ZoneStateArray,
 )
 from fleet_interfaces.srv import ConfirmClear, ReportOrder
@@ -64,6 +65,7 @@ class FmsNode(Node):
         self._last_assignments = None
         self._create_interfaces(robots)
         self.create_timer(1.0 / self.get_parameter("tick_hz").value, self._on_tick)
+        self.create_timer(1.0, self._publish_robots)
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
@@ -77,6 +79,8 @@ class FmsNode(Node):
             ZoneStateArray, name("zones"), self._qos("zones"))
         self._assignments_pub = self.create_publisher(
             AssignmentArray, name("assignments"), self._qos("assignments"))
+        self._robots_pub = self.create_publisher(
+            RobotStatusArray, name("robots"), self._qos("robots"))
         self._events_pub = self.create_publisher(FleetEvent, name("events"), self._qos("events"))
         self.create_subscription(
             OrderBoard, name("order_board"), self._on_order_board, self._qos("order_board"))
@@ -133,6 +137,11 @@ class FmsNode(Node):
         if assignments != self._last_assignments:
             self._last_assignments = assignments
             self._assignments_pub.publish(adapters.assignments_to_msg(assignments, now))
+
+    def _publish_robots(self) -> None:
+        now = self._now()
+        if now > 0.0:
+            self._robots_pub.publish(adapters.robots_to_msg(self.core.robots_view(), now))
 
     def _dispatch(self, command, now: float) -> None:
         if isinstance(command, MoveCmd):

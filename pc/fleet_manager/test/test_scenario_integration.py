@@ -1,4 +1,5 @@
 """CI item 5: each scenario runs to the end and the live graph matches contract.yaml."""
+import csv
 import json
 import os
 import signal
@@ -61,3 +62,9 @@ def test_scenario_finishes_and_matches_the_contract(scenario, tmp_path):
     assert summary["orders_shipped"] >= 1, "a scenario must not pass by shipping nothing"
     safety = json.loads((tmp_path / "safety.json").read_text(encoding="utf-8"))
     assert (safety["early"], safety["near"]) == (0, 0), safety
+    if scenario == "shared_lane_failure":
+        with (tmp_path / "fleet_robots.csv").open(encoding="utf-8") as f:
+            seen = [row["fault"] for row in csv.DictReader(f) if row["robot"] == "pinky2"]
+        assert seen[0] == "NONE" and seen[-1] == "NONE", seen
+        assert "COMM_LOST" in seen, f"the comm loss never showed on /fleet/robots: {seen}"
+

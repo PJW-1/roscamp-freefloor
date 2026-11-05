@@ -17,6 +17,7 @@ from fleet_core.commands import (
     DispatchResult,
     ReleaseCmd,
     RobotFaultCmd,
+    RobotStatusView,
     ZoneView,
 )
 from fleet_core.orchestrator_core import FILL, FILLING, SWAP, SWAPPING, OrchestratorCore
@@ -53,8 +54,8 @@ class FmsCore:
 
     # ---- inputs -------------------------------------------------------------------------
 
-    def on_robot_state(self, robot, x, y, yaw, state) -> None:
-        self.traffic.on_robot_state(robot, x, y, yaw, state)
+    def on_robot_state(self, robot, x, y, yaw, state, battery=0.0) -> None:
+        self.traffic.on_robot_state(robot, x, y, yaw, state, battery)
         self._pump()
 
     def on_order_board(self, run_mode, orders) -> None:
@@ -132,6 +133,18 @@ class FmsCore:
                 views.append(AssignmentView(robot, order_id, self._work, "TO_WORK"))
             else:
                 views.append(AssignmentView(robot, order_id, "", "WAIT"))
+        return views
+
+    def robots_view(self) -> list[RobotStatusView]:
+        tasks = {view.robot_id: view for view in self.assignments_view()}
+        views = []
+        for robot in self.traffic.robots:
+            task = tasks.get(robot)
+            views.append(RobotStatusView(
+                robot_id=robot,
+                task_type=task.task_type if task else "",
+                order_id=(task.order_id or "") if task else "",
+                **self.traffic.status_view(robot)))
         return views
 
     def robot_view(self, robot) -> dict:

@@ -11,7 +11,7 @@ from conftest import CONTRACT, REPO, write_scenario  # noqa: E402
 
 SCRIPT = REPO / "scripts" / "check_interfaces.py"
 # Providers that are not fakes: they belong to the fleet manager.
-SKIP = "assignments,zones,confirm_clear"
+SKIP = "assignments,zones,robots,confirm_clear"
 
 
 def start_all(harness, tmp_path):

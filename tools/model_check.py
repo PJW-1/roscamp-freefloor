@@ -37,6 +37,8 @@ By default a zone is freed on the first report past it, not the third. A robot t
 zone and not freed it yet is in no queue, so it should not be part of a wait cycle through that
 zone. That is an argument, and the default search does not prove it. --confirm 3 searches every
 order of those reports too, at the cost of many more states. The worklog has both where both ran.
+A `report` repeats the same pose. A real report back inside the zone would reset the count, which
+delays a release and reaches no lock state the search has not seen: an argument again.
 """
 from __future__ import annotations
 
@@ -82,6 +84,9 @@ class Model:
         self.pose = dict(zip(self.names, spots, strict=True))
         for name, node in self.pose.items():
             self.core.on_robot_state(name, *site.cell_pose(node), 0.0, "IDLE")
+        refused = [m.name for m in self.core._missions.values() if not m.placed]
+        if refused:
+            raise ValueError(f"{refused} cannot start on {spots}: the lock is taken")
         self.core.on_run_mode("RUN")
         self._tick()
         self.initial = self.capture()

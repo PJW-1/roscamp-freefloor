@@ -18,6 +18,7 @@ from fleet_interfaces.msg import (
     FleetEvent,
     OrderBoard,
     RobotState,
+    RobotStatusArray,
     ZoneStateArray,
 )
 from fleet_interfaces.srv import ConfirmClear
@@ -64,6 +65,7 @@ class ScenarioMonitorNode(Node):
         self._sc = ScenarioClock(self)
         self._result_dir = Path(self.get_parameter("result_dir").value)
         self._seen: dict[str, str] = {}
+        self._status_rows: list[list] = []
         self.exit_code: int | None = None
         self._removals = sorted((f.at_s, f.robot) for f in scenario.faults
                                 if f.type == "operator_remove")
@@ -84,6 +86,7 @@ class ScenarioMonitorNode(Node):
         sub(ZoneStateArray, "zones", self._on_zones)
         sub(FleetEvent, "events", self._on_event)
         sub(AssignmentArray, "assignments", self._on_assignments)
+        sub(RobotStatusArray, "robots", self._on_robots)
         sub(OrderBoard, "order_board", self._on_board)
         self.create_timer(0.1, self._tick)
 
@@ -114,6 +117,14 @@ class ScenarioMonitorNode(Node):
                         for a in msg.assignments)
         if self._changed("assignments", text):
             self.judge.note(self._sc.now(), "assignments", "ASSIGNMENTS", text)
+
+    def _on_robots(self, msg: RobotStatusArray) -> None:
+        """One row each time a robot's status changes, leaving out what changes all the time."""
+        for r in msg.robots:
+            row = [r.robot_id, r.fsm_state, r.task_type, r.order_id, r.fault, r.fault_reason,
+                   r.wait_zone, " ".join(r.wait_robots)]
+            if self._changed(f"status:{r.robot_id}", "|".join(row)):
+                self._status_rows.append([round(self._sc.now(), 3), *row])
 
     def _on_arm(self, msg: ArmState) -> None:
         self.judge.on_arm_state(msg.stamp.sec + msg.stamp.nanosec * 1e-9, msg.arm_id, msg.state)
@@ -168,6 +179,9 @@ class ScenarioMonitorNode(Node):
                    self.judge.robot_rows)
         _write_csv(out / "releases.csv", ["time_s", "zone", "robot", "true_m", "reported_m"],
                    self.judge.release_rows)
+        _write_csv(out / "fleet_robots.csv",
+                   ["time_s", "robot", "fsm_state", "task_type", "order_id", "fault",
+                    "fault_reason", "wait_zone", "wait_robots"], self._status_rows)
         verdict = "PASS" if summary["pass"] else "FAIL"
         self.get_logger().info(
             f"scenario {verdict}: shipped {summary['orders_shipped']}, partial "

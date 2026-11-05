@@ -12,6 +12,7 @@ from fleet_core.commands import (
 from fleet_core.deadlock import wait_graph
 from fleet_core.fms_core import FmsCore
 from fleet_core.params import load_params
+from fleet_core.site_map import load_site_map
 from grid_map import grid_site
 
 INTERNAL = (DispatchCmd, CancelDispatchCmd, ReleaseCmd, RobotFaultCmd, DispatchFeedback,
@@ -147,3 +148,91 @@ def test_a_robot_at_a_station_is_never_in_a_wait_cycle():
     drive(core, "r1", lambda: core.traffic.robot_view("r1")["phase"] == "AT_STATION")
     assert "r1" not in [r for z in core.zones.snapshot().values() for r in z["queue"]]
     assert not wait_graph(core.zones).get("r1")
+
+
+# ---- /fleet/robots ----------------------------------------------------------------------
+
+
+def status(core, robot):
+    return {view.robot_id: view for view in core.robots_view()}[robot]
+
+
+def test_the_status_says_what_the_pinky_reported_and_where_it_is():
+    core, _ = make({"r1": (4, 3)})
+    x, y = core.site.cell_pose((4, 3))
+    core.on_robot_state("r1", x, y, 0.5, "WAITING", 87.5)
+    view = status(core, "r1")
+    assert (view.fsm_state, view.x, view.y, view.yaw, view.battery) == ("WAITING", x, y, 0.5, 87.5)
+    assert (view.fault, view.fault_reason) == ("NONE", "")
+    assert (view.wait_zone, view.wait_robots) == ("", ())
+
+
+def test_a_robot_nobody_has_heard_from_still_has_a_status():
+    core = FmsCore(grid_site(), load_params(), ["r1"], lambda: 0.0)
+    view = status(core, "r1")
+    assert (view.fsm_state, view.task_type, view.order_id, view.fault) == ("", "", "", "NONE")
+
+
+def test_comm_loss_shows_in_the_status_and_goes_away():
+    core, now = make({"r1": (4, 3)})
+    now[0] = core.params.comm_timeout_s + 0.1
+    core.tick()
+    assert (status(core, "r1").fault, status(core, "r1").fault_reason) == ("COMM_LOST", "NO_STATE")
+    report(core, "r1", (4, 3))
+    assert status(core, "r1").fault == "RECOVERING"
+    now[0] += core.params.recover_check_s + 0.1
+    report(core, "r1", (4, 3))
+    core.tick()
+    assert (status(core, "r1").fault, status(core, "r1").fault_reason) == ("NONE", "")
+
+
+def test_an_error_shows_its_cause():
+    core, _ = make({"r1": (4, 3)})
+    core.traffic.on_robot_fault("r1", "NAV_ABORTED")
+    assert (status(core, "r1").fault, status(core, "r1").fault_reason) == ("ERROR", "NAV_ABORTED")
+
+
+def test_a_cleared_robot_is_out_of_service_with_no_task():
+    core, _ = make({"r1": (4, 3)})
+    core.confirm_clear("r1", [], "lifted off")
+    view = status(core, "r1")
+    assert (view.fault, view.fault_reason, view.task_type) == ("OUT_OF_SERVICE", "lifted off", "")
+
+
+def test_a_waiting_robot_shows_the_zone_and_who_is_in_the_way():
+    now = [0.0]
+    core = FmsCore(load_site_map(), load_params(), ["a", "b"], lambda: now[0])
+    report(core, "a", "P-6")
+    report(core, "b", "P-5")
+    core.on_order_board("RUN", [O1, O2])
+    core.tick()
+    assert (status(core, "b").wait_zone, status(core, "b").wait_robots) == ("P-6", ("a",))
+    assert status(core, "a").wait_zone == ""
+    lane = core.site.lane("P-6", "N")
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("a", lane.ax + lane.ux * 0.3, lane.ay + lane.uy * 0.3, 0.0, "MOVING")
+    core.tick()
+    assert (status(core, "b").wait_zone, status(core, "b").wait_robots) == ("", ())
+
+
+def test_sr17_every_robot_state_can_be_told_apart():
+    """대기, 이동, 도킹, 담기 대기, 출고 대기, 오류 + 원인. The table is in the worklog."""
+    core, _ = make({"r1": (4, 3), "r2": (2, 0)})
+    assert status(core, "r1").task_type == "WAIT"
+    core.on_order_board("RUN", [O1])
+    core.tick()
+    assert status(core, "r1").task_type == "TO_WORK"
+    out = drive(core, "r1", lambda: core.robot_view("r1")["order"] == "O-001")
+    view = status(core, "r1")
+    assert (view.task_type, view.order_id) == ("FILL", "O-001")
+    core.on_fill_result(cmds(out, "FillCmd")[0].goal_id, True, {"A": 1}, {}, "")
+    report(core, "r1", (5, 3))
+    core.tick()
+    assert status(core, "r1").task_type == "TO_OUTBOUND"
+    drive(core, "r1", lambda: core.robot_view("r1")["phase"] == "SWAPPING")
+    assert status(core, "r1").task_type == "SWAP"
+    x, y = core.site.cell_pose((2, 0))
+    core.on_robot_state("r2", x, y, 0.0, "DOCKING")
+    assert status(core, "r2").fsm_state == "DOCKING"
+    core.traffic.on_robot_fault("r2", "DOCK_FAILED")
+    assert (status(core, "r2").fault, status(core, "r2").fault_reason) == ("ERROR", "DOCK_FAILED")

@@ -12,6 +12,9 @@ What this shows and what it does not:
   - A move in progress is assumed to finish. A robot stopping mid-move is only covered by
     the frozen robot table, which checks route cells against the zone the robot holds.
   - Geometry, Nav2 paths and timing are not modelled.
+  - A robot changing its mind at a stop counts as a move, so a robot at a stop is never stuck.
+  - No FIFO, a passed zone is freed at once, and a route changes only at a stop. So this is a
+    quick regression test of the lock graph. tools/model_check.py is the evidence.
 """
 import itertools
 from collections import defaultdict

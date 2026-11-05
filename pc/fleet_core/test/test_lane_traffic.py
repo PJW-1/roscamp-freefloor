@@ -276,3 +276,49 @@ def test_a_robot_placed_across_a_conflict_pair_from_another_is_refused():
     assert len(events) == 1
     assert "AVENUE" in events[0].detail and "a" in events[0].detail
 
+
+def refused_on_the_crossing():
+    """a holds AVENUE, b stands on the lane that crosses it. Nobody has been told to move yet."""
+    now = [0.0]
+    core = TrafficCore(load_site_map(), load_params(), ["a", "b"], lambda: now[0])
+    place(core, "a", "A")
+    place(core, "b", "N", 0.3, "S")
+    core.on_run_mode("RUN")
+    core.take_output()
+    return core, now
+
+
+def test_nothing_moves_while_a_placement_is_refused():
+    """The robot holds no lock and is still standing there, so nobody may be sent past it."""
+    core, _ = refused_on_the_crossing()
+    send(core, "a", "OUTBOUND")
+    for _ in range(3):
+        assert not cmds(core.tick(), "MoveCmd")
+    assert core.robot_view("b")["on_map"] is False
+
+
+def test_a_refused_placement_is_said_once_however_often_it_reports():
+    core, _ = refused_on_the_crossing()
+    for _ in range(5):
+        place(core, "b", "N", 0.3, "S")
+        assert "PLACEMENT_CONFLICT" not in codes(core.tick())
+
+
+def test_moving_the_refused_robot_away_settles_it_without_the_operator():
+    core, _ = refused_on_the_crossing()
+    place(core, "b", "P-5")
+    assert core.robot_view("b")["fault"] == ""
+    assert (core.robot_view("b")["on_map"], held(core, "b")) == (True, ["P-5"])
+    send(core, "a", "OUTBOUND")
+    assert move_of(core.tick(), "a")
+
+
+def test_clearing_a_refused_robot_frees_the_others_and_keeps_it_off_the_map():
+    core, _ = refused_on_the_crossing()
+    assert core.confirm_clear("b", [], "lifted off") == []
+    place(core, "b", "P-5")
+    assert core.robot_view("b")["fault"] == "OUT_OF_SERVICE"
+    assert (core.robot_view("b")["on_map"], held(core, "b")) == (False, [])
+    send(core, "a", "OUTBOUND")
+    assert move_of(core.tick(), "a")
+

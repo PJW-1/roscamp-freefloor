@@ -74,6 +74,15 @@ def test_force_acquire_takes_the_robot_out_of_the_queue(zones):
     assert zones.queue("A") == ()
 
 
+def test_waiting_for_names_the_zone_a_robot_is_queueing_for(zones):
+    zones.request("r1", "A")
+    assert zones.waiting_for("r1") is None
+    zones.request("r2", "A")
+    assert zones.waiting_for("r2") == "A"
+    zones.cancel_request("r2", "A")
+    assert zones.waiting_for("r2") is None
+
+
 def test_held_by_lists_zones_in_acquire_order(zones):
     zones.request("r1", "B")
     zones.request("r1", "A")

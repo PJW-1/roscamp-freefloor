@@ -14,6 +14,8 @@ from fleet_interfaces.msg import (
     FleetEvent,
     OrderBoard,
     OrderItem,
+    RobotStatus,
+    RobotStatusArray,
     ZoneState,
     ZoneStateArray,
 )
@@ -67,8 +69,19 @@ def event_to_msg(event, now: float) -> FleetEvent:
     )
 
 
-def robot_report(msg) -> tuple[float, float, float, str]:
-    return msg.pose.x, msg.pose.y, msg.pose.theta, msg.state
+def robots_to_msg(views, now: float) -> RobotStatusArray:
+    robots = [
+        RobotStatus(robot_id=v.robot_id, fsm_state=v.fsm_state, task_type=v.task_type,
+                    order_id=v.order_id, fault=v.fault, fault_reason=v.fault_reason,
+                    wait_zone=v.wait_zone, wait_robots=list(v.wait_robots),
+                    battery=float(v.battery), x=float(v.x), y=float(v.y), yaw=float(v.yaw))
+        for v in views
+    ]
+    return RobotStatusArray(robots=robots, stamp=to_time(now))
+
+
+def robot_report(msg) -> tuple[float, float, float, str, float]:
+    return msg.pose.x, msg.pose.y, msg.pose.theta, msg.state, msg.battery
 
 
 def move_result(result) -> tuple[bool, str]:

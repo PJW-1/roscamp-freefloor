@@ -136,6 +136,11 @@ def test_with_three_reports_the_same_way_still_ends_in_a_wait_cycle(small_map, u
     assert model.has_cycle()
 
 
+def test_a_start_two_robots_cannot_share_is_refused(small_map):
+    with pytest.raises(ValueError, match="r2"):
+        model_check.Model(load_site_map(small_map), 2, start=["W", "W"])
+
+
 def test_a_state_limit_is_reported_as_an_incomplete_search(small_map):
     site = load_site_map(small_map, bundle_two_way=False)
     cut = model_check.check(site, robots=2, max_states=50)

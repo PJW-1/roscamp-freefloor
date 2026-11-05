@@ -215,6 +215,13 @@ def test_merging_lanes_are_one_unit_so_they_are_never_a_pair():
                           [("a", "m"), ("b", "m")])) == set()
 
 
+def test_a_road_drawn_twice_with_separate_nodes_is_still_a_pair():
+    """The two_way check only compares node names. Geometry catches the same road under others."""
+    site = build({"a": (0, 0), "b": (1, 0), "c": (1, 0.02), "d": (0, 0.02)},
+                 [("a", "b"), ("c", "d")])
+    assert site.conflict_pairs(CLEARANCE, RELEASE) == {frozenset({"b", "d"})}
+
+
 def test_a_bundled_two_way_lane_is_not_a_pair_with_itself():
     assert pairs_of(build(STRAIGHT, [("b", "c")], two_way={"ROAD": ["a", "b"]})) == set()
 

@@ -45,6 +45,9 @@ ERROR = "ERROR"
 OUT_OF_SERVICE = "OUT_OF_SERVICE"
 COMM_LOST = "COMM_LOST"
 RECOVERING = "RECOVERING"
+PLACEMENT_CONFLICT = "PLACEMENT_CONFLICT"
+NO_FAULT = "NONE"  # what /fleet/robots says when nothing is wrong
+_COMM_REASON = {COMM_LOST: "NO_STATE", RECOVERING: "CHECKING_POSE"}
 
 RUN = "RUN"
 STOP = "STOP"
@@ -79,6 +82,7 @@ class _Mission:
     y: float = 0.0
     yaw: float = 0.0
     robot_state: str = ""
+    battery: float = 0.0
     last_seen: float = 0.0
     phase: str = IDLE
     fault: str = ""  # ERROR or OUT_OF_SERVICE, both need the operator
@@ -145,16 +149,17 @@ class TrafficCore:
 
     # ---- inputs -------------------------------------------------------------------------
 
-    def on_robot_state(self, robot, x, y, yaw, state) -> None:
+    def on_robot_state(self, robot, x, y, yaw, state, battery=0.0) -> None:
         m = self._missions[robot]
-        m.x, m.y, m.yaw, m.robot_state = x, y, yaw, state
+        m.x, m.y, m.yaw, m.robot_state, m.battery = x, y, yaw, state, battery
         m.last_seen = self._clock()
-        if not m.placed:
+        if not m.placed and m.fault != OUT_OF_SERVICE:
             self._place(m)
         elif m.comm == COMM_LOST and not m.fault:
             self._begin_recovery(m)
-        self._count_reports_outside(m)
-        self._watch_lane_error(m)
+        if m.placed:
+            self._count_reports_outside(m)
+            self._watch_lane_error(m)
 
     def on_run_mode(self, run_mode) -> None:
         if run_mode == STOP and self._run_mode != STOP:
@@ -359,6 +364,23 @@ class TrafficCore:
             "attempts": m.attempts,
         }
 
+    def status_view(self, robot) -> dict:
+        """What /fleet/robots shows that only traffic knows."""
+        m = self._missions[robot]
+        wait_zone = self.zones.waiting_for(robot) or ""
+        in_the_way = self.zones.blockers(robot, wait_zone) if wait_zone else ()
+        return {
+            "fsm_state": m.robot_state,
+            "fault": m.fault or m.comm or NO_FAULT,
+            "fault_reason": m.fault_reason if m.fault else _COMM_REASON.get(m.comm, ""),
+            "wait_zone": wait_zone,
+            "wait_robots": tuple(sorted(in_the_way)),
+            "battery": m.battery,
+            "x": m.x,
+            "y": m.y,
+            "yaw": m.yaw,
+        }
+
     # ---- placement and helpers ----------------------------------------------------------
 
     def _own_goal_id(self) -> int:
@@ -366,16 +388,18 @@ class TrafficCore:
         return self._goal_seq
 
     def _everyone_reported(self, now: float) -> bool:
-        missing = [m.name for m in self._missions.values()
+        missing = [m for m in self._missions.values()
                    if not m.placed and m.fault != OUT_OF_SERVICE]
         if not missing:
             return True
         if self._startup_since is None:
             self._startup_since = now
-        if not self._missing_reported and now - self._startup_since >= self.params.startup_wait_s:
+        silent = [m.name for m in missing if not m.fault]  # a refused robot has already reported
+        if (silent and not self._missing_reported
+                and now - self._startup_since >= self.params.startup_wait_s):
             self._missing_reported = True
             self._event("ERROR", "ROBOT_NOT_REPORTING",
-                        f"nothing moves until {missing} report a position")
+                        f"nothing moves until {silent} report a position")
         return False
 
     def _event(self, level, code, detail, robot="") -> None:
@@ -385,18 +409,28 @@ class TrafficCore:
         return self.site.zone_of[cell]
 
     def _place(self, m: _Mission) -> None:
+        """Take the zone it reports from, or stay off the map and try again at the next report.
+
+        A refused robot stands there with no lock, so _everyone_reported keeps everybody still
+        until it has moved or the operator has cleared it.
+        """
         cell = self.site.nearest_cell(m.x, m.y, radius=self.params.release_distance_m)
+        zone = self._zone(cell)
+        in_the_way = self.zones.holders_around(zone, m.name)
+        if not self.zones.force_acquire(m.name, zone):
+            if m.fault_reason != PLACEMENT_CONFLICT:
+                m.fault = ERROR
+                m.fault_reason = PLACEMENT_CONFLICT
+                self._event("ERROR", PLACEMENT_CONFLICT,
+                            f"{m.name} cannot take {zone}, held: {in_the_way}", m.name)
+            return
         m.placed = True
         m.path = [cell]
         m.idx = 0
         m.phase = PARKED if cell in self.site.parking else IDLE
-        zone = self._zone(cell)
-        in_the_way = self.zones.holders_around(zone, m.name)
-        if not self.zones.force_acquire(m.name, zone):
-            m.fault = ERROR
-            m.fault_reason = "PLACEMENT_CONFLICT"
-            self._event("ERROR", "PLACEMENT_CONFLICT",
-                        f"{m.name} cannot take {zone}, held: {in_the_way}", m.name)
+        if m.fault_reason == PLACEMENT_CONFLICT:
+            m.fault = ""
+            m.fault_reason = ""
 
     def _upcoming(self, m: _Mission) -> tuple[str, str | None]:
         """The robot's current zone and the next different zone on its path."""

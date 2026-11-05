@@ -21,6 +21,7 @@ from fleet_interfaces.msg import (  # noqa: E402
     OrderBoard,
     OrderItem,
     RobotState,
+    RobotStatusArray,
 )
 from fleet_interfaces.srv import ReportOrder  # noqa: E402
 from fleet_manager.fms_node import FmsNode  # noqa: E402
@@ -63,6 +64,10 @@ class World(Node):
             AssignmentArray, name("assignments"),
             lambda m: self.assignments.append(list(m.assignments)),
             to_ros_qos(contract.qos("assignments")))
+        self.status = []
+        self.create_subscription(
+            RobotStatusArray, name("robots"), self.status.append,
+            to_ros_qos(contract.qos("robots")))
         self.create_timer(0.02, self._publish_state, callback_group=group)
         self.create_service(ReportOrder, name("report_order"), self._on_report)
         self._servers = [
@@ -161,6 +166,17 @@ def test_an_order_goes_through_fill_and_swap_to_its_report(graph):
     seen = [(a.order_id, a.station_id, a.task_type) for array in graph.assignments for a in array]
     assert ("O-001", "WORK", "FILL") in seen
     assert ("O-001", "OUTBOUND", "SWAP") in seen
+
+
+def test_the_status_of_every_robot_comes_out_about_once_a_second(graph):
+    graph.status.clear()
+    assert wait_for(lambda: len(graph.status) >= 3), f"got {len(graph.status)}"
+    first, last = graph.status[0], graph.status[-1]
+    span = (last.stamp.sec - first.stamp.sec) + (last.stamp.nanosec - first.stamp.nanosec) / 1e9
+    assert 0.7 <= span / (len(graph.status) - 1) <= 1.3
+    robot = last.robots[0]
+    assert (robot.robot_id, robot.fsm_state, robot.fault) == ("pinky1", "IDLE", "NONE")
+    assert (robot.x, robot.y) != (0.0, 0.0)
 
 
 def test_stop_cancels_the_fill_on_its_server_and_run_sends_what_remains(graph):

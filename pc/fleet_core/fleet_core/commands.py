@@ -96,6 +96,22 @@ class AssignmentView:
     task_type: str  # TO_WORK | FILL | TO_OUTBOUND | SWAP | WAIT
 
 
+@dataclass(frozen=True)
+class RobotStatusView:
+    robot_id: str
+    fsm_state: str  # what the pinky reported, as it reported it
+    task_type: str  # as in AssignmentView, empty when off the floor
+    order_id: str
+    fault: str  # NONE | ERROR | COMM_LOST | OUT_OF_SERVICE | RECOVERING
+    fault_reason: str
+    wait_zone: str
+    wait_robots: tuple[str, ...]
+    battery: float
+    x: float
+    y: float
+    yaw: float
+
+
 # ---- inside the FMS: orchestrator_core -> traffic_core --------------------------------------
 
 

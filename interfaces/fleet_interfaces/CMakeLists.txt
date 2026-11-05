@@ -6,6 +6,8 @@ find_package(geometry_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
       "msg/RobotState.msg"
+      "msg/RobotStatus.msg"
+      "msg/RobotStatusArray.msg"
       "msg/ArmState.msg"
       "msg/ItemArray.msg"
       "msg/OrderItem.msg"
