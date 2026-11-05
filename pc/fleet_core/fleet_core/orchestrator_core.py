@@ -72,6 +72,16 @@ class _ArmJob:
 
 
 @dataclass
+class _LostJob:
+    """A job given up on with ARM_NO_RESULT. Its result can still come."""
+
+    robot: str
+    server: str
+    kind: str  # FILL or SWAP
+    order_id: str  # bound when it was given up on, empty if the order was already reported
+
+
+@dataclass
 class _BoundOrder:
     order_id: str
     items: dict[str, int]
@@ -110,6 +120,7 @@ class OrchestratorCore:
         self._work = next(s.id for s in stations.values() if s.action == FILL)
         self._outbound = next(s.id for s in stations.values() if s.action == SWAP)
         self._cleared_jobs: dict[str, tuple[int, float]] = {}  # server -> canceled goal, deadline
+        self._lost_jobs: dict[int, _LostJob] = {}  # goal -> job, until its late result comes
 
     # ---- inputs -------------------------------------------------------------------------
 
@@ -145,6 +156,7 @@ class OrchestratorCore:
         self._forget_cleared_job(goal_id)
         r = self._arm_job_owner(goal_id, FILL)
         if r is None:
+            self._late_fill(goal_id, placed)
             return
         job, r.arm = r.arm, None
         _merge(r.order.placed, placed)
@@ -158,6 +170,7 @@ class OrchestratorCore:
         self._forget_cleared_job(goal_id)
         r = self._arm_job_owner(goal_id, SWAP)
         if r is None:
+            self._late_swap(goal_id, took_full, put_empty_done)
             return
         job, r.arm = r.arm, None
         if took_full and r.basket == FULL:
@@ -204,6 +217,8 @@ class OrchestratorCore:
                     now - job.canceled_at >= self.params.arm_cancel_wait_s):
                 # Nobody can say what is in the basket now, so the operator has to look.
                 r.arm = None
+                self._lost_jobs[job.goal_id] = _LostJob(r.name, job.server, job.kind,
+                                                        self.order_of(r.name))
                 reason = f"{job.server} goal {job.goal_id} never reported"
                 self._fail(r, reason)
                 self._event("ERROR", "ARM_NO_RESULT", reason, r.name)
@@ -278,7 +293,7 @@ class OrchestratorCore:
         self._out.append(CancelCmd(r.arm.server, r.arm.goal_id))
 
     def _arm_attempt_failed(self, r, job, reason, retry_code, failed_code) -> None:
-        if reason == CANCELED and not job.timed_out:
+        if reason == CANCELED and job.canceled_at is not None and not job.timed_out:
             return  # STOP canceled it, nothing went wrong
         r.attempts += 1
         r.arm_retry_at = self._clock() + self.params.arm_retry_wait_s
@@ -288,6 +303,46 @@ class OrchestratorCore:
         else:
             self._event("WARN", retry_code,
                         f"{job.server} attempt {r.attempts} failed: {reason}", r.name)
+
+    def _late_fill(self, goal_id: int, placed: dict[str, int]) -> None:
+        lost = self._take_lost_job(goal_id, FILL)
+        if lost is None:
+            return
+        self._late_event(goal_id, lost, f"placed {placed}")
+        if self._still_bound(lost):
+            _merge(self._robots[lost.robot].order.placed, placed)
+
+    def _late_swap(self, goal_id: int, took_full: bool, put_empty_done: bool) -> None:
+        lost = self._take_lost_job(goal_id, SWAP)
+        if lost is None:
+            return
+        self._late_event(goal_id, lost, f"took_full={took_full} put_empty_done={put_empty_done}")
+        r = self._robots[lost.robot]
+        if self._still_bound(lost) and took_full and r.basket == FULL:
+            r.basket = EMPTY if put_empty_done else NONE
+            self._report_shipped(r)
+
+    def _take_lost_job(self, goal_id: int, kind: str) -> _LostJob | None:
+        lost = self._lost_jobs.get(goal_id)
+        if lost is None or lost.kind != kind:
+            return None
+        return self._lost_jobs.pop(goal_id)
+
+    def _still_bound(self, lost: _LostJob) -> bool:
+        """Only clearing the robot takes the order away while it is in fault."""
+        return bool(lost.order_id) and self.order_of(lost.robot) == lost.order_id
+
+    def _late_event(self, goal_id: int, lost: _LostJob, reported: str) -> None:
+        if not lost.order_id:
+            then = "its order had already been reported"
+        elif self._still_bound(lost):
+            then = f"{lost.order_id} is still bound and {lost.robot} stays in fault"
+        else:
+            then = (f"{lost.robot} was cleared and {lost.order_id} requeued, so it may be filled "
+                    "or shipped twice: check the basket")
+        self._event("WARN", "ARM_LATE_RESULT",
+                    f"{lost.server} goal {goal_id} reported {reported} after ARM_NO_RESULT, {then}",
+                    lost.robot)
 
     # ---- orders -------------------------------------------------------------------------
 

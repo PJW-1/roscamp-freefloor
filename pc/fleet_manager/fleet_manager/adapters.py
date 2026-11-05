@@ -5,6 +5,7 @@ only place in the fleet manager that needs editing.
 """
 from __future__ import annotations
 
+from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Time
 from fleet_core.commands import OrderRecord
 from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket
@@ -22,6 +23,10 @@ from fleet_interfaces.msg import (
 from fleet_interfaces.srv import ReportOrder
 
 SOURCE = "fleet_manager"
+REASON_OF_STATUS = {
+    GoalStatus.STATUS_CANCELED: MoveTo.Result.REASON_CANCELED,
+    GoalStatus.STATUS_ABORTED: "ABORTED",
+}
 
 
 def to_time(seconds: float) -> Time:
@@ -84,6 +89,14 @@ def robot_report(msg) -> tuple[float, float, float, str, float]:
     return msg.pose.x, msg.pose.y, msg.pose.theta, msg.state, msg.battery
 
 
+def goal_result(response):
+    """The result of a finished goal. A server may say how it ended by the status alone."""
+    result = response.result
+    if getattr(result, "reason", None) == "":
+        result.reason = REASON_OF_STATUS.get(response.status, "")
+    return result
+
+
 def move_result(result) -> tuple[bool, str]:
     return result.success, result.reason
 
@@ -139,6 +152,10 @@ def fill_goal(cmd) -> FillBasket.Goal:
 def swap_goal(cmd) -> SwapBasket.Goal:
     return SwapBasket.Goal(order_id=cmd.order_id, robot_id=cmd.robot, station_id=cmd.station_id,
                            take_full=bool(cmd.take_full), put_empty=bool(cmd.put_empty))
+
+
+def report_accepted(response) -> bool:
+    return response.accepted
 
 
 def report_request(cmd) -> ReportOrder.Request:

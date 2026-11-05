@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +22,7 @@ from fleet_core.site_map import load_site_map  # noqa: E402
 from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket  # noqa: E402
 from fleet_interfaces.msg import (  # noqa: E402
     AssignmentArray,
+    FleetEvent,
     Order,
     OrderBoard,
     OrderItem,
@@ -30,10 +32,12 @@ from fleet_interfaces.msg import (  # noqa: E402
 )
 from fleet_interfaces.srv import ConfirmClear, ReportOrder  # noqa: E402
 from fleet_manager.fms_node import FmsNode  # noqa: E402
+from fleet_manager.goal_tracker import ReportOutbox  # noqa: E402
 from rclpy.action import ActionServer, CancelResponse  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
 from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from rclpy.task import Future  # noqa: E402
 from std_msgs.msg import Header  # noqa: E402
 
 REPLAY = Path(__file__).parents[3] / "tools" / "replay.py"
@@ -63,7 +67,15 @@ class World(Node):
         self.assignments = []
         self.hold_fill = threading.Event()  # while set, a fill runs until it is canceled
         self.canceled_fills = []
+        self.fill_cancel_reason = "CANCELED"
+        self.report_accepted = True
+        self.report_delay_s = 0.0
+        self.refuse_fill_cancel = False
+        self.fill_cancel_asks = 0
         name = contract.name
+        self.events = []
+        self.create_subscription(
+            FleetEvent, name("events"), self.events.append, to_ros_qos(contract.qos("events")))
         self.board = self.create_publisher(
             OrderBoard, name("order_board"), to_ros_qos(contract.qos("order_board")))
         self.state = self.create_publisher(
@@ -85,10 +97,11 @@ class World(Node):
             Header, name("heartbeat"), lambda _m: self.beats.append(time.monotonic()),
             to_ros_qos(contract.qos("heartbeat")))
         self.create_timer(0.02, self._publish_state, callback_group=group)
-        self.create_service(ReportOrder, name("report_order"), self._on_report)
+        self.create_service(ReportOrder, name("report_order"), self._on_report,
+                            callback_group=group)
         self._servers = [
             ActionServer(self, FillBasket, name("fill_basket"), self._on_fill,
-                         callback_group=group, cancel_callback=lambda _: CancelResponse.ACCEPT),
+                         callback_group=group, cancel_callback=self._on_fill_cancel),
             ActionServer(self, SwapBasket, name("swap_basket", arm="arm3"), self._on_swap,
                          callback_group=group),
         ]
@@ -129,10 +142,14 @@ class World(Node):
                 handle.canceled()
                 self.canceled_fills.append(handle.request.order_id)
                 return FillBasket.Result(success=False, placed=items({first: 1}),
-                                         reason="CANCELED")
+                                         reason=self.fill_cancel_reason)
             time.sleep(0.01)
         handle.succeed()
         return FillBasket.Result(success=True, placed=items(wanted))
+
+    def _on_fill_cancel(self, _handle):
+        self.fill_cancel_asks += 1
+        return CancelResponse.REJECT if self.refuse_fill_cancel else CancelResponse.ACCEPT
 
     def _on_swap(self, handle):
         self.swaps.append((handle.request.order_id, handle.request.take_full,
@@ -143,7 +160,8 @@ class World(Node):
 
     def _on_report(self, request, response):
         self.reports.append(request)
-        response.accepted = True
+        time.sleep(self.report_delay_s)
+        response.accepted = self.report_accepted
         return response
 
 
@@ -159,6 +177,7 @@ def graph():
     thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
     yield world
+    world.hold_fill.clear()  # a test that failed must not leave a server thread spinning
     executor.shutdown()
     thread.join(timeout=5)
     world.destroy_node()
@@ -337,3 +356,85 @@ def test_stop_cancels_the_fill_on_its_server_and_run_sends_what_remains(graph):
     assert wait_for(lambda: graph.reports), f"fills {graph.fills}"
     assert graph.fills[1][3] == {"C": 2}, "A was placed before the stop"
     assert graph.reports[0].status == "SHIPPED"
+
+
+def test_a_stop_answered_with_the_status_alone_is_no_failed_attempt(graph):
+    """The server calls canceled() and leaves the reason empty: the goal status says it all."""
+    graph.hold_fill.set()
+    graph.fill_cancel_reason = ""
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.fills), "the fill never reached the server"
+    publish(graph, "STOP", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.canceled_fills), "the cancel never reached the server"
+    orchestrator = graph.fms.core.orchestrator
+    assert wait_for(lambda: orchestrator.robot_view("pinky1")["placed"]), "no result came in"
+    assert orchestrator.robot_view("pinky1")["attempts"] == 0
+
+
+def events_of(world, code):
+    return [e for e in world.events if e.code == code]
+
+
+def test_a_refused_cancel_is_sent_again_and_warned_about_once_until_the_result_comes(graph):
+    graph.hold_fill.set()
+    graph.refuse_fill_cancel = True
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.fills), "the fill never reached the server"
+    publish(graph, "STOP", {"A": 1, "C": 2})
+    assert wait_for(lambda: events_of(graph, "CANCEL_UNCONFIRMED"), 10.0), graph.fill_cancel_asks
+    assert graph.fill_cancel_asks >= 3
+    event = events_of(graph, "CANCEL_UNCONFIRMED")[0]
+    assert (event.level, event.source) == ("WARN", "workcell")
+    assert "goal" in event.detail
+    asks = graph.fill_cancel_asks
+    assert wait_for(lambda: graph.fill_cancel_asks > asks, 5.0), "it stopped trying"
+    graph.hold_fill.clear()
+    assert wait_for(lambda: not graph.fms._goals._cancels, 5.0), "the result ended nothing"
+    asks = graph.fill_cancel_asks
+    time.sleep(1.5)
+    assert graph.fill_cancel_asks == asks, "the result came, so nobody has to ask any more"
+    assert len(events_of(graph, "CANCEL_UNCONFIRMED")) == 1
+
+
+def test_a_report_with_no_reply_yet_is_sent_again_and_ends_with_the_reply(graph):
+    graph.report_delay_s = 2.5  # longer than report_retry_s
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: len(graph.reports) >= 2), f"reports {graph.reports}"
+    assert {r.order_id for r in graph.reports} == {"O-001"}
+    assert wait_for(lambda: not graph.fms._reports._items, 10.0), "the reply ended nothing"
+    sent = len(graph.reports)
+    time.sleep(2.5)
+    assert len(graph.reports) == sent, "the reply came, so nothing goes out again"
+    assert not events_of(graph, "ORDER_REPORT_REFUSED")
+
+
+def test_an_accepted_report_is_sent_once(graph):
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.reports), f"fills {graph.fills}, swaps {graph.swaps}"
+    assert wait_for(lambda: not graph.fms._reports._items, 5.0), "the reply ended nothing"
+    time.sleep(2.5)
+    assert len(graph.reports) == 1
+
+
+def test_a_refused_report_is_dropped_with_one_error_naming_the_order(graph):
+    graph.report_accepted = False
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: events_of(graph, "ORDER_REPORT_REFUSED")), f"{graph.reports}"
+    event = events_of(graph, "ORDER_REPORT_REFUSED")[0]
+    assert event.level == "ERROR" and "O-001" in event.detail
+    assert not graph.fms._reports._items
+    time.sleep(2.5)
+    assert len(graph.reports) == 1, "a refusal is an answer, so it does not go out again"
+    assert len(events_of(graph, "ORDER_REPORT_REFUSED")) == 1
+
+
+def test_a_failed_reply_keeps_the_report_for_sending_again():
+    report = SimpleNamespace(order_id="O-001")
+    outbox = ReportOutbox()
+    outbox.add(report)
+    [(report_id, _)] = outbox.due(0.0, True, 2.0)
+    future = Future()
+    future.set_exception(RuntimeError("central went away"))
+    node = SimpleNamespace(_reports=outbox, get_logger=lambda: SimpleNamespace(warning=print))
+    FmsNode._report_answered(node, report_id, report, future)
+    assert outbox.due(2.0, True, 2.0) == [(report_id, report)]

@@ -5,6 +5,8 @@ string robot_id
 string station_id
 OrderItem[] items
 ---
+string REASON_CANCELED="CANCELED"
+
 # success=true means the server finished trying, even if `missing` is not empty.
 # success=false means the arms failed; `placed` is what is really in the basket so far.
 bool success

@@ -22,6 +22,9 @@ arm_cancel_wait_s: 5.0        # estimate
 arm_retry_wait_s: 2.0         # estimate
 fill_timeout_s: 90.0          # estimate: two arms filling one basket
 swap_timeout_s: 60.0          # estimate: arm3 taking the full basket and placing an empty one
+cancel_retry_s: 1.0           # estimate: ask again this often while a canceled goal has no result
+cancel_warn_after: 3          # CANCEL_UNCONFIRMED once this many tries went unanswered
+report_retry_s: 2.0           # estimate: send an order report again after this long with no reply
 zone_wait_warn_s: 60.0        # warn when a robot has waited this long for one zone
 deadlock_grace_s: 5.0         # wait before the second deadlock step
 score_same_call: -4.0         # a robot already called keeps the call unless another is clearly closer
