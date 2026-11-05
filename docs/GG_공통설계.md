@@ -159,7 +159,7 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `on_dispatch(goal_id, station_id, robot_id="")`: orchestrator → traffic. 로봇을 스테이션으로 보내 달라는 요청. `robot_id`가 비면 traffic이 고른다.
 - `on_dispatch_cancel(goal_id)`: orchestrator → traffic. 아직 끝나지 않은 요청을 취소한다.
 - `on_release(robot)`: orchestrator → traffic. 스테이션에서 할 일이 끝난 로봇을 놓아준다.
-- `DispatchFeedback(goal_id, robot_id, phase)`, `DispatchResult(goal_id, success, robot_id, reason, error_x_cm, error_y_cm, error_yaw_deg)`: traffic → orchestrator. 반대 방향 보고. `phase`는 `NO_ROBOT` 하나뿐이다. 합치기 전 판의 CALLED, EN_ROUTE, QUEUED, DOCKING은 읽는 곳이 없어 만들지 않았다. 결과가 success면 그 로봇은 도크에 서서(AT_STATION) `on_dispatch(robot_id 지정)`나 `on_release`를 기다린다. 실패 이유 `reason`: `NOT_AVAILABLE`(쓸 수 없는 로봇), `BUSY`(이미 다른 요청이 있음), `CANCELED`, `ROBOT_REMOVED`, `REJECTED`(이동 목표 거절이 재시도 한도까지 이어짐), `DOCK_FAILED`(도킹 실패가 재시도 한도까지 이어짐). 그 밖에는 고정된 값이 아니다. 이동 실패가 재시도 한도에 닿으면 이동 결과의 `reason`을, `on_robot_fault`로 ERROR가 되면 그때 받은 이유를 그대로 넣는다.
+- `DispatchFeedback(goal_id, robot_id, phase)`, `DispatchResult(goal_id, success, robot_id, reason, error_x_cm, error_y_cm, error_yaw_deg)`: traffic → orchestrator. 반대 방향 보고. `phase`는 `NO_ROBOT` 하나뿐이다. 합치기 전 판의 CALLED, EN_ROUTE, QUEUED, DOCKING은 읽는 곳이 없어 만들지 않았다. 결과가 success면 그 로봇은 도크에 서서(AT_STATION) `on_dispatch(robot_id 지정)`나 `on_release`를 기다린다. 실패 이유 `reason`: `NOT_AVAILABLE`(쓸 수 없는 로봇), `BUSY`(이미 다른 요청이 있음), `CANCELED`, `ROBOT_REMOVED`, `REJECTED`(이동이나 도킹 목표 거절이 재시도 한도까지 이어짐), `DOCK_FAILED`(도킹 실패가 재시도 한도까지 이어짐). 그 밖에는 고정된 값이 아니다. 이동 실패가 재시도 한도에 닿으면 이동 결과의 `reason`을, `on_robot_fault`로 ERROR가 되면 그때 받은 이유를 그대로 넣는다.
 
 두 모듈 사이는 위가 전부이고, `traffic_core`는 `orchestrator_core`를 import하지 않으며 주문과 바구니 타입을 쓰지 않는다(경계 시험 `test_fms_boundary.py`). 다만 다음 세 가지는 이 호출로 표현할 수 없어 둘을 묶는 `FmsCore`가 따로 전달한다. 지시서의 "네 호출"에 없는 항목이므로 팀에 알린다.
 - `on_run_mode(mode)`: central의 STOP/PAUSE/RUN을 두 모듈에 각각 넘긴다. 주문과 상관없이 달리던 로봇도 멈춰야 하므로 dispatch 취소로는 안 된다.
@@ -378,13 +378,13 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 
 | 검증 | 결과 |
 |---|---|
-| 단위·통합 시험 | `ba725ce`. 779건, 실패 0, 오류 0, 건너뜀 0(`fleet_core` 476, `fake_robots` 262, `fleet_manager` 41, `colcon test` 674 s) |
-| 시나리오 6개(기본 지도, 실제 launch) | `ba725ce`(위 시험 안에서 실행). 전부 심판 통과, 조기 해제 0, near 0. 출고는 `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6, `operator_recovery` 4/4 |
+| 단위·통합 시험 | `b6d75d9`. 780건, 실패 0, 오류 0, 건너뜀 0(`fleet_core` 477, `fake_robots` 262, `fleet_manager` 41, `colcon test` 675 s) |
+| 시나리오 6개(기본 지도, 실제 launch) | `b6d75d9`(위 시험 안에서 실행). 전부 심판 통과, 조기 해제 0, near 0. 출고는 `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6, `operator_recovery` 4/4 |
 | 전수 검사, 로봇 2대 (상태, 교착, 기아) | `fa94eb6`. `oneway_loop` (34407, 0, 0). `oneway_shortcut` 묶음 끔 (69497, 36, 30), 켬 (62615, 0, 0). 기본 지도 끔 (36573, 432, 396), 켬 (37078, 0, 0). 충돌쌍을 넘는 FIFO에서도 켬은 0이다 |
 | 전수 검사, 로봇 3대 | `oneway_loop`은 `c9f46ab` 전의 복사본, 나머지는 `c9f46ab`. 새 코드로 다시 돌리지 않았다. `oneway_loop` (6295143, 0, 0), 끝까지. `oneway_shortcut`과 기본 지도의 묶음 끔은 교착이 나오는 것까지 확인했다(첫 교착에서 멈춤). 두 지도의 묶음 켬은 이 문서를 쓸 때 아직 돌고 있다. 결과는 작업 기록 3번에 적는다 |
-| 기록 재생 | `ba725ce`(위 시험 안에서 실행). 시나리오 6개 모두 기록과 같은 명령 |
-| FMS 재시작 | 죽인 뒤 세 대 모두 1.5 s 안에 정지(벽시계, 5회 측정, 최대 1.49 s. 3회는 `fa94eb6`, 2회는 `1f56911`). 새 FMS는 전원 보고부터 다시 시작. `ba725ce`의 전체 시험에서도 통과했지만 이 시험의 판정선은 1.5 s에 여유 1 s를 더한 값이고 그 실행의 초는 적어 두지 않았다 |
-| 압박 시험 | `78011a2`(그 뒤 `traffic_core.py`의 변경은 오류 문구뿐이다). d 0.2에서 τ 0.5, ε 0.05까지 전 조합 조기 해제 0, near 0, 교착 0(조합마다 시드 1개). d 0.17, ε 0.05에서 심판 기준 위반 1회. d ≤ 2r은 시작 거부. 표는 작업 기록 7번 |
+| 기록 재생 | `b6d75d9`(위 시험 안에서 실행). 시나리오 6개 모두 기록과 같은 명령 |
+| FMS 재시작 | 죽인 뒤 세 대 모두 1.5 s 안에 정지(벽시계, 5회 측정, 최대 1.49 s. 3회는 5번 리뷰를 반영한 코드로 `fa94eb6`에 커밋, 2회는 6번 리뷰를 반영한 코드로 `1f56911`에 커밋). 새 FMS는 전원 보고부터 다시 시작. `b6d75d9`의 전체 시험에서도 통과했지만 이 시험의 판정선은 1.5 s에 여유 1 s를 더한 값이고 그 실행의 초는 적어 두지 않았다 |
+| 압박 시험 | 커밋 전 작업 트리. d 0.2 표는 `fa94eb6`에, 나머지 표는 `1f56911`에 7번 변경을 얹은 코드다(`78011a2`에 커밋). 그 뒤 다시 돌리지 않았다. d 0.2에서 τ 0.5, ε 0.05까지 전 조합 조기 해제 0, near 0, 교착 0(조합마다 시드 1개). d 0.17, ε 0.05에서 심판 기준 위반 1회. d ≤ 2r은 시작 거부. 표는 작업 기록 7번 |
 
 모델이 다루지 않는 것은 작업 기록 3번에 있다. 전수 검사는 추상 모델이고, 재시작의 숫자는 즉시 서는 `FakePinky`의 값이며, 압박 시험의 near는 앞 로봇이 d 근처에 서는 경우를 만들지 않았다.
 
