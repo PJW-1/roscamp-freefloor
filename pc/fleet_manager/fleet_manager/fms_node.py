@@ -209,7 +209,17 @@ class FmsNode(Node):
             self._reports.add(command)
         elif isinstance(command, EventOut):
             self._events_pub.publish(adapters.event_to_msg(command, now))
-            self.get_logger().info(f"{command.level} {command.code} {command.detail}")
+            self._log_event(command)
+
+    def _log_event(self, event) -> None:
+        # One call per severity: rclpy raises if a call site changes severity between calls.
+        text = f"{event.code} {event.detail}"
+        if event.level == "ERROR":
+            self.get_logger().error(text)
+        elif event.level == "WARN":
+            self.get_logger().warning(text)
+        else:
+            self.get_logger().info(text)
 
     # ------------------------------------------------------------------ action plumbing
     def _send(self, client, goal, key, on_result, on_rejected) -> None:

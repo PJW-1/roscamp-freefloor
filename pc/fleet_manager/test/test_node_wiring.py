@@ -15,6 +15,7 @@ import pytest
 rclpy = pytest.importorskip("rclpy")
 pytest.importorskip("fleet_interfaces")
 
+from fleet_core.commands import EventOut  # noqa: E402
 from fleet_core.contract import to_ros_qos  # noqa: E402
 from fleet_core.site_map import load_site_map  # noqa: E402
 from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket  # noqa: E402
@@ -291,6 +292,32 @@ def test_a_zone_that_does_not_exist_is_refused_and_the_node_lives_on(graph):
     assert wait_for(future.done, 10.0), "no reply: the callback raised"
     assert not future.result().accepted
     assert fms.core.traffic.robot_view("pinky1")["fault"] == ""
+
+
+def test_an_event_is_logged_at_its_own_level(graph, monkeypatch):
+    """rclpy refuses a second severity from one call site, so the real logger comes first."""
+    fms = graph.fms
+    events = [EventOut(level, f"CODE_{level}", "detail") for level in ("INFO", "WARN", "ERROR")]
+    for event in events * 2:
+        fms._log_event(event)
+
+    logged = []
+
+    class Recorder:
+        def info(self, text):
+            logged.append(("info", text))
+
+        def warning(self, text):
+            logged.append(("warning", text))
+
+        def error(self, text):
+            logged.append(("error", text))
+
+    monkeypatch.setattr(fms, "get_logger", Recorder)
+    for event in events:
+        fms._log_event(event)
+    assert [level for level, _ in logged] == ["info", "warning", "error"]
+    assert all(event.code in text for event, (_, text) in zip(events, logged, strict=True))
 
 
 def test_the_heartbeat_comes_twice_a_second(graph):
