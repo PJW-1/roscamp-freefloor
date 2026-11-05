@@ -91,6 +91,7 @@ class SiteMap:
         self._pose = {_node_id(n["id"]): (float(n["x"]), float(n["y"])) for n in data["nodes"]}
         if bundle_two_way is None:
             bundle_two_way = bool(data.get("bundle_two_way", True))
+        self.bundle_two_way = bundle_two_way
         two_way = {name: (_node_id(a), _node_id(b))
                    for name, (a, b) in (data.get("two_way") or {}).items()}
         self.lanes = self._build_lanes(data.get("lanes") or [], two_way)

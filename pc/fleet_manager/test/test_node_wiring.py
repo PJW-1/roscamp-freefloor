@@ -219,7 +219,8 @@ def test_a_new_fms_stays_silent_until_any_goal_of_an_old_one_must_have_stopped(g
 def test_a_robot_counts_only_once_its_goals_can_reach_it():
     """A new FMS hears reports before it has found the action servers. A goal sent then would be
     refused, and the retries would be gone in a moment. Until all count it says nothing about
-    the locks either: it does not know them yet, and that is not the same as free.
+    the locks either: it does not know them yet, and that is not the same as free. Nor does it
+    beat: a goal of the FMS before this one would take that for its own and keep going.
 
     Not pinky1: a server of the tests before this one can linger in the graph for a moment.
     """
@@ -236,9 +237,11 @@ def test_a_robot_counts_only_once_its_goals_can_reach_it():
         time.sleep(1.0)
         assert not node.core.traffic.robot_view("pinky3")["on_map"]
         assert not world.zones
+        assert not world.beats
         world.serve_robot()
         assert wait_for(lambda: node.core.traffic.robot_view("pinky3")["on_map"], 20.0)
         assert wait_for(lambda: world.zones, 5.0)
+        assert wait_for(lambda: world.beats, 5.0)
     finally:
         executor.shutdown()
         thread.join(timeout=5)

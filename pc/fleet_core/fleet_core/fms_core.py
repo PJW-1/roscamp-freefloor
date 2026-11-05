@@ -45,6 +45,7 @@ class FmsCore:
         self._clock = clock
         self._time = clock()
         self._write = None
+        self._fed = False
         self._goal_seq = 0
         self.traffic = TrafficCore(site, params, robots, self._frozen, self._next_goal_id)
         self.orchestrator = OrchestratorCore(site.stations, params, robots, self._frozen,
@@ -62,10 +63,18 @@ class FmsCore:
         return self.orchestrator.shipped
 
     def record_to(self, write) -> None:
-        """From now on `write` gets every input and what came of it, one JSON line each."""
+        """`write` gets every input and what came of it, one JSON line each.
+
+        The first line is all a replay starts from, so this comes before the first input.
+        """
+        if self._fed:
+            raise RuntimeError("a record has to start before the first input")
+        if not self.site.source_text:
+            raise ValueError("a record needs the text of the map, and this map has none")
         self._write = write
-        write(json.dumps({"robots": self.traffic.robots, "params": asdict(self.params),
-                          "map": self.site.source_text}))
+        write(json.dumps({"recorded": True, "robots": self.traffic.robots,
+                          "params": asdict(self.params), "map": self.site.source_text,
+                          "bundle_two_way": self.site.bundle_two_way}))
 
     # ---- inputs -------------------------------------------------------------------------
 
@@ -201,6 +210,7 @@ class FmsCore:
         return self._time
 
     def _input(self, method, *args) -> None:
+        self._fed = True
         self._time = self._clock()
         if self._write:
             self._write(json.dumps({"t": self._time, "in": method, "args": args}, default=asdict))

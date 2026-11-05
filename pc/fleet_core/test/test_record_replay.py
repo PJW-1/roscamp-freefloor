@@ -8,10 +8,11 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from fleet_core.commands import OrderRecord
 from fleet_core.fms_core import FmsCore
 from fleet_core.params import load_params
-from fleet_core.site_map import load_site_map
+from fleet_core.site_map import SiteMap, load_site_map
 from sim_world import SimWorld, six_orders
 
 REPO = Path(__file__).resolve().parents[3]
@@ -35,6 +36,12 @@ def run(tmp_path_factory):
     path = tmp_path_factory.mktemp("records") / "run.jsonl"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path, lines
+
+
+def run_tool(path):
+    return subprocess.run([sys.executable, str(REPO / "tools" / "replay.py"), str(path)],
+                          env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+                          capture_output=True, text=True, timeout=120)
 
 
 def changed(path, tmp_path, change):
@@ -139,18 +146,114 @@ def test_a_line_left_out_is_found(run, tmp_path):
 
 
 def test_a_record_that_just_ends_is_no_difference(run, tmp_path):
-    """A process that was killed stops writing anywhere."""
+    """A process that was killed stops writing anywhere. Only what the last input caused can be
+    past the end, and the tool says how much of that it could not compare."""
     lines = run[0].read_text(encoding="utf-8").splitlines()
     position = next(n for n, line in enumerate(lines) if '"out"' in line)
     copy = tmp_path / "cut.jsonl"
     copy.write_text("\n".join(lines[:position]) + "\n", encoding="utf-8")
-    assert replay.replay(copy).same
+    result = replay.replay(copy)
+    assert result.same
+    assert result.uncompared > 0
+    done = run_tool(copy)
+    assert done.returncode == 0
+    assert f"{result.uncompared} lines past its end were not compared" in done.stdout
+
+
+def test_a_whole_record_has_nothing_left_to_compare(run):
+    assert replay.replay(run[0]).uncompared == 0
+
+
+def test_half_a_line_at_the_end_is_left_out(run, tmp_path):
+    """Killed in the middle of a write."""
+    text = run[0].read_text(encoding="utf-8")
+    copy = tmp_path / "half.jsonl"
+    copy.write_text(text[:-5], encoding="utf-8")
+    result = replay.replay(copy)
+    assert result.same and result.cut_line
+    assert "the last line was cut off" in run_tool(copy).stdout
+
+
+def test_a_last_line_with_no_line_end_still_counts(run, tmp_path):
+    text = run[0].read_text(encoding="utf-8")
+    copy = tmp_path / "whole.jsonl"
+    copy.write_text(text.rstrip("\n"), encoding="utf-8")
+    result = replay.replay(copy)
+    assert result.same and not result.cut_line and result.uncompared == 0
+
+
+@pytest.mark.parametrize("content", ["", '{"robots": ["pinky'])
+def test_a_record_with_no_first_line_is_refused(tmp_path, content):
+    copy = tmp_path / "nothing.jsonl"
+    copy.write_text(content, encoding="utf-8")
+    done = run_tool(copy)
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "first line" in done.stdout
+    assert "Traceback" not in done.stderr
+
+
+def test_a_record_with_no_inputs_proves_nothing(run, tmp_path):
+    first = run[0].read_text(encoding="utf-8").splitlines()[0]
+    copy = tmp_path / "head.jsonl"
+    copy.write_text(first + "\n", encoding="utf-8")
+    done = run_tool(copy)
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "no inputs" in done.stdout
+
+
+def test_a_line_in_the_middle_that_is_not_json_is_refused(run, tmp_path):
+    lines = run[0].read_text(encoding="utf-8").splitlines()
+    lines[5] = lines[5][:10]
+    copy = tmp_path / "broken.jsonl"
+    copy.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    done = run_tool(copy)
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "line 6" in done.stdout
+    assert "Traceback" not in done.stderr
+
+
+def test_a_record_that_lost_its_commands_does_not_pass_as_inputs_alone(run, tmp_path):
+    lines = run[0].read_text(encoding="utf-8").splitlines()
+    only = [lines[0]] + [line for line in lines[1:] if '"in"' in line]
+    copy = tmp_path / "lost.jsonl"
+    copy.write_text("\n".join(only) + "\n", encoding="utf-8")
+    result = replay.replay(copy)
+    assert result.compared and not result.same
+
+
+def test_a_record_has_to_start_before_the_first_input():
+    """Nothing in the first line says what the core had been through by then."""
+    core = FmsCore(load_site_map(), load_params(), ["pinky1"], lambda: 0.0)
+    core.tick()
+    with pytest.raises(RuntimeError, match="first input"):
+        core.record_to([].append)
+
+
+def test_a_map_with_no_text_cannot_be_recorded():
+    """A replay builds the map from the text in the first line."""
+    site = SiteMap(yaml.safe_load(load_site_map().source_text))
+    core = FmsCore(site, load_params(), ["pinky1"], lambda: 0.0)
+    with pytest.raises(ValueError, match="text"):
+        core.record_to([].append)
+
+
+@pytest.mark.parametrize("bundle", [True, False])
+def test_a_two_way_setting_given_in_code_comes_back_in_the_replay(bundle):
+    """The map file says one thing and the call another: the record has what was really used."""
+    site = load_site_map(bundle_two_way=bundle)
+    lines = []
+    FmsCore(site, load_params(), ["pinky1"], lambda: 0.0).record_to(lines.append)
+    core = replay.start_core(json.loads(lines[0]), lambda: 0.0)
+    assert core.site.zones == site.zones
 
 
 def test_a_record_of_inputs_alone_just_runs(run, tmp_path):
-    """What a converted bag will be: the first line and the inputs, with nothing to compare."""
+    """What a converted bag will be: a first line that does not claim to be a record, and the
+    inputs. There is nothing to compare."""
     lines = run[0].read_text(encoding="utf-8").splitlines()
-    only = [lines[0]] + [line for line in lines[1:] if '"in"' in line]
+    head = json.loads(lines[0])
+    del head["recorded"]
+    only = [json.dumps(head)] + [line for line in lines[1:] if '"in"' in line]
     copy = tmp_path / "inputs.jsonl"
     copy.write_text("\n".join(only) + "\n", encoding="utf-8")
     result = replay.replay(copy)

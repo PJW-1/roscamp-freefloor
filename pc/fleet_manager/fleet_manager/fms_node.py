@@ -178,7 +178,9 @@ class FmsNode(Node):
             self._assignments_pub.publish(adapters.assignments_to_msg(assignments, now))
 
     def _publish_heartbeat(self) -> None:
-        if not self.silent():
+        # Nobody moves before all are on the map, so nothing needs a beat yet. A goal of an FMS
+        # before this one, accepted late, would take one for its own and keep going.
+        if not self.silent() and self.core.traffic.everyone_placed:
             self._heartbeat_pub.publish(Header(stamp=self.get_clock().now().to_msg(),
                                                frame_id=self.get_name()))
 

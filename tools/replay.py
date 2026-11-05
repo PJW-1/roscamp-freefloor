@@ -4,8 +4,8 @@
     ros2 run fleet_manager fms_node --record run.jsonl      (or record:=run.jsonl on pc.launch.py)
     python3 tools/replay.py run.jsonl
 
-The first line says what the core was started with: robots, parameters and the map itself. Every
-line after it has the time `t` and one of:
+The first line says what the core was started with: robots, parameters, the map itself and its
+two-way setting. Every line after it has the time `t` and one of:
 
     {"t": 12.5, "in": "on_robot_state", "args": ["pinky1", 1.2, 2.0, 0.0, "MOVING", 90.0]}
     {"t": 12.6, "in": "tick", "args": []}
@@ -16,11 +16,16 @@ line after it has the time `t` and one of:
 followed by what it caused. `inside` is what the two cores said to each other and `out` what went
 to ROS. The clock is `t`: a core reads one time for the whole of one call, live as well.
 
-A record of inputs alone, as a converted bag would be, just runs and reports what came out. Such a
-file needs its own `tick` lines, 10 a second by default on the real node, and its first line.
-A record may end anywhere, as one does when the process is killed: what it has is compared.
+`"recorded": true` in the first line says the core itself wrote this, so what it caused is in the
+file and has to match. A record of inputs alone, as a converted bag would be, leaves that out: it
+just runs and reports what came out. Such a file needs its own `tick` lines, 10 a second by default
+on the real node, and its first line.
 
-Exit code 0 if everything is the same, 1 at the first difference.
+A record may end anywhere, even in the middle of a line, as one does when the process is killed.
+What it has is compared. Lines after the end can only be what its last input caused, and the
+tool says how many it could not compare.
+
+Exit code 0 if everything is the same, 1 at the first difference, 2 if this cannot be played back.
 """
 from __future__ import annotations
 
@@ -51,6 +56,8 @@ class Result:
     line: int = 0  # first line that differs, counting from 1
     recorded: str = ""
     produced: str = ""
+    uncompared: int = 0  # lines that came out after the record had ended
+    cut_line: bool = False  # the last line was only half written, and was left out
 
 
 def _count(lines: list[str], key: str) -> int:
@@ -64,38 +71,69 @@ def _arguments(entry: dict) -> list:
     return entry["args"]
 
 
+def _read(path) -> tuple[list[str], list[dict], bool]:
+    """The lines, what they say, and whether half a line at the end was left out."""
+    text = Path(path).read_text(encoding="utf-8")
+    lines = text.splitlines()
+    entries = []
+    for number, line in enumerate(lines, start=1):
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError as error:
+            if number == len(lines) and not text.endswith("\n"):
+                return lines[:-1], entries, True
+            raise ValueError(f"line {number} is not JSON: {error}") from error
+    return lines, entries, False
+
+
+def start_core(head: dict, clock) -> FmsCore:
+    site = SiteMap(yaml.safe_load(head["map"]), head["map"], head.get("bundle_two_way"))
+    return FmsCore(site, FleetParams(**head["params"]), head["robots"], clock)
+
+
 def replay(path) -> Result:
-    lines = Path(path).read_text(encoding="utf-8").splitlines()
-    head = json.loads(lines[0])
+    lines, entries, cut_line = _read(path)
+    if not entries:
+        raise ValueError("no first line, so this is not a record")
+    head, *rest = entries
+    if not any("in" in entry for entry in rest):
+        raise ValueError("no inputs, so there is nothing to play back")
     now = [0.0]
-    core = FmsCore(SiteMap(yaml.safe_load(head["map"]), head["map"]), FleetParams(**head["params"]),
-                   head["robots"], lambda: now[0])
+    core = start_core(head, lambda: now[0])
     produced: list[str] = []
     core.record_to(produced.append)
-    for line in lines[1:]:
-        entry = json.loads(line)
+    for entry in rest:
         if "in" in entry:
             now[0] = entry["t"]
             getattr(core, entry["in"])(*_arguments(entry))
-    inputs, inside, commands = (_count(produced, key) for key in ("in", "inside", "out"))
-    if not _count(lines, "out") and not _count(lines, "inside"):
-        return Result(inputs, inside, commands, False, True)
+    counts = tuple(_count(produced, key) for key in ("in", "inside", "out"))
+    if not head.get("recorded"):
+        return Result(*counts, False, True, cut_line=cut_line)
     for number, (old, new) in enumerate(zip(lines, produced, strict=False), start=1):
         if old != new:
-            return Result(inputs, inside, commands, True, False, number, old, new)
+            return Result(*counts, True, False, number, old, new, cut_line=cut_line)
     if len(lines) > len(produced):
-        return Result(inputs, inside, commands, True, False, len(produced) + 1,
-                      lines[len(produced)], "(nothing came out)")
-    return Result(inputs, inside, commands, True, True)
+        return Result(*counts, True, False, len(produced) + 1, lines[len(produced)],
+                      "(nothing came out)", cut_line=cut_line)
+    return Result(*counts, True, True, uncompared=len(produced) - len(lines), cut_line=cut_line)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("record", help="the JSONL file fms_node wrote with --record")
-    result = replay(parser.parse_args().record)
+    try:
+        result = replay(parser.parse_args().record)
+    except ValueError as error:
+        print(f"cannot play this back: {error}")
+        return 2
     print(f"{result.inputs} inputs, {result.inside} inside calls, {result.commands} commands")
+    if result.cut_line:
+        print("the last line was cut off and left out")
     if not result.compared:
         print("inputs only: nothing to compare with")
+    elif result.same and result.uncompared:
+        print(f"same as recorded, as far as it goes: {result.uncompared} lines past its end "
+              "were not compared")
     elif result.same:
         print("same as recorded")
     else:

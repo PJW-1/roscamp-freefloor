@@ -16,6 +16,7 @@ import pytest
 
 rclpy = pytest.importorskip("rclpy")
 
+from action_msgs.msg import GoalStatus, GoalStatusArray  # noqa: E402
 from ament_index_python.packages import (  # noqa: E402
     PackageNotFoundError,
     get_package_share_directory,
@@ -26,6 +27,7 @@ from fleet_core.params import load_params  # noqa: E402
 from fleet_interfaces.msg import FleetEvent, RobotState  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from rclpy.qos import qos_profile_action_status_default  # noqa: E402
 from rosgraph_msgs.msg import Clock  # noqa: E402
 
 DOMAIN = 56  # the scenario integration test takes 50 to 55
@@ -38,6 +40,10 @@ PINKY3_SILENT_S = (50.0, 120.0)  # the comm_loss in fms_restart.yaml
 SCENARIO = Path(__file__).parent / "fms_restart.yaml"  # means nothing without the kill below
 
 
+def _accepted_at(status) -> tuple[int, int]:
+    return status.goal_info.stamp.sec, status.goal_info.stamp.nanosec
+
+
 class Probe(Node):
     def __init__(self, context, contract):
         super().__init__("restart_probe", context=context)
@@ -46,6 +52,7 @@ class Probe(Node):
         self.pose = {}
         self.moved = {}  # robot -> wall time its true position last changed
         self.heard = {}  # robot -> wall time of its last report
+        self.last_goal = {}  # robot -> status of the move goal it was given last
         self.codes = []
         qos = to_ros_qos(contract.qos("robot_state"))
         self.create_subscription(Clock, "/clock", self._on_clock, 10)
@@ -59,6 +66,9 @@ class Probe(Node):
             self.create_subscription(
                 RobotState, TRUTH_TOPIC.format(robot=robot),
                 lambda m, r=robot: self._on_truth(r, m), qos)
+            self.create_subscription(
+                GoalStatusArray, contract.name("move_to", pinky=robot) + "/_action/status",
+                lambda m, r=robot: self._on_goals(r, m), qos_profile_action_status_default)
 
     def _on_clock(self, msg) -> None:
         self.sim_now = msg.clock.sec + msg.clock.nanosec / 1e9
@@ -73,6 +83,10 @@ class Probe(Node):
         if old is None or max(abs(new[0] - old[0]), abs(new[1] - old[1])) > STILL_M:
             self.pose[robot] = new
             self.moved[robot] = time.monotonic()
+
+    def _on_goals(self, robot, msg) -> None:
+        if msg.status_list:
+            self.last_goal[robot] = max(msg.status_list, key=_accepted_at).status
 
     def moving(self) -> list[str]:
         """Who says it is moving. A robot that has gone silent says nothing."""
@@ -129,7 +143,7 @@ def test_robots_stop_without_the_fms_and_a_new_one_waits_for_all_of_them(probe, 
         pytest.skip(f"not built in this workspace: {exc}")
     env = dict(os.environ, ROS_DOMAIN_ID=str(DOMAIN), ROS_AUTOMATIC_DISCOVERY_RANGE="LOCALHOST")
     params = load_params()
-    timeout_s, period_s = params.heartbeat_timeout_s, params.heartbeat_period_s
+    timeout_s = params.heartbeat_timeout_s
     log = (tmp_path / "launch.log").open("w", encoding="utf-8")
 
     def start(*command):
@@ -155,8 +169,10 @@ def test_robots_stop_without_the_fms_and_a_new_one_waits_for_all_of_them(probe, 
         took = {r: probe.moved[r] - killed for r in ROBOTS}
         print(f"robots moved for this long after the kill: {took}")
         assert all(t <= timeout_s + SLACK_S for t in took.values()), took
-        # Nobody got there by itself: the last beat is at most one period before the kill.
-        assert min(took.values()) >= timeout_s - period_s - 0.1, f"not all were cut off: {took}"
+        # Nobody got there by itself: every one of them had its goal ended short of the target.
+        print(f"last goal of each: {probe.last_goal}")
+        assert all(probe.last_goal.get(r) == GoalStatus.STATUS_ABORTED
+                   for r in ROBOTS), probe.last_goal
         assert not probe.moving(), probe.state
 
         # One report before the silence and the new FMS would call it a comm loss instead.
