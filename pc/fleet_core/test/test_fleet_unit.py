@@ -5,9 +5,9 @@ from dataclasses import replace
 import pytest
 from core_helpers import cmds, codes, make_core, place, serve
 from fleet_core.commands import AssignmentView, OrderRecord, ZoneView
-from fleet_core.fleet import FleetCore
 from fleet_core.params import load_params
-from fleet_core.site_map import load_site_map
+from grid_map import grid_site
+from legacy_core import FleetCore
 
 WORK_DOCK = (5, 3)
 OUT_DOCK = (9, 3)
@@ -39,7 +39,6 @@ def test_first_state_places_the_robot_in_the_zone_of_its_cell():
     assert core.zones.holder("P-5") == "r1"
     v = view(core, "r1")
     assert v["cell"] == (3, 5)
-    assert v["flow"] == "wait"
     assert v["state"] == "PARKED"
     assert v["held"] == ["P-5"]
     assert v["basket"] == "EMPTY", "every robot starts with an empty basket"
@@ -143,12 +142,13 @@ def test_zone_is_released_only_by_pose_never_by_result_or_time():
     assert "Q-OUT-2" in core.zones.held_by("r1"), "goal success alone frees nothing"
 
     x, y = core.site.cell_pose((9, 5))
-    margin = core.params.release_margin
-    # Half a cell to the boundary plus just under the margin is still too close.
-    core.on_robot_state("r1", x, y + core.site.cell_size / 2 + margin - 0.001, 0.0, "MOVING")
+    distance = core.params.release_distance_m
+    # Along the lane to (9, 4), so y falls. Just under the release distance is still too close.
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("r1", x, y - distance + 0.001, 0.0, "MOVING")
     core.tick()
     assert "Q-OUT-2" in core.zones.held_by("r1")
-    outside = y - (core.site.cell_size / 2 + margin + 0.001)
+    outside = y - distance - 0.001
     for _ in range(core.params.release_confirm_samples):
         core.on_robot_state("r1", x, outside, 0.0, "MOVING")
     core.tick()
@@ -162,7 +162,7 @@ def test_release_needs_consecutive_reports_outside_the_margin():
     core.on_move_result("r1", move.goal_id, True, "")
     now[0] = 2.0
     x, y = core.site.cell_pose((9, 5))
-    far = y - (core.site.cell_size / 2 + core.params.release_margin + 0.01)
+    far = y - (core.params.release_distance_m + 0.01)
     needed = core.params.release_confirm_samples
     assert needed >= 2
     for _ in range(needed - 1):
@@ -319,7 +319,6 @@ def test_recovery_finds_the_cell_under_the_pose_on_the_remaining_path():
     core.tick()
     v = view(core, "r1")
     assert v["cell"] == (7, 0)
-    assert v["flow"] == "ret"
     assert "Z-R1" in v["held"]
 
 
@@ -465,7 +464,7 @@ def test_dock_with_no_order_left_binds_nothing_and_leaves():
 
 def test_destination_can_change_until_the_commit_zone_is_held():
     core, _ = started({"r1": (2, 3)}, [O1])
-    core.zones.force_acquire("x", core.params.commit_zone)
+    core.zones.force_acquire("x", "Q-WORK-2")
     core.tick()
     assert core.zones.queue("Q-WORK-2") == ("r1",)
     assert view(core, "r1")["state"] == "TO_WORK"
@@ -524,7 +523,7 @@ def test_call_turns_a_robot_on_its_way_to_waiting_back_to_work():
 def test_retry_target_survives_a_new_destination():
     """A failed goal's retry drives to the same cell even if the path changed meanwhile."""
     core, _ = started({"r1": (2, 1)}, [O1])
-    core.zones.force_acquire("x", core.params.commit_zone)
+    core.zones.force_acquire("x", "Q-WORK-2")
     first = cmds(core.tick(), "MoveCmd")[0]
     assert first.target_id == core.site.cell_id((2, 3))
     core.on_move_result("r1", first.goal_id, False, "NAV_ABORTED")
@@ -537,7 +536,7 @@ def test_retry_target_survives_a_new_destination():
 def test_robot_called_then_uncalled_in_a_waiting_cell_does_not_lap():
     """Losing the call before it left its spot means staying, not a whole lap."""
     core, _ = started({"r1": (3, 4)}, [O1])
-    core.zones.force_acquire("x", core.params.commit_zone)
+    core.zones.force_acquire("x", "Q-WORK-2")
     core.tick()
     assert view(core, "r1")["state"] == "TO_WORK"
     core.on_order_board("RUN", [])
@@ -1394,17 +1393,11 @@ def test_out_of_service_robot_is_left_out_of_the_assignments():
     assert [a.robot_id for a in core.assignments_view()] == ["r2"]
 
 
-def test_map_too_small_for_the_release_margin_is_refused():
-    """A robot stopped at a cell centre could never release the zone behind it."""
-    site = load_site_map()
-    site.cell_size = 2 * load_params().release_margin
-    with pytest.raises(ValueError, match="release margin"):
-        FleetCore(site, load_params(), ["r1"], lambda: 0.0)
-
-
-def test_params_release_margin_is_radius_plus_extra():
-    params = load_params()
-    assert params.release_margin == params.robot_radius_m + params.release_margin_extra_m
+def test_map_too_small_for_the_release_distance_is_refused():
+    """A robot stopped at the end of a lane shorter than that would never release the zone."""
+    with pytest.raises(ValueError, match="release distance"):
+        FleetCore(grid_site(), replace(load_params(), release_distance_m=0.33), ["r1"],
+                  lambda: 0.0)
 
 
 def test_nothing_moves_until_every_robot_has_reported():

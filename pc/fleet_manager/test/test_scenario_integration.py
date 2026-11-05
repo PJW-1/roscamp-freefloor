@@ -59,3 +59,5 @@ def test_scenario_finishes_and_matches_the_contract(scenario, tmp_path):
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["pass"], f"{summary}\nlaunch log tail:\n{tail}"
     assert summary["orders_shipped"] >= 1, "a scenario must not pass by shipping nothing"
+    safety = json.loads((tmp_path / "safety.json").read_text(encoding="utf-8"))
+    assert (safety["early"], safety["near"]) == (0, 0), safety

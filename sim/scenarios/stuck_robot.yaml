@@ -1,9 +1,10 @@
-# pinky1 freezes for good and goes silent at 50 s on the return lane (zone Z-R1), after it has
-# shipped O-001. The lane is a single loop, so the others back up behind it. pinky2 is already
-# docked at OUTBOUND and ships O-002, then waits at the dock for Z-R1 with an empty basket. pinky3
-# holds O-003 and waits for Z-OUT, so its full basket never leaves. Nothing else can ship:
-# two orders shipped, one stuck on a robot, three never bound. The fleet manager must warn
-# (COMM_LOST for pinky1, ZONE_WAIT_LONG for the two behind it) and keep the zones held.
+# pinky1 freezes for good and goes silent at 66 s on the avenue, on its way back after it has
+# shipped O-001. Every trip between the stations needs the avenue, so the others back up behind
+# it. pinky2 is already docked at OUTBOUND and ships O-002, then waits at the dock for AVENUE with
+# an empty basket. pinky3 holds O-003 and waits at the fill dock for AVENUE, so its full basket
+# never leaves. Nothing else can ship: two orders shipped, one stuck on a robot, three never
+# bound. The fleet manager must warn (COMM_LOST for pinky1, ZONE_WAIT_LONG for the two behind it)
+# and keep the zones held.
 seed: 5
 speed_factor: 5.0
 timeout_s: 400
@@ -22,7 +23,7 @@ robots:
 arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
 dock: {duration_s: 3.0, error_cm: 1.0}
 faults:
-  - {at_s: 50, robot: pinky1, type: stuck}
+  - {at_s: 66, robot: pinky1, type: stuck}
 expect:
   all_orders_finished: false
   orders_shipped: 2

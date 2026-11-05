@@ -1,22 +1,19 @@
-"""Which robots are called to the fill station. Orders themselves are bound at the dock.
+"""Which robots are called to the fill station.
 
-Pure: FleetCore describes each robot with a RobotInfo and applies the result.
+Pure: TrafficCore describes each robot with a RobotInfo and applies the result.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-Cell = tuple[int, int]
-
 
 @dataclass(frozen=True)
 class RobotInfo:
     robot_id: str
-    cell: Cell
-    flow: str = ""
+    cell: object  # node it counts from
     called: bool = False
     parked: bool = False  # standing in a waiting cell, in line behind the cells ahead of it
-    eligible: bool = True  # available, with an empty basket and no order
+    eligible: bool = True  # available, not kept at a station and not sent somewhere by name
     available: bool = True  # False while comm is lost or in error
 
 
@@ -40,12 +37,12 @@ class Dispatcher:
         return chosen
 
     def _score(self, robot: RobotInfo) -> float:
-        cells = self._site.plan(robot.cell, robot.flow, self._dock)
-        score = self._params.score_distance_weight * (len(cells) - 1)
+        metres = self._site.path_length(self._site.plan(robot.cell, self._dock))
+        score = self._params.score_distance_weight * metres
         return score + (self._params.score_same_call if robot.called else 0.0)
 
     def _may_pick(self, robot: RobotInfo, pool: list[RobotInfo], robots: list[RobotInfo]) -> bool:
-        """The waiting lane is one-way: nobody passes the waiting robots ahead of it."""
+        """The waiting line is one-way: nobody passes the waiting robots ahead of it."""
         if not robot.parked:
             return True
         rank = self._site.parking.index(robot.cell)

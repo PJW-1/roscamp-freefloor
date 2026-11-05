@@ -60,12 +60,12 @@ def test_move_to_publishes_state_feedback_and_succeeds(harness, tmp_path):
     p = start(harness, tmp_path)
     assert wait_until(lambda: p.states, 5.0)
     assert p.states[-1][1].robot_id == "pinky1" and p.states[-1][1].state == RobotState.STATE_IDLE
-    handle = p.goal((9, 4))
+    handle = p.goal("QO")
     assert handle.accepted
     res = result_of(handle).result
     assert res.success is True
     last = p.states[-1][1]
-    x, y = SITE.cell_pose((9, 4))
+    x, y = SITE.cell_pose("QO")
     assert (last.pose.x, last.pose.y) == pytest.approx((x, y), abs=1e-3)
     assert any(s.state == RobotState.STATE_MOVING for _, s in p.states)
     assert p.feedback
@@ -74,9 +74,9 @@ def test_move_to_publishes_state_feedback_and_succeeds(harness, tmp_path):
 def test_new_goal_supersedes_the_active_one(harness, tmp_path):
     p = start(harness, tmp_path, robots={
         "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}})
-    first = p.goal((2, 0))
+    first = p.goal("S")
     assert first.accepted
-    second = p.goal((9, 4))
+    second = p.goal("QO")
     old = result_of(first).result
     assert old.success is False and old.reason == MoveTo.Result.REASON_CANCELED
     assert result_of(second).result.success is True
@@ -85,7 +85,7 @@ def test_new_goal_supersedes_the_active_one(harness, tmp_path):
 def test_cancel_is_honoured(harness, tmp_path):
     p = start(harness, tmp_path, robots={
         "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}})
-    handle = p.goal((2, 0))
+    handle = p.goal("S")
     cancel = handle.cancel_goal_async()
     assert wait_until(cancel.done, 5.0)
     res = result_of(handle).result
@@ -96,9 +96,9 @@ def test_nav_abort_hits_the_next_goals_only(harness, tmp_path):
     p = start(harness, tmp_path, faults=[
         {"at_s": 0, "robot": "pinky1", "type": "nav_abort", "count": 1}])
     time.sleep(0.3)
-    res = result_of(p.goal((9, 4))).result
+    res = result_of(p.goal("QO")).result
     assert res.success is False and res.reason == MoveTo.Result.REASON_NAV_ABORTED
-    assert result_of(p.goal((9, 4))).result.success is True
+    assert result_of(p.goal("QO")).result.success is True
 
 
 def test_comm_loss_silences_state_rejects_goals_and_recovers(harness, tmp_path):
@@ -110,7 +110,7 @@ def test_comm_loss_silences_state_rejects_goals_and_recovers(harness, tmp_path):
         return time.monotonic() - p.states[-1][0] > 0.5
 
     assert wait_until(silent, 5.0), "state kept coming during comm_loss"
-    assert not p.goal((9, 4)).accepted
+    assert not p.goal("QO").accepted
     mark = time.monotonic()
     assert wait_until(lambda: p.states[-1][0] > mark, 6.0), "state did not resume"
 
@@ -130,14 +130,14 @@ def test_true_pose_has_no_noise_and_keeps_coming_during_comm_loss(harness, tmp_p
     assert wait_until(lambda: time.monotonic() - p.states[-1][0] > 0.5, 5.0), "state kept coming"
     mark = time.monotonic()
     assert wait_until(lambda: truth[-1][0] > mark, 2.0), "truth stopped during comm_loss"
-    x, y = SITE.cell_pose((3, 5))  # P-5
+    x, y = SITE.cell_pose("P-5")
     assert (truth[-1][1].pose.x, truth[-1][1].pose.y) == pytest.approx((x, y), abs=1e-9)
 
 
 def test_start_accepts_a_waiting_cell_name(harness, tmp_path):
     p = start(harness, tmp_path)  # pinky1 starts at P-6
     assert wait_until(lambda: p.states, 5.0)
-    x, y = SITE.cell_pose((3, 4))
+    x, y = SITE.cell_pose("P-6")
     assert (p.states[-1][1].pose.x, p.states[-1][1].pose.y) == pytest.approx((x, y), abs=1e-6)
 
 
@@ -150,7 +150,7 @@ def test_operator_remove_takes_the_robot_off_the_course_for_good(harness, tmp_pa
     p.node.create_subscription(
         RobotState, TRUTH_TOPIC.format(robot="pinky1"), truth.append,
         to_ros_qos(CONTRACT_OBJ.qos("robot_state")))
-    moving = p.goal((2, 0))
+    moving = p.goal("S")
     assert moving.accepted
     res = result_of(moving).result
     assert res.success is False  # the goal ended instead of hanging
@@ -158,7 +158,7 @@ def test_operator_remove_takes_the_robot_off_the_course_for_good(harness, tmp_pa
     assert all(SITE.distance_to_zone(truth[-1].pose.x, truth[-1].pose.y, z) > 0.5
                for z in SITE.zones)
     assert wait_until(lambda: time.monotonic() - p.states[-1][0] > 0.5, 5.0), "still reporting"
-    assert not p.goal((9, 4)).accepted
+    assert not p.goal("QO").accepted
 
 
 def test_dock_reports_phase_and_error(harness, tmp_path):

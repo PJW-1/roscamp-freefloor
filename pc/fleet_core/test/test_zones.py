@@ -98,3 +98,71 @@ def test_snapshot_reports_holder_queue_and_acquire_time(zones, now):
 def test_unknown_zone_is_an_error(zones):
     with pytest.raises(KeyError):
         zones.request("r1", "NOPE")
+
+
+# ---- conflict pairs ---------------------------------------------------------------------------
+
+
+def paired(*zones):
+    return ZoneManager(zones or ("A", "B"), clock=lambda: 0.0, conflicts=[frozenset({"A", "B"})])
+
+
+def test_a_held_zone_blocks_the_zone_it_is_a_conflict_pair_with():
+    zones = paired()
+    assert zones.request("r1", "A")
+    assert not zones.request("r2", "B")
+    assert zones.holder("B") is None, "free, and still not to be had"
+    assert zones.blockers("r2", "B") == {"r1"}
+    assert zones.release("r1", "A")
+    assert zones.request("r2", "B")
+
+
+def test_one_robot_may_hold_both_zones_of_a_pair():
+    zones = paired()
+    assert zones.request("r1", "A")
+    assert zones.request("r1", "B"), "the pair keeps robots apart, not a robot from itself"
+
+
+def test_first_come_first_served_holds_across_a_pair():
+    """Otherwise a robot at a crossing waits for as long as the other road stays busy."""
+    zones = paired()
+    assert zones.request("r1", "A")
+    assert not zones.request("r2", "B"), "first in line for the crossing"
+    assert not zones.request("r3", "A"), "came later, to the other road"
+    assert zones.release("r1", "A")
+    assert not zones.request("r3", "A"), "A is free, but r2 asked first"
+    assert zones.blockers("r3", "A") == {"r2"}
+    assert zones.request("r2", "B")
+    assert not zones.request("r3", "A"), "r2 now holds the other half of the pair"
+    assert zones.release("r2", "B")
+    assert zones.request("r3", "A")
+
+
+def test_giving_up_the_place_in_line_lets_the_next_one_through():
+    zones = paired()
+    assert zones.request("r1", "A")
+    assert not zones.request("r2", "B")
+    assert not zones.request("r3", "A")
+    zones.release("r1", "A")
+    assert zones.cancel_request("r2", "B")
+    assert zones.request("r3", "A")
+
+
+def test_a_request_made_again_keeps_its_place():
+    zones = paired()
+    assert zones.request("r1", "A")
+    assert not zones.request("r2", "B")
+    assert not zones.request("r3", "A")
+    assert not zones.request("r2", "B"), "asking every tick is still one place in line"
+    zones.release("r1", "A")
+    assert zones.request("r2", "B")
+
+
+def test_blockers_are_the_holder_and_those_ahead_in_line():
+    zones = ZoneManager(["A"], clock=lambda: 0.0)
+    zones.request("r1", "A")
+    zones.request("r2", "A")
+    zones.request("r3", "A")
+    assert zones.blockers("r2", "A") == {"r1"}
+    assert zones.blockers("r3", "A") == {"r1", "r2"}
+    assert zones.blockers("r1", "A") == set()

@@ -3,6 +3,7 @@ import random
 
 import pytest
 from fleet_core.commands import SHIPPED
+from fleet_core.site_map import load_site_map
 from sim_world import SimWorld
 
 ROBOTS = ("pinky1", "pinky2", "pinky3")
@@ -67,3 +68,17 @@ def run_seed(seed):
 @pytest.mark.parametrize("seed", range(40))
 def test_random_faults_never_lose_an_order_or_break_an_invariant(seed):
     run_seed(seed)
+
+
+@pytest.mark.parametrize("seed", range(20, 50))
+def test_random_faults_on_the_default_map_with_its_avenue_and_crossing(seed):
+    """Same faults on the map where robots meet. The world checks its invariants at every step."""
+    rng = random.Random(seed)
+    orders = random_orders(rng)
+    world = SimWorld(seed=seed, orders=orders, faults=random_faults(rng), site=load_site_map())
+    assert world.run_until(lambda: not world.pending_faults and world.done(), 3000), (
+        f"seed {seed}: reports {world.report_statuses()}, "
+        f"{[world.core.robot_view(r) for r in ROBOTS]}")
+    assert set(world.report_statuses().values()) == {SHIPPED}
+    assert world.core.shipped == len(orders)
+    assert "DEADLOCK_DETECTED" not in world.event_codes("ERROR")

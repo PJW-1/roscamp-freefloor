@@ -1,11 +1,13 @@
-"""FleetCore: the mission logic of the fleet manager. No ROS and no wall clock in here.
+"""TrafficCore: robot selection, zone locks and motion. No ROS, no wall clock, no orders.
 
-Callers feed robot, arm and order board updates through the on_* methods and call tick()
-periodically. tick() returns the commands to send and the events to publish.
+Callers feed robot updates and dispatch requests through the on_* methods and call tick()
+periodically. tick() returns the commands to send, the events to publish and the dispatch
+feedback and results for whoever asked. What a robot does at a station is not known here: it
+stands there (AT_STATION) until it is released or sent somewhere else.
 
 Safety rules kept here, each backed by a test:
   - A robot holds its current zone and at most one next zone, and moves only inside them.
-  - A zone is released only after consecutive reported poses are outside it by the margin,
+  - A zone is released only after consecutive reports are past it by the release distance,
     so one noisy pose cannot free a zone the robot's body is still next to.
   - Results of goals that are no longer the robot's active goal are ignored.
   - Nothing moves until every robot has reported, because a robot that has not reported may
@@ -17,17 +19,13 @@ import math
 from dataclasses import dataclass, field
 
 from fleet_core.commands import (
-    HELD,
-    PARTIAL,
-    SHIPPED,
-    AssignmentView,
+    NO_ROBOT,
     CancelCmd,
+    DispatchFeedback,
+    DispatchResult,
     DockCmd,
     EventOut,
-    FillCmd,
     MoveCmd,
-    ReportOrderCmd,
-    SwapCmd,
     ZoneView,
 )
 from fleet_core.deadlock import choose_retreat, find_cycle, priority, wait_graph
@@ -41,8 +39,7 @@ TO_PARK = "TO_PARK"
 TO_WORK = "TO_WORK"
 TO_OUTBOUND = "TO_OUTBOUND"
 DOCKING = "DOCKING"
-FILLING = "FILLING"
-SWAPPING = "SWAPPING"
+AT_STATION = "AT_STATION"
 # Fault states shown instead of the phase.
 ERROR = "ERROR"
 OUT_OF_SERVICE = "OUT_OF_SERVICE"
@@ -59,53 +56,19 @@ DOCK = "dock"
 FILL = "fill"
 SWAP = "swap"
 
-# What is on the tray.
-EMPTY = "EMPTY"
-FULL = "FULL"
-NONE = "NONE"
-
-CANCELED = "CANCELED"
-
-
-def _merge(into: dict[str, int], more: dict[str, int]) -> None:
-    for kind, count in more.items():
-        if count > 0:
-            into[kind] = into.get(kind, 0) + count
-
-
-def _subtract(items: dict[str, int], *taken: dict[str, int]) -> dict[str, int]:
-    left = {}
-    for kind, count in items.items():
-        rest = count - sum(t.get(kind, 0) for t in taken)
-        if rest > 0:
-            left[kind] = rest
-    return left
-
 
 @dataclass
 class _Goal:
     kind: str
     id: int
     target_idx: int = 0  # move only: index into the mission path
-    step: tuple[int, int] | None = None  # move only: grid direction of travel
+    step: tuple[float, float] | None = None  # move only: direction of travel, a unit vector
 
 
 @dataclass
-class _ArmJob:
-    server: str
+class _Dispatch:
     goal_id: int
-    kind: str  # FILL or SWAP
-    sent_at: float
-    canceled_at: float | None = None
-    timed_out: bool = False  # canceled because it ran too long, not because of STOP
-
-
-@dataclass
-class _BoundOrder:
-    order_id: str
-    items: dict[str, int]
-    placed: dict[str, int] = field(default_factory=dict)
-    missing: dict[str, int] = field(default_factory=dict)  # final: nobody will try these again
+    station_id: str
 
 
 @dataclass
@@ -119,22 +82,22 @@ class _Mission:
     last_seen: float = 0.0
     phase: str = IDLE
     fault: str = ""  # ERROR or OUT_OF_SERVICE, both need the operator
+    fault_reason: str = ""
     comm: str = ""  # COMM_LOST or RECOVERING
     recover_at: float = 0.0
     path: list = field(default_factory=list)
-    idx: int = 0
-    start_flow: str = ""  # lane at path[0]; later cells get theirs from the previous one
+    idx: int = 0  # the node whose zone it is in: reached, or less than d from the last one
     dest: str | None = None  # station it is driving to or docked at
     goal: _Goal | None = None
     settle_idx: int | None = None  # drive here first, so a resumed goal stays on the lane
     attempts: int = 0
-    basket: str = EMPTY
-    order: _BoundOrder | None = None
-    last_order_id: str = ""  # names the swap goal after the order was already reported
     called: bool = False
-    arm: _ArmJob | None = None
-    arm_retry_at: float = 0.0  # no new arm goal before this, after a failure or a rejection
-    outside: dict = field(default_factory=dict)  # zone -> consecutive reports outside the margin
+    dispatch: _Dispatch | None = None  # a dispatch that named this robot
+    hold: bool = False  # kept at the station until it is released or sent on
+    await_pick: bool = False  # at a station with no duty: acts after the next pick, not before
+    outside: dict = field(default_factory=dict)  # zone -> consecutive reports clear of it
+    off_lane: int = 0  # consecutive reports too far off the lane it is driving
+    off_lane_warned: bool = False
     wait_zone: str | None = None  # zone it has been queueing for since wait_since
     wait_since: float = 0.0
     wait_warned: bool = False
@@ -152,25 +115,25 @@ class _Mission:
         return self.fault or self.comm or self.phase
 
 
-class FleetCore:
-    def __init__(self, site, params, robots, clock):
-        if site.cell_size / 2 <= params.release_margin:
+class TrafficCore:
+    def __init__(self, site, params, robots, clock, next_goal_id=None):
+        if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
-                f"half a cell ({site.cell_size / 2} m) must exceed the release margin "
-                f"({params.release_margin} m), or a robot stopped at a cell centre never "
-                "releases the zone behind it")
+                f"the shortest lane leaving a zone ({site.shortest_exit_lane()} m) must exceed "
+                f"the release distance ({params.release_distance_m} m), or a robot stopped at "
+                "its end never releases the zone behind it")
         self.site = site
         self.params = params
-        self.zones = ZoneManager(site.zones, clock)
+        self.zones = ZoneManager(site.zones, clock, site.conflict_pairs(
+            2 * params.robot_radius_m, params.release_distance_m))
         self.dispatcher = Dispatcher(site, params)
-        self.shipped = 0
         self._clock = clock
+        self._next_goal_id = next_goal_id or self._own_goal_id
+        self._goal_seq = 0
         self._missions = {name: _Mission(name) for name in robots}
         self._out: list = []
         self._run_mode: str | None = None
-        self._board: list = []
-        self._reported: set[str] = set()  # the board may still list these for a moment
-        self._goal_seq = 0
+        self._open_calls: list[int] = []  # dispatches to the fill station with no robot named
         self._work = next(s.id for s in site.stations.values() if s.action == FILL)
         self._outbound = next(s.id for s in site.stations.values() if s.action == SWAP)
         self._deadlock_since: float | None = None
@@ -178,7 +141,6 @@ class FleetCore:
         self._retreating: tuple[str, list[str], float] | None = None  # robot, zones, release time
         self._startup_since: float | None = None
         self._missing_reported = False
-        self._cleared_jobs: dict[str, tuple[int, float]] = {}  # server -> canceled goal, deadline
         self._no_robot_warned = False
 
     # ---- inputs -------------------------------------------------------------------------
@@ -192,18 +154,59 @@ class FleetCore:
         elif m.comm == COMM_LOST and not m.fault:
             self._begin_recovery(m)
         self._count_reports_outside(m)
+        self._watch_lane_error(m)
 
-    def on_order_board(self, run_mode, orders) -> None:
+    def on_run_mode(self, run_mode) -> None:
         if run_mode == STOP and self._run_mode != STOP:
             for m in self._missions.values():
                 # A silent robot may not hear it, so recovery sends its cancel instead.
                 if m.goal and m.comm != COMM_LOST:
                     self._cancel_goal(m)
-                if m.arm and m.arm.canceled_at is None:
-                    self._cancel_arm(m)
         self._run_mode = run_mode
-        self._board = list(orders)
-        self._reported &= {o.order_id for o in self._board}
+
+    def on_dispatch(self, goal_id, station_id, robot_id="") -> None:
+        """Ask for a robot at a station. With no robot named it becomes an open call."""
+        if not robot_id:
+            if station_id != self._work:
+                raise ValueError(f"only the fill station takes open calls, not {station_id}")
+            self._open_calls.append(goal_id)
+            return
+        m = self._missions[robot_id]
+        if not m.available:
+            self._out.append(DispatchResult(goal_id, False, robot_id, "NOT_AVAILABLE"))
+            return
+        if m.dispatch:
+            self._out.append(DispatchResult(goal_id, False, robot_id, "BUSY"))
+            return
+        m.dispatch = _Dispatch(goal_id, station_id)
+        m.await_pick = False
+        if m.phase == AT_STATION and m.dest == station_id:
+            self._finish_dispatch(m)
+            return
+        m.hold = False
+        self._start_dispatch_leg(m)
+
+    def on_dispatch_cancel(self, goal_id) -> None:
+        if goal_id in self._open_calls:
+            self._open_calls.remove(goal_id)
+            return
+        for m in self._missions.values():
+            if m.dispatch and m.dispatch.goal_id == goal_id:
+                m.dispatch = None
+                self._out.append(DispatchResult(goal_id, False, m.name, "CANCELED"))
+                if m.goal and m.goal.kind == DOCK:
+                    self._cancel_goal(m)
+                if m.available:
+                    self._start_park_leg(m)
+                return
+
+    def on_release(self, robot) -> None:
+        m = self._missions[robot]
+        m.hold = False
+        m.await_pick = True
+
+    def on_robot_fault(self, robot, reason="") -> None:
+        self._fail(self._missions[robot], reason)
 
     def on_move_result(self, robot, goal_id, success, reason) -> None:
         m = self._missions[robot]
@@ -239,40 +242,10 @@ class FleetCore:
             self._goal_failed(m, "DOCK_FAILED")
             return
         m.attempts = 0
-        fill = self.site.stations[m.dest].action == FILL
-        m.phase = FILLING if fill else SWAPPING
+        m.phase = AT_STATION
         self._event("INFO", "DOCKED",
                     f"{m.dest} error x={error_x_cm} y={error_y_cm} yaw={error_yaw_deg}", robot)
-        if fill:
-            self._bind_next_order(m)
-
-    def on_fill_result(self, goal_id, success, placed, missing, reason="") -> None:
-        self._forget_cleared_job(goal_id)
-        m = self._arm_job_owner(goal_id, FILL)
-        if m is None:
-            return
-        job, m.arm = m.arm, None
-        _merge(m.order.placed, placed)
-        if success:
-            # The server has finished trying: whatever is not in the basket stays out of it.
-            m.order.missing = _subtract(m.order.items, m.order.placed)
-            return
-        self._arm_attempt_failed(m, job, reason, "FILL_RETRY", "FILL_FAILED")
-
-    def on_swap_result(self, goal_id, success, took_full, put_empty_done, reason="") -> None:
-        self._forget_cleared_job(goal_id)
-        m = self._arm_job_owner(goal_id, SWAP)
-        if m is None:
-            return
-        job, m.arm = m.arm, None
-        if took_full and m.basket == FULL:
-            m.basket = NONE
-            self._report_shipped(m)
-        if put_empty_done and m.basket == NONE:
-            m.basket = EMPTY
-            m.attempts = 0
-            return
-        self._arm_attempt_failed(m, job, reason, "SWAP_RETRY", "SWAP_FAILED")
+        self._finish_dispatch(m, error_x_cm, error_y_cm, error_yaw_deg)
 
     def confirm_clear(self, robot, zone_ids, note="") -> list[str] | None:
         """The operator cleared a stuck robot. The one release not judged by pose.
@@ -287,42 +260,79 @@ class FleetCore:
         self.zones.cancel_all_requests(robot)
         if m.goal:
             self._cancel_goal(m)
-        if m.arm:
-            # What the arm did for a cleared robot is for the operator to count. The server is
-            # still busy stopping, and that must not count against the next robot.
-            self._out.append(CancelCmd(m.arm.server, m.arm.goal_id))
-            self._cleared_jobs[m.arm.server] = (
-                m.arm.goal_id, self._clock() + self.params.arm_cancel_wait_s)
-            m.arm = None
         m.fault = OUT_OF_SERVICE
+        m.fault_reason = note
         m.comm = ""
         m.called = False
+        m.hold = False
         self._event("INFO", "ZONES_CLEARED", f"released {released}: {note}", robot)
-        if m.order:
-            # Unbound, it is back on the board at its registration position.
-            self._event("INFO", "ORDER_REQUEUED",
-                        f"{m.order.order_id} was bound, basket held {m.order.placed}", robot)
-            m.order = None
+        if m.dispatch:
+            self._out.append(DispatchResult(m.dispatch.goal_id, False, robot, "ROBOT_REMOVED"))
+            m.dispatch = None
         return released
 
     # ---- outputs ------------------------------------------------------------------------
 
+    @property
+    def robots(self) -> list[str]:
+        return list(self._missions)
+
+    @property
+    def running(self) -> bool:
+        return self._run_mode == RUN
+
+    def available(self, robot) -> bool:
+        return self._missions[robot].available
+
     def tick(self) -> list:
+        """One whole cycle, for a caller with nothing to do between its parts."""
         now = self._clock()
+        everyone_here = self.tick_begin(now)
+        halted = self.tick_progress(now)
+        if self.running and not halted and everyone_here:
+            self.tick_pick()
+            for robot in self.robots:
+                if self.available(robot):
+                    self.step(robot)
+        return self.take_output()
+
+    def tick_begin(self, now: float) -> bool:
+        """Startup and comm checks. Returns True once every robot has reported."""
         everyone_here = self._everyone_reported(now)
         self._check_comm(now)
         self._finish_recoveries(now)
-        self._check_arm_timeouts(now)
+        return everyone_here
+
+    def tick_progress(self, now: float) -> bool:
+        """Follow poses and free passed zones. Returns True while a wait cycle halts new moves."""
         for m in self._missions.values():
             if m.available:
                 self._track_progress(m)
                 self._release_passed_zones(m)
-        halted = self._check_deadlock(now)
-        if self._run_mode == RUN and not halted and everyone_here:
-            self._dispatch()
-            for m in self._missions.values():
-                if m.available:
-                    self._step(m)
+        return self._check_deadlock(now)
+
+    def tick_pick(self) -> None:
+        """Decide who answers the open calls, and redirect the robots that changed."""
+        # A cleared robot is off the floor, so unlike a failed one it blocks nobody.
+        infos = [self._robot_info(m) for m in self._missions.values()
+                 if m.placed and m.fault != OUT_OF_SERVICE]
+        self._warn_if_no_robot()
+        called = self.dispatcher.pick(len(self._open_calls), infos)
+        for m in self._missions.values():
+            if m.available:
+                m.called = m.name in called
+                m.await_pick = False
+                self._redirect(m)
+
+    def step(self, robot) -> None:
+        """Act on the current phase, and straight away on any phase that leads to."""
+        m = self._missions[robot]
+        phase = None
+        while m.phase != phase:
+            phase = m.phase
+            self._step_phase(m)
+
+    def take_output(self) -> list:
         out, self._out = self._out, []
         return out
 
@@ -332,44 +342,28 @@ class FleetCore:
             for zone, entry in self.zones.snapshot().items()
         ]
 
-    def assignments_view(self) -> list[AssignmentView]:
-        views = []
-        for m in self._missions.values():
-            if not m.placed or m.fault == OUT_OF_SERVICE:
-                continue
-            order_id = m.order.order_id if m.order else ""
-            docking = m.dest if m.phase == DOCKING else None
-            if m.phase == FILLING:
-                views.append(AssignmentView(m.name, order_id, self._work, "FILL"))
-            elif m.phase == SWAPPING:
-                views.append(AssignmentView(m.name, order_id, self._outbound, "SWAP"))
-            elif m.phase == TO_OUTBOUND or docking == self._outbound:
-                views.append(AssignmentView(m.name, order_id, self._outbound, "TO_OUTBOUND"))
-            elif docking == self._work or (m.phase == TO_WORK and m.called):
-                views.append(AssignmentView(m.name, order_id, self._work, "TO_WORK"))
-            else:
-                views.append(AssignmentView(m.name, order_id, "", "WAIT"))
-        return views
-
     def robot_view(self, robot) -> dict:
         m = self._missions[robot]
         return {
             "state": m.state,
             "phase": m.phase,
-            "basket": m.basket,
-            "order": m.order.order_id if m.order else None,
-            "placed": dict(m.order.placed) if m.order else {},
+            "on_map": m.placed,
+            "fault": m.fault,
+            "comm": m.comm,
             "called": m.called,
             "held": self.zones.held_by(robot),
             "path": list(m.path[m.idx:]),
             "cell": m.path[m.idx] if m.path else None,
-            "flow": self._flow_at(m, m.idx) if m.path else "",
             "destination": m.dest,
             "goal_id": m.goal.id if m.goal else None,
             "attempts": m.attempts,
         }
 
     # ---- placement and helpers ----------------------------------------------------------
+
+    def _own_goal_id(self) -> int:
+        self._goal_seq += 1
+        return self._goal_seq
 
     def _everyone_reported(self, now: float) -> bool:
         missing = [m.name for m in self._missions.values()
@@ -387,30 +381,21 @@ class FleetCore:
     def _event(self, level, code, detail, robot="") -> None:
         self._out.append(EventOut(level, code, detail, robot))
 
-    def _next_goal_id(self) -> int:
-        self._goal_seq += 1
-        return self._goal_seq
-
     def _zone(self, cell) -> str:
         return self.site.zone_of[cell]
 
     def _place(self, m: _Mission) -> None:
-        cell = self.site.nearest_cell(m.x, m.y)
+        cell = self.site.nearest_cell(m.x, m.y, radius=self.params.release_distance_m)
         m.placed = True
         m.path = [cell]
         m.idx = 0
-        m.start_flow = self.site.flows_at(cell)[0]
         m.phase = PARKED if cell in self.site.parking else IDLE
         zone = self._zone(cell)
         if not self.zones.force_acquire(m.name, zone):
             m.fault = ERROR
+            m.fault_reason = "PLACEMENT_CONFLICT"
             self._event("ERROR", "PLACEMENT_CONFLICT",
                         f"{zone} is held by {self.zones.holder(zone)}", m.name)
-
-    def _flow_at(self, m: _Mission, index: int) -> str:
-        if index == 0:
-            return m.start_flow
-        return self.site.flow_after(m.path[index - 1], m.path[index])
 
     def _upcoming(self, m: _Mission) -> tuple[str, str | None]:
         """The robot's current zone and the next different zone on its path."""
@@ -433,16 +418,20 @@ class FleetCore:
             m.settle_idx = m.goal.target_idx
         m.goal = None
 
-    def _fail(self, m: _Mission) -> None:
-        """The operator has to look at it. It keeps its zones and any bound order."""
+    def _fail(self, m: _Mission, reason: str = "") -> None:
+        """The operator has to look at it. It keeps its zones."""
         m.fault = ERROR
+        m.fault_reason = reason
         m.called = False
         self.zones.cancel_all_requests(m.name)
+        if m.dispatch:
+            self._out.append(DispatchResult(m.dispatch.goal_id, False, m.name, reason))
+            m.dispatch = None
 
     def _goal_failed(self, m: _Mission, reason: str) -> None:
         m.attempts += 1
         if m.attempts > self.params.move_retry_limit:
-            self._fail(m)
+            self._fail(m, reason)
             self._event("ERROR", "GOAL_FAILED",
                         f"gave up after {m.attempts} attempts: {reason}", m.name)
         else:
@@ -451,23 +440,61 @@ class FleetCore:
     # ---- progress and zone release ------------------------------------------------------
 
     def _track_progress(self, m: _Mission) -> None:
-        """Move the path index forward to the cell under the pose, up to the running target."""
+        """Move the path index past every lane the pose is well along, up to the running target."""
         if not m.goal or m.goal.kind != MOVE:
             return
-        best = m.idx
-        best_distance = math.inf
-        for index in range(m.idx, m.goal.target_idx + 1):
-            distance = math.dist((m.x, m.y), self.site.cell_pose(m.path[index]))
-            if distance < best_distance:
-                best, best_distance = index, distance
-        m.idx = best
+        while m.idx < m.goal.target_idx:
+            s, _ = self.site.lane_progress(m.path[m.idx], m.path[m.idx + 1], m.x, m.y)
+            if s <= self.params.release_distance_m:
+                return
+            m.idx += 1
+
+    def _exit_lane(self, m: _Mission, zone: str) -> tuple | None:
+        """The lane on which the path leaves a zone the robot is in or has been in."""
+        last = m.idx
+        while last + 1 < len(m.path) and self._zone(m.path[last + 1]) == self._zone(m.path[last]):
+            last += 1
+        for index in range(min(last, len(m.path) - 2), -1, -1):
+            a, b = m.path[index], m.path[index + 1]
+            if self._zone(a) == zone and self._zone(b) != zone:
+                return a, b
+        return None
+
+    def _clear_of(self, m: _Mission, zone: str) -> bool:
+        """Is the robot's body clear of a zone it holds?
+
+        On its path: s > d along the lane leaving the zone. Why d is big enough is in
+        fleet_params.yaml. Not on it (a zone ahead, or a robot moved by hand): at least d from the
+        zone's floor.
+        """
+        lane = self._exit_lane(m, zone)
+        if lane:
+            s, _ = self.site.lane_progress(*lane, m.x, m.y)
+            return s > self.params.release_distance_m
+        return self._off_the_floor(m, zone)
+
+    def _off_the_floor(self, m: _Mission, zone: str) -> bool:
+        distance = self.site.distance_to_zone(m.x, m.y, zone) + self.site.half_width
+        return distance >= self.params.release_distance_m
 
     def _count_reports_outside(self, m: _Mission) -> None:
         for zone in self.zones.held_by(m.name):
-            if self.site.distance_to_zone(m.x, m.y, zone) >= self.params.release_margin:
+            if self._clear_of(m, zone):
                 m.outside[zone] = m.outside.get(zone, 0) + 1
             else:
                 m.outside.pop(zone, None)
+
+    def _watch_lane_error(self, m: _Mission) -> None:
+        """Locks assume a robot stays on its lane. Say so when one does not, once per goal."""
+        if not (m.goal and m.goal.kind == MOVE and m.goal.target_idx > 0):
+            m.off_lane, m.off_lane_warned = 0, False
+            return
+        a, b = m.path[m.goal.target_idx - 1], m.path[m.goal.target_idx]
+        s, e = self.site.lane_progress(a, b, m.x, m.y)
+        m.off_lane = m.off_lane + 1 if e > self.params.lane_error_warn_m else 0
+        if m.off_lane >= self.params.release_confirm_samples and not m.off_lane_warned:
+            m.off_lane_warned = True
+            self._event("WARN", "LANE_ERROR", f"{e:.2f} m off {a} to {b} at s={s:.2f}", m.name)
 
     def _release_if_cleared(self, m: _Mission, zone: str) -> None:
         if m.outside.get(zone, 0) >= self.params.release_confirm_samples:
@@ -511,146 +538,51 @@ class FleetCore:
             if m.live and m.comm == RECOVERING and now >= m.recover_at:
                 self._finish_recovery(m)
 
-    def _recovery_position(self, m: _Mission) -> tuple[tuple[int, int], str]:
-        """The cell under the pose and its lane. A robot moved by hand is placed like at start."""
-        cell = self.site.nearest_cell(m.x, m.y)
-        for index in range(max(m.idx - 1, 0), len(m.path)):
-            if m.path[index] == cell:
-                return cell, self._flow_at(m, index)
-        return cell, self.site.flows_at(cell)[0]
-
     def _finish_recovery(self, m: _Mission) -> None:
         m.comm = ""
-        cell, flow = self._recovery_position(m)
+        cell = self._resume_node(m)
         zone = self._zone(cell)
         for held in self.zones.held_by(m.name):
             self._release_if_cleared(m, held)
         if zone not in self.zones.held_by(m.name) and not self.zones.request(m.name, zone):
             m.fault = ERROR
+            m.fault_reason = "RECOVERY_CONFLICT"
             self.zones.cancel_all_requests(m.name)
             self._event("ERROR", "RECOVERY_CONFLICT",
                         f"{m.name} is in {zone} held by {self.zones.holder(zone)}", m.name)
             return
         m.path = [cell]
         m.idx = 0
-        m.start_flow = flow
-        if m.phase in (FILLING, SWAPPING):
+        if m.phase == AT_STATION:
             return
         if m.phase == DOCKING and cell == self.site.stations[m.dest].dock:
             return
         m.settle_idx = 0
-        if m.basket == FULL:
-            self._start_leg(m, TO_OUTBOUND, self._outbound,
-                            self.site.stations[self._outbound].dock)
+        if m.dispatch:
+            self._start_dispatch_leg(m)
         else:
             m.phase = PARKED if cell in self.site.parking else IDLE
             m.dest = None
 
-    # ---- arms ---------------------------------------------------------------------------
+    def _resume_node(self, m: _Mission):
+        """Where a robot back from silence stands. One report can be off, so what it holds decides.
 
-    def _arm_job_owner(self, goal_id: int, kind: str) -> _Mission | None:
-        for m in self._missions.values():
-            if m.arm and m.arm.goal_id == goal_id and m.arm.kind == kind:
-                return m
-        return None
-
-    def _forget_cleared_job(self, goal_id: int) -> None:
-        for server, (cleared_goal, _) in list(self._cleared_jobs.items()):
-            if cleared_goal == goal_id:
-                del self._cleared_jobs[server]
-
-    def _arm_goal_allowed(self, m: _Mission, server: str) -> bool:
-        """Hold a new goal after a failure, and while the server stops a cleared robot's job."""
-        now = self._clock()
-        cleared = self._cleared_jobs.get(server)
-        if cleared and now >= cleared[1]:
-            del self._cleared_jobs[server]
-            cleared = None
-        return not cleared and now >= m.arm_retry_at
-
-    def _cancel_arm(self, m: _Mission) -> None:
-        m.arm.canceled_at = self._clock()
-        self._out.append(CancelCmd(m.arm.server, m.arm.goal_id))
-
-    def _check_arm_timeouts(self, now: float) -> None:
-        for m in self._missions.values():
-            job = m.arm
-            if not job:
-                continue
-            limit = (self.params.fill_timeout_s if job.kind == FILL
-                     else self.params.swap_timeout_s)
-            if job.canceled_at is None and now - job.sent_at > limit:
-                self._cancel_arm(m)
-                job.timed_out = True
-            elif job.canceled_at is not None and (
-                    now - job.canceled_at >= self.params.arm_cancel_wait_s):
-                # Nobody can say what is in the basket now, so the operator has to look.
-                m.arm = None
-                self._fail(m)
-                self._event("ERROR", "ARM_NO_RESULT",
-                            f"{job.server} goal {job.goal_id} never reported", m.name)
-
-    def _arm_attempt_failed(self, m, job, reason, retry_code, failed_code) -> None:
-        if reason == CANCELED and not job.timed_out:
-            return  # STOP canceled it, nothing went wrong
-        m.attempts += 1
-        m.arm_retry_at = self._clock() + self.params.arm_retry_wait_s
-        if m.attempts > self.params.move_retry_limit:
-            self._fail(m)
-            self._event("ERROR", failed_code, f"{job.server}: {reason}", m.name)
-        else:
-            self._event("WARN", retry_code,
-                        f"{job.server} attempt {m.attempts} failed: {reason}", m.name)
-
-    # ---- orders -------------------------------------------------------------------------
-
-    def _pending(self) -> list:
-        """Board orders nobody holds or finished, in registration order."""
-        bound = {m.order.order_id for m in self._missions.values() if m.order}
-        return [o for o in self._board
-                if o.order_id not in bound and o.order_id not in self._reported]
-
-    def _bind_next_order(self, m: _Mission) -> None:
-        pending = self._pending()
-        if not pending:
-            return
-        record = pending[0]
-        m.order = _BoundOrder(record.order_id, dict(record.items))
-        m.last_order_id = record.order_id
-        self._event("INFO", "ORDER_BOUND", record.order_id, m.name)
-
-    def _report(self, m: _Mission, status: str, detail: str = "") -> None:
-        order, m.order = m.order, None
-        self._reported.add(order.order_id)
-        self._out.append(ReportOrderCmd(order.order_id, m.name, status, dict(order.placed),
-                                        dict(order.missing), detail))
-
-    def _report_shipped(self, m: _Mission) -> None:
-        self.shipped += 1
-        self._report(m, PARTIAL if m.order.missing else SHIPPED)
-
-    def _finish_fill(self, m: _Mission) -> None:
-        order = m.order
-        m.attempts = 0
-        order.missing = _subtract(order.items, order.placed)
-        if not order.placed:
-            self._report(m, HELD, f"nothing could be placed, missing {order.missing}")
-        elif order.missing and not self.params.ship_partial:
-            detail = f"{order.order_id} partial not allowed, basket holds {order.placed}"
-            m.basket = FULL
-            self._report(m, HELD, detail)
-            self._fail(m)
-            self._event("ERROR", "FILL_FAILED", detail, m.name)
-        else:
-            m.basket = FULL
-            self._next_work(m)
+        Within d of a node it counts as on that node, as a driving robot does. Just past d the
+        zone behind may be gone already, and a report short of d must not send it back there.
+        """
+        cell = self.site.nearest_cell(m.x, m.y, radius=self.params.release_distance_m)
+        held = self.zones.held_by(m.name)
+        if self._zone(cell) in held:
+            return cell
+        ahead = self.site.nearest_cell(m.x, m.y)
+        return ahead if self._zone(ahead) in held else cell
 
     # ---- deadlock safety net ------------------------------------------------------------
 
     def _priority(self, robot: str) -> int:
+        """Only what traffic knows: at a station, and asked by name to go somewhere."""
         m = self._missions[robot]
-        carrying = m.basket == FULL or bool(m.order and m.order.placed)
-        return priority(self.params, m.phase in (FILLING, SWAPPING), carrying)
+        return priority(self.params, m.phase == AT_STATION, m.dispatch is not None)
 
     def _check_deadlock(self, now: float) -> bool:
         """Return True while a wait cycle exists, which halts new moves and grants."""
@@ -674,10 +606,7 @@ class FleetCore:
     def _retreat(self, robot: str, cycle: list[str]) -> None:
         """Give up reservations of zones not yet entered. Physical reversing is not built."""
         m = self._missions[robot]
-        given_up = [
-            zone for zone in self.zones.held_by(robot)
-            if self.site.distance_to_zone(m.x, m.y, zone) >= self.params.release_margin
-        ]
+        given_up = [zone for zone in self.zones.held_by(robot) if self._off_the_floor(m, zone)]
         if not given_up:
             self._event("ERROR", "DEADLOCK_UNRESOLVED",
                         f"{robot} of {cycle} has no unentered zone to give up", robot)
@@ -694,9 +623,7 @@ class FleetCore:
         for zone in zones:
             self._release_if_cleared(m, zone)
         nothing_released = set(zones) <= set(self.zones.held_by(robot))
-        if nothing_released and any(
-                self.site.distance_to_zone(m.x, m.y, zone) >= self.params.release_margin
-                for zone in zones):
+        if nothing_released and any(self._off_the_floor(m, zone) for zone in zones):
             # Outside but too few reports so far: the next ones can still confirm it.
             self._retreating = (robot, zones, self._clock() + self.params.recover_check_s)
             return
@@ -717,10 +644,9 @@ class FleetCore:
         return RobotInfo(
             robot_id=m.name,
             cell=cell,
-            flow=self._flow_at(m, index),
             called=m.called,
             parked=cell in self.site.parking,
-            eligible=m.available and m.basket == EMPTY and not m.order and not m.arm,
+            eligible=m.available and not m.hold and m.dispatch is None,
             available=m.available,
         )
 
@@ -728,34 +654,21 @@ class FleetCore:
         """A robot heading to the fill dock cannot turn off once it has the commit zone."""
         if m.phase != TO_WORK:
             return False
-        zone = self.params.commit_zone
+        zone = self._zone(self.site.stations[self._work].commit)
         if zone in self.zones.held_by(m.name):
             return True
         return zone not in {self._zone(c) for c in m.path[m.idx:]}
 
-    def _dispatch(self) -> None:
-        # A cleared robot is off the floor, so unlike a failed one it blocks nobody.
-        infos = [self._robot_info(m) for m in self._missions.values()
-                 if m.placed and m.fault != OUT_OF_SERVICE]
-        pending = self._pending()
-        self._warn_if_no_robot(pending)
-        called = self.dispatcher.pick(len(pending), infos)
-        for m in self._missions.values():
-            if m.available:
-                m.called = m.name in called
-                self._redirect(m)
-
-    def _warn_if_no_robot(self, pending: list) -> None:
-        """Orders wait and no robot can come until the operator acts. Say so, once per stall."""
-        stalled = bool(pending) and not any(m.live for m in self._missions.values())
+    def _warn_if_no_robot(self) -> None:
+        """Calls wait and no robot can come until the operator acts. Say so, once per stall."""
+        stalled = bool(self._open_calls) and not any(m.live for m in self._missions.values())
         if stalled and not self._no_robot_warned:
-            ids = [o.order_id for o in pending]
-            self._event("WARN", "NO_ROBOT_AVAILABLE", f"{ids} wait and no robot can take them")
+            self._out.append(DispatchFeedback(self._open_calls[0], "", NO_ROBOT))
         self._no_robot_warned = stalled
 
     def _redirect(self, m: _Mission) -> None:
         """Send an empty driving robot where its call now says."""
-        if m.basket != EMPTY or m.phase not in (TO_WORK, TO_PARK) or self._committed(m):
+        if m.phase not in (TO_WORK, TO_PARK) or m.dispatch or self._committed(m):
             return
         if m.called:
             if m.phase != TO_WORK:
@@ -763,33 +676,51 @@ class FleetCore:
         elif m.phase == TO_WORK:
             self._start_park_leg(m)
 
+    def _finish_dispatch(self, m: _Mission, error_x_cm=0.0, error_y_cm=0.0,
+                         error_yaw_deg=0.0) -> None:
+        """Standing at the dock: answer whoever asked, then wait to be told what comes next."""
+        if m.dispatch:
+            goal_id, m.dispatch = m.dispatch.goal_id, None
+        elif m.dest == self._work and self._open_calls:
+            goal_id = self._open_calls.pop(0)
+        else:
+            m.await_pick = True  # nobody is waiting for it any more
+            return
+        m.hold = True
+        self._out.append(DispatchResult(goal_id, True, m.name, "", error_x_cm, error_y_cm,
+                                        error_yaw_deg))
+
     # ---- mission steps ------------------------------------------------------------------
 
     def _start_leg(self, m: _Mission, phase: str, dest: str | None, goal_cell) -> None:
         """Replace the path after the point the robot is committed to reach."""
         _, old_next = self._upcoming(m) if m.path else ("", None)
         anchor = self._anchor(m)
-        tail = self.site.plan(m.path[anchor], self._flow_at(m, anchor), goal_cell)
-        flow = self._flow_at(m, m.idx)
-        m.path = m.path[m.idx:anchor + 1] + tail[1:]
+        tail = self.site.plan(m.path[anchor], goal_cell)
+        behind = max(m.idx - 1, 0)  # keep the lane just driven: its zone may not be released yet
+        m.path = m.path[behind:anchor + 1] + tail[1:]
         if m.goal and m.goal.kind == MOVE:
-            m.goal.target_idx -= m.idx
+            m.goal.target_idx -= behind
         if m.settle_idx is not None:
-            m.settle_idx = max(0, m.settle_idx - m.idx)
-        m.idx = 0
-        m.start_flow = flow
+            m.settle_idx = max(0, m.settle_idx - behind)
+        m.idx -= behind
         m.phase = phase
         m.dest = dest
         _, new_next = self._upcoming(m)
         if old_next and old_next != new_next:
             self.zones.cancel_request(m.name, old_next)
 
-    def _park_goal(self, m: _Mission, from_cell) -> tuple[int, int] | None:
+    def _start_dispatch_leg(self, m: _Mission) -> None:
+        station = m.dispatch.station_id
+        phase = TO_WORK if station == self._work else TO_OUTBOUND
+        self._start_leg(m, phase, station, self.site.stations[station].dock)
+
+    def _park_goal(self, m: _Mission, from_cell):
         """Deepest parking cell it can drive to from here without passing another robot."""
-        order = self.site.parking
-        start = order.index(from_cell) + 1 if from_cell in order else 0
+        spots = self.site.parking
+        start = spots.index(from_cell) + 1 if from_cell in spots else 0
         goal = None
-        for cell in order[start:]:
+        for cell in spots[start:]:
             zone = self._zone(cell)
             holder = self.zones.holder(zone)
             if (holder and holder != m.name) or set(self.zones.queue(zone)) - {m.name}:
@@ -807,20 +738,12 @@ class FleetCore:
 
     def _next_work(self, m: _Mission) -> None:
         """Leave a dock or a parked spot for whatever comes next."""
-        if m.basket == FULL:
-            self._start_leg(m, TO_OUTBOUND, self._outbound,
-                            self.site.stations[self._outbound].dock)
+        if m.dispatch:
+            self._start_dispatch_leg(m)
         elif m.called:
             self._start_leg(m, TO_WORK, self._work, self.site.stations[self._work].dock)
         else:
             self._start_park_leg(m)
-
-    def _step(self, m: _Mission) -> None:
-        """Act on the current phase, and straight away on any phase that leads to."""
-        phase = None
-        while m.phase != phase:
-            phase = m.phase
-            self._step_phase(m)
 
     def _step_phase(self, m: _Mission) -> None:
         if m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK):
@@ -830,60 +753,25 @@ class FleetCore:
                 goal_id = self._next_goal_id()
                 m.goal = _Goal(DOCK, goal_id)
                 self._out.append(DockCmd(m.name, goal_id, m.dest))
-        elif m.phase == FILLING:
-            self._step_filling(m)
-        elif m.phase == SWAPPING:
-            self._step_swapping(m)
+        elif m.phase == AT_STATION:
+            self._step_at_station(m)
         elif m.called or m.phase == IDLE:
             self._next_work(m)
         else:
             self._step_parked(m)
 
+    def _step_at_station(self, m: _Mission) -> None:
+        if m.hold or m.await_pick:
+            return
+        if m.called and m.dest == self._work and self._open_calls:
+            self._finish_dispatch(m)  # called while standing at the dock it was called to
+            return
+        self._next_work(m)
+
     def _step_parked(self, m: _Mission) -> None:
         """Keep advancing into free cells so the parking entrance stays clear."""
         if self._park_goal(m, m.path[m.idx]):
             self._start_park_leg(m)
-
-    def _step_filling(self, m: _Mission) -> None:
-        if m.arm:
-            return
-        if not m.order:
-            # Docked with nothing bound, or the last order was held: stay only if called.
-            if m.called:
-                self._bind_next_order(m)
-            if not m.order:
-                self._next_work(m)
-                return
-        order = m.order
-        if sum(order.items.values()) > self.params.basket_capacity:
-            # Nobody looked on the shelf, so nothing is missing: the stock record stays as it is.
-            self._report(m, HELD, f"{sum(order.items.values())} items exceed the basket "
-                                  f"capacity of {self.params.basket_capacity}")
-            return
-        remaining = _subtract(order.items, order.placed, order.missing)
-        if not remaining:
-            self._finish_fill(m)
-            return
-        station = self.site.stations[m.dest]
-        if not self._arm_goal_allowed(m, station.server):
-            return
-        goal_id = self._next_goal_id()
-        m.arm = _ArmJob(station.server, goal_id, FILL, self._clock())
-        self._out.append(FillCmd(goal_id, m.name, m.dest, order.order_id, remaining))
-
-    def _step_swapping(self, m: _Mission) -> None:
-        if m.arm:
-            return
-        if m.basket == EMPTY:
-            self._next_work(m)
-            return
-        station = self.site.stations[m.dest]
-        if not self._arm_goal_allowed(m, station.server):
-            return
-        goal_id = self._next_goal_id()
-        m.arm = _ArmJob(station.server, goal_id, SWAP, self._clock())
-        self._out.append(SwapCmd(station.server, goal_id, m.name, m.dest, m.last_order_id,
-                                 take_full=m.basket == FULL, put_empty=True))
 
     def _drive(self, m: _Mission) -> None:
         if m.phase == TO_PARK:
@@ -898,14 +786,14 @@ class FleetCore:
         """Re-aim inside the parking: stop behind whoever got there first, or go deeper."""
         anchor = self._anchor(m)
         cell = m.path[anchor]
-        order = self.site.parking
+        spots = self.site.parking
         old_tail = m.path[anchor + 1:]
-        if cell not in order and old_tail[:1] != [order[0]]:
+        if cell not in spots and old_tail[:1] != [spots[0]]:
             return
         goal = self._park_goal(m, cell)
-        start = order.index(cell) + 1 if cell in order else 0
-        new_tail = order[start:order.index(goal) + 1] if goal else []
-        if cell not in order and not new_tail:
+        start = spots.index(cell) + 1 if cell in spots else 0
+        new_tail = spots[start:spots.index(goal) + 1] if goal else []
+        if cell not in spots and not new_tail:
             return  # the first parking cell is taken: keep queueing for it
         if new_tail != old_tail:
             for removed in old_tail:
@@ -916,9 +804,9 @@ class FleetCore:
     def _arrive(self, m: _Mission) -> None:
         if m.phase == TO_PARK:
             m.phase = PARKED
-        elif m.phase == TO_OUTBOUND:
+        elif m.phase == TO_OUTBOUND or m.dispatch:
             m.phase = DOCKING
-        elif m.called and self._pending():
+        elif m.called and self._open_calls:
             m.phase = DOCKING
         else:
             m.dest = None
@@ -972,11 +860,12 @@ class FleetCore:
         if reach != anchor:
             self._send_move(m, reach, step)
 
-    def _step_between(self, m: _Mission, index: int) -> tuple[int, int]:
-        a, b = m.path[index], m.path[index + 1]
-        return (b[0] - a[0], b[1] - a[1])
+    def _step_between(self, m: _Mission, index: int) -> tuple[float, float]:
+        """The direction of a lane, rounded so that lanes in one straight line compare equal."""
+        lane = self.site.lane(m.path[index], m.path[index + 1])
+        return (round(lane.ux, 6), round(lane.uy, 6))
 
-    def _step_into(self, m: _Mission, index: int) -> tuple[int, int] | None:
+    def _step_into(self, m: _Mission, index: int) -> tuple[float, float] | None:
         return self._step_between(m, index - 1) if index > 0 else None
 
     def _send_move(self, m: _Mission, target_idx: int, step) -> None:

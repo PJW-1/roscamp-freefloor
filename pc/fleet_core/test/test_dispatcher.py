@@ -2,22 +2,22 @@
 import pytest
 from fleet_core.dispatcher import Dispatcher, RobotInfo
 from fleet_core.params import load_params
-from fleet_core.site_map import load_site_map
+from grid_map import grid_site
 
 P6, P5, P4 = (3, 4), (3, 5), (3, 6)
 
 
 @pytest.fixture(scope="module")
 def dispatcher():
-    return Dispatcher(load_site_map(), load_params())
+    return Dispatcher(grid_site(), load_params())
 
 
-def lane(name, cell, flow="ret", **kw):
-    return RobotInfo(name, cell, flow, **kw)
+def lane(name, cell, **kw):
+    return RobotInfo(name, cell, **kw)
 
 
 def parked(name, cell, **kw):
-    return RobotInfo(name, cell, "wait", parked=True, **kw)
+    return RobotInfo(name, cell, parked=True, **kw)
 
 
 def test_no_orders_no_calls(dispatcher):
@@ -33,7 +33,7 @@ def test_calls_follow_the_number_of_unbound_orders(dispatcher):
 
 def test_shortest_way_along_the_lanes_wins_not_the_straight_line(dispatcher):
     """(6,3) is one cell from the dock on the grid, but it must drive the whole loop."""
-    robots = [lane("near_by_grid", (6, 3), "out"), lane("near_by_lane", (2, 0))]
+    robots = [lane("near_by_grid", (6, 3)), lane("near_by_lane", (2, 0))]
     assert dispatcher.pick(1, robots) == {"near_by_lane"}
 
 

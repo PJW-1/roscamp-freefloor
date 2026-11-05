@@ -14,6 +14,7 @@
 | `pc/fleet_core` | 관제 판단 로직. ROS를 쓰지 않는 순수 Python과 pytest | 동작 |
 | `pc/fleet_manager` | `fleet_core`를 ROS에 연결하는 노드 | 동작 |
 | `sim/fake_robots`, `sim/scenarios` | 가짜 핑키, 작업공간 서버, 출고 팔, 비전, 중앙, 시계, 심판 노드와 시나리오 | 동작 |
+| `sim/maps` | 비교용 일방통행 지도 2개. 기본 지도는 `pc/fleet_core/fleet_core/data/site_map.yaml` | 동작 |
 | `bringup/iponic_bringup` | `pc.launch.py` | 동작 |
 | `scripts/check_interfaces.py` | 실행 중인 시스템을 `contract.yaml`과 비교 | 동작 |
 | `pc/central`, `pinky/*`, `arm/*` | 담당자가 채울 빈 패키지 | 비어 있음 |
@@ -53,7 +54,7 @@ cat /tmp/run1/summary.json
 
 시나리오가 끝나면 launch가 스스로 종료되고, `result_dir`에 `summary.json`, `events.csv`, `zones.csv`, `robots.csv`, `releases.csv`가 남습니다. 심판은 가짜 로봇이 `/sim/truth/<로봇>`으로 발행하는 잡음 없는 위치로 판정하고, 실물 로봇은 보고된 위치로 판정합니다.
 
-이 코드의 공식 실행 결과는 저장소 옆 폴더 `../test_results/`에 있습니다. 옛 결과는 WSL2와 CycloneDDS에서 얻은 것이고, 지금 개발 PC에는 `rmw_cyclonedds`가 없어 기본 DDS(Fast DDS)로 실행합니다. 환경이 다르므로 옛 결과를 그대로 옮겨 말하지 않습니다. Fast DDS는 다른 프로세스의 QoS 깊이를 알려 주지 않으므로 `check_interfaces.py`는 이 경우 깊이를 검사하지 않고 신뢰성과 지속성만 검사합니다.
+이 코드의 공식 실행 결과는 저장소 옆 폴더 `../test_results/`에 있습니다. 옛 결과는 WSL2와 CycloneDDS에서 얻은 것이고, 지금 개발 PC에는 `rmw_cyclonedds`가 없어 기본 DDS(Fast DDS)로 실행합니다. 환경이 다르므로 옛 결과를 그대로 옮겨 말하지 않습니다. CI와 시험 의존성도 Fast DDS(`rmw_fastrtps_cpp`)로 맞췄습니다. 실물 로봇에서 쓸 DDS는 Wi-Fi 비교 시험(T-10) 뒤에 정합니다. Fast DDS는 다른 프로세스의 QoS 깊이를 알려 주지 않으므로 `check_interfaces.py`는 이 경우 깊이를 검사하지 않고 신뢰성과 지속성만 검사합니다.
 
 ## 시나리오
 
@@ -65,7 +66,7 @@ cat /tmp/run1/summary.json
 | `order_burst` | 한꺼번에 8건, 진행 중 2건 추가 | 주문이 밀려 있으면 대기 구간을 거치지 않고 바로 작업공간으로 돌아감 |
 | `shared_lane_failure` | 통신 두절과 주행 실패 | 구역 잠금 유지, `COMM_LOST`, `COMM_RESTORED`, `GOAL_RETRY`, 전부 출고 |
 | `stock_shortage` | 재고 0인 품목, 기록만 있고 실물 없는 품목, 용량 초과 주문 | PARTIAL과 HELD, `OUT_OF_STOCK`과 `STOCK_MISMATCH` 구분 |
-| `stuck_robot` | 복귀 차선에서 로봇이 영구 정지 | 뒤따르는 로봇이 막히고 `COMM_LOST`, `ZONE_WAIT_LONG`이 남 |
+| `stuck_robot` | 돌아오던 로봇이 대로(양방향 구간)에서 영구 정지 | 뒤따르는 로봇이 막히고 `COMM_LOST`, `ZONE_WAIT_LONG`이 남 |
 | `operator_recovery` | 팔 고장 3회로 ERROR, 관리자가 로봇을 치움. 다음 로봇도 담는 도중 치움(팔 취소가 느림) | `ORDER_REQUEUED` 후 앞으로 되돌아가고, 세 번째 로봇이 앞 작업의 취소 결과를 기다렸다가 전부 끝냄 |
 
 `expect` 항목은 다음과 같습니다. 숫자는 정확히 일치해야 통과합니다(`_min`으로 끝나는 것은 그 값 이상).
@@ -117,20 +118,21 @@ ros2 launch iponic_bringup pc.launch.py use_fake:=false                         
 |---|---|---|
 | 토픽, 액션, 서비스 이름 | `contract.yaml`의 `name` | 없음 |
 | QoS | `contract.yaml`의 `qos_profiles` | 없음 |
-| 메시지 필드 | `interfaces`의 정의, `fleet_manager/adapters.py`, `sim/fake_robots`에서 그 메시지를 쓰는 노드 | 이 파일들만. 타입을 통째로 바꾸면 `fleet_manager_node.py`의 타입 지정도 고칩니다. |
+| 메시지 필드 | `interfaces`의 정의, `fleet_manager/adapters.py`, `sim/fake_robots`에서 그 메시지를 쓰는 노드 | 이 파일들만. 타입을 통째로 바꾸면 `fms_node.py`의 타입 지정도 고칩니다. |
 | 로봇 상태 값 | `RobotState.msg`의 상수, `sim/fake_robots/fake_robots/judge.py`의 `IDLE` 비교 | 이 파일들만. `fleet_core`는 이 값으로 판단하지 않습니다. |
 | 팔 상태 값 | `ArmState.msg`의 상수, `judge.py`의 `PLACING` | 이 파일들만 |
 | 이벤트 코드 | `fleet_core`, `fake_central_node.py`, `judge.py`, 시나리오의 `events_include` | 이 파일들만 |
 | 관제와 FSM의 역할 경계 | `fleet_manager`의 노드와 `adapters.py` | `fleet_core`는 수정하지 않음 |
-| 칸 크기와 원점 | `site_map.yaml`의 `cell_size_m`, `origin_m` | 없음 |
-| 실측 좌표 | `site_map.yaml`의 `cell_overrides` | 없음 |
-| 구역 다각형 | `site_map.yaml`의 `zone_polygons` | 없음 |
-| 구역과 경로 변경 | `site_map.yaml`의 `zones`, `routes`, `links` | 없음. `test_model_check.py`의 기대 상태 수만 갱신 |
+| 노드 좌표와 원점 | `site_map.yaml`의 `nodes`, `origin_m` | 없음 |
+| 레인 폭과 레인 시작 판정 | `site_map.yaml`의 `half_width_m`, `lane_entry_m` | 없음 |
+| 레인과 양방향 구간 | `site_map.yaml`의 `lanes`, `two_way`, `bundle_two_way` | 없음 |
+| 잠금 단위 묶기 | `site_map.yaml`의 `units` | 없음 |
+| 해제 거리 d | `fleet_params.yaml`의 `release_distance_m` (근거식은 그 파일의 주석) | 없음 |
 | 바구니 용량 | `fleet_params.yaml`의 `basket_capacity` | 없음. 관제와 가짜 중앙이 같은 파일을 읽습니다 |
 | 일부만 담겨도 출고할지 | `fleet_params.yaml`의 `ship_partial` | 없음 |
 | 로봇 반경, 시간 제한, 재시도 | `fleet_params.yaml` | 없음 |
 | 로봇 이름과 대수 | `pc.launch.py`의 `robots`, `contract.yaml`의 `placeholders` | 없음 |
-| 팔 배치, 작업공간과 출고 구역 | `site_map.yaml`의 `stations`, `arm_cells` | 없음 |
+| 작업공간과 출고 구역, 대기 칸 | `site_map.yaml`의 `stations`, `parking` | 없음 |
 
 `site_map.yaml`과 `fleet_params.yaml`은 `pc/fleet_core/fleet_core/data/`에 있습니다. 설치된 기본값 대신 다른 파일을 쓰려면 launch 인자 `map_file`, `params_file`, `contract_file`을 지정합니다.
 
@@ -170,7 +172,7 @@ Python 패키지의 `setup.py`에는 `tests_require=['pytest']`를 넣어야 합
 
 ## 알려진 약점
 
-- 차선이 한 바퀴뿐이라 대기 칸 밖에서 멈춘 로봇 1대는 나머지를 모두 막습니다(`stuck_robot`이 이 상황입니다).
+- 두 스테이션 사이는 대로 하나로만 다니고 대로 전체가 잠금 하나이므로, 대로에서 멈춘 로봇 1대는 그 이동을 모두 막습니다(`stuck_robot`이 이 상황입니다).
 - 가짜 로봇은 목표에 정확히 서므로 위치 오차에서 오는 문제(덜 가서 멈춰 뒤 구역이 해제되지 않는 경우 등)는 이 시험으로 드러나지 않습니다.
 - `dual_arm_overlaps`는 상태 메시지로 판정합니다. 상태 토픽은 best effort이므로 메시지를 잃으면 겹침을 잘못 판정할 수 있습니다.
 - 팔의 동작 시간, 재고 기록, 바구니 용량은 모두 가정입니다. 실제 바구니와 그리퍼로 잰 값이 아닙니다.

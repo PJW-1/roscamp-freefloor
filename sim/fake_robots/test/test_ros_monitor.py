@@ -152,6 +152,6 @@ def test_confirm_clear_waits_until_the_robot_is_off_the_course(harness, tmp_path
     calls = []
     probe.create_service(ConfirmClear, C.name("confirm_clear"),
                          lambda req, res: (calls.append(req), res)[1])
-    monitor.judge.truth["pinky1"] = monitor.judge.site.cell_pose((3, 4))
+    monitor.judge.truth["pinky1"] = monitor.judge.site.cell_pose("P-6")
     assert wait_until(lambda: calls, 8.0)  # the fake reports the removal, and only then
     assert monitor.judge.off_course("pinky1")

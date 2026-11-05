@@ -114,7 +114,7 @@ def test_order_burst_keeps_every_robot_working_without_waiting():
 def test_dock_order_follows_arrival_at_outbound():
     world = SimWorld(seed=11)
     assert world.run_until(world.done)
-    queue_cell = world.site.stations["OUTBOUND"].queue[0]
+    queue_cell = world.site.stations["OUTBOUND"].queue[-1][0]  # the node next to the dock
     arrivals = [name for _, name, cell, basket in world.visits
                 if cell == queue_cell and basket == "FULL"]
     docks = [c.robot for c in world.commands_of(DockCmd) if c.dock_id == "OUTBOUND"]
@@ -460,4 +460,5 @@ def test_noisy_pose_does_not_release_a_zone_the_robot_is_still_next_to(seed):
     assert world.run_until(world.done)
     assert_clean_finish(world)
     noise = 0.03
-    assert world.min_true_release_distance >= world.params.release_margin - 2 * noise
+    from_floor = world.min_true_release_distance + world.site.half_width
+    assert from_floor >= world.params.release_distance_m - 2 * noise

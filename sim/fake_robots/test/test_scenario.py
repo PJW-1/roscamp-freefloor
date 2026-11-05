@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import pytest
+from conftest import GRID_MAP
 from fake_robots.common import load_fleet_params, split_fake_arms
 from fake_robots.scenario import ScenarioError, load_scenario, parse_scenario
 from fleet_core.site_map import load_site_map
@@ -13,7 +14,7 @@ SIX = {"basic_orders", "order_burst", "shared_lane_failure", "stock_shortage", "
 
 @pytest.fixture(scope="module")
 def site():
-    return load_site_map()
+    return load_site_map(GRID_MAP)
 
 
 def minimal(**over):

@@ -24,9 +24,10 @@ from fleet_core.commands import (
     ReportOrderCmd,
     SwapCmd,
 )
-from fleet_core.fleet import FleetCore
 from fleet_core.params import load_params
-from fleet_core.site_map import load_site_map
+from fleet_core.site_map import _point_segment
+from grid_map import grid_site
+from legacy_core import FleetCore
 
 DT = 0.1
 NAV_ABORT_AFTER_S = 0.5
@@ -98,11 +99,12 @@ class SimWorld:
     dock_s: float = 2.0
     params: object = None
     gaussian_noise: bool = False  # unbounded noise, as a real localizer and the ROS fake give
+    site: object = None  # the older tests stay on the cell layout
 
     def __post_init__(self):
         self.t = 0.0
         self.rng = random.Random(self.seed)
-        self.site = load_site_map()
+        self.site = self.site or grid_site()
         self.params = self.params or load_params()
         self.total_items = sum(self.stock.values())
         self.shipped_items: dict[str, int] = {}
@@ -400,8 +402,12 @@ class SimWorld:
         zone = self.site.zone_of[cell]
         assert zone in self.core.zones.held_by(cmd.robot), f"{cmd} targets an ungranted zone"
         assert (cmd.x, cmd.y) == self.site.cell_pose(cell), f"{cmd} pose is not the cell centre"
-        off_axis = min(abs(cmd.x - r.x), abs(cmd.y - r.y))
-        assert off_axis < LINE_TOLERANCE_M, f"{cmd} from ({r.x}, {r.y}) leaves the lane"
+        for step in range(5):
+            x = r.x + (cmd.x - r.x) * step / 4
+            y = r.y + (cmd.y - r.y) * step / 4
+            off = min(_point_segment(x, y, lane.ax, lane.ay, lane.bx, lane.by)
+                      for lane in self.site.lanes.values())
+            assert off < LINE_TOLERANCE_M, f"{cmd} from ({r.x}, {r.y}) leaves the lanes"
         self._preempt(r)
         r.docked_at = ""
         r.goal_id = cmd.goal_id
@@ -495,15 +501,15 @@ class SimWorld:
     # ---- invariants ---------------------------------------------------------------------
 
     def _check_releases(self, before):
-        """A zone only leaves its holder with the reported pose outside it by the margin."""
+        """A zone only leaves its holder with the reported pose too far from it to touch."""
         after = self.core.zones.snapshot()
-        margin = self.params.release_margin
+        least = 2 * self.params.robot_radius_m
         for zone, old in before.items():
             holder = old["holder"]
             if holder and after[zone]["holder"] != holder:
                 x, y = self.reported[holder]
-                dist = self.site.distance_to_zone(x, y, zone)
-                assert dist >= margin, f"{holder} released {zone} at distance {dist:.3f}"
+                dist = self.site.distance_to_zone(x, y, zone) + self.site.half_width
+                assert dist >= least, f"{holder} released {zone} at distance {dist:.3f}"
                 true = self.virtual[holder]
                 self.min_true_release_distance = min(
                     self.min_true_release_distance,

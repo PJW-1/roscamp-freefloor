@@ -203,3 +203,22 @@ def test_t06_a_retreating_robot_going_silent_ends_the_episode():
     assert find_cycle(wait_graph(core.zones)) is None
     assert core._retreating is None
     assert core.zones.holder("Q-WORK-2") == "r1", "kept: its position can no longer be confirmed"
+
+
+def test_a_cycle_through_a_free_zone_of_a_conflict_pair_is_found():
+    """r1 waits for r2 across a pair, r2 for r1 in line. No zone in it has r1 as its holder."""
+    zones = ZoneManager(["A", "B", "Y"], clock=lambda: 0.0, conflicts=[frozenset({"A", "Y"})])
+    assert zones.request("r2", "Y")
+    assert not zones.request("r1", "A"), "free, but it is a conflict pair with what r2 holds"
+    assert not zones.request("r2", "A"), "behind r1 in line"
+    graph = wait_graph(zones)
+    assert graph == {"r1": {"r2"}, "r2": {"r1"}}
+    assert set(find_cycle(graph)) == {"r1", "r2"}
+
+
+def test_waiting_for_a_free_zone_of_a_pair_is_not_a_cycle_by_itself():
+    zones = ZoneManager(["A", "Y"], clock=lambda: 0.0, conflicts=[frozenset({"A", "Y"})])
+    assert zones.request("r2", "Y")
+    assert not zones.request("r1", "A")
+    assert wait_graph(zones) == {"r1": {"r2"}}
+    assert find_cycle(wait_graph(zones)) is None

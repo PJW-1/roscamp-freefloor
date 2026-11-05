@@ -1,8 +1,9 @@
-"""Exhaustive check of the one-way lanes and zone locks for three robots.
+"""Exhaustive check of the cell layout's one-way lanes and zone locks for three robots.
 
-Ported from zone_model_check.py, but the graph comes from site_map.yaml so the map the
-fleet manager uses is the map being proved. A move has two phases, as in the real protocol:
-acquire (a robot in zone A reserves zone B and keeps A) and complete (it left A, A is freed).
+Ported from zone_model_check.py. It works on the lock graph alone, every placement of it, and
+tools/model_check.py is what drives the real core. A move has two phases, as in the real
+protocol: acquire (a robot in zone A reserves zone B and keeps A) and complete (it left A, A is
+freed).
 
 What this shows and what it does not:
   - It explores all placements, not only those a real assignment policy reaches.
@@ -16,39 +17,36 @@ import itertools
 from collections import defaultdict
 
 import pytest
-import yaml
-from fleet_core.site_map import load_site_map
+from grid_map import grid_site
 
 ROBOTS = 3
+WORK, OUTBOUND = (5, 3), (9, 3)
 
 # Sanity control: the return drives back along the outbound lane, so two robots can meet
 # head-on. The checker must report deadlocks here or "none" for the design means nothing.
-HEAD_ON_ROUTE = "to_work"
 CONTROL = (33480, 66, 8304)  # measured
 
 
-def route_edges(site, skip=()):
+def design_graph(site):
+    """A node is (cell, lane name). A cell here has one lane through it, so the name is empty."""
     succ = defaultdict(set)
-    for name, route in site.routes.items():
-        if name in skip:
-            continue
-        for a, b in zip(route.cells, route.cells[1:], strict=False):
-            succ[site.node(a, route.flow)].add(site.node(b, route.flow))
-    return succ
-
-
-def add_links(site, succ):
-    for link in yaml.safe_load(site.source_text)["links"]:
-        a, b = tuple(link["from"]), tuple(link["to"])
-        succ[site.node(a, link["from_flow"])].add(site.node(b, link["to_flow"]))
+    for a, b in site.lanes:
+        succ[(a, "")].add((b, ""))
     return succ
 
 
 def head_on_graph(site):
-    succ = route_edges(site, skip=(HEAD_ON_ROUTE,))
-    back = site.routes["to_outbound"].cells[::-1]
-    for a, b in zip(back, back[1:], strict=False):
-        succ[site.node(a, "back")].add(site.node(b, "back"))
+    """The outbound lane driven in both directions, as separate tracks over the same cells."""
+    out = site.plan(WORK, OUTBOUND)
+    succ = defaultdict(set)
+
+    def track(cells, name):
+        for a, b in zip(cells, cells[1:], strict=False):
+            succ[(a, "" if a in site.docks else name)].add((b, "" if b in site.docks else name))
+
+    track(out, "out")
+    track(out[::-1], "back")
+    track(site.parking, "wait")
     return succ
 
 
@@ -103,7 +101,7 @@ def check(site, succ, robots=ROBOTS):
 
 def frozen_robot_table(site):
     """For each stop cell, does the WORK-OUTBOUND loop stay free of blocked route cells?"""
-    loop = set(site.routes["to_outbound"].cells) | set(site.routes["to_work"].cells)
+    loop = set(site.plan(WORK, OUTBOUND)) | set(site.plan(OUTBOUND, WORK))
     rows = defaultdict(list)
     for cell in sorted(site.zone_of):
         rows[not loop & site.zones[site.zone_of[cell]]].append(cell)
@@ -112,11 +110,12 @@ def frozen_robot_table(site):
 
 @pytest.fixture(scope="module")
 def site():
-    return load_site_map()
+    return grid_site()
 
 
 def test_design_has_no_deadlock_and_no_starvation(site):
-    assert check(site, add_links(site, route_edges(site))) == (149238, 0, 0)
+    """The same number as before the map became lanes, so the conversion kept the graph."""
+    assert check(site, design_graph(site)) == (149238, 0, 0)
 
 
 def test_head_on_control_finds_deadlocks(site):

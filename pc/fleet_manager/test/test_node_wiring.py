@@ -23,7 +23,7 @@ from fleet_interfaces.msg import (  # noqa: E402
     RobotState,
 )
 from fleet_interfaces.srv import ReportOrder  # noqa: E402
-from fleet_manager.fleet_manager_node import FleetManagerNode  # noqa: E402
+from fleet_manager.fms_node import FmsNode  # noqa: E402
 from rclpy.action import ActionServer, CancelResponse  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
 from rclpy.executors import MultiThreadedExecutor  # noqa: E402
@@ -121,8 +121,8 @@ class World(Node):
 @pytest.fixture
 def graph():
     rclpy.init(args=["--ros-args", "-p", "robots:=[pinky1]", "-p", "tick_hz:=50.0"])
-    node = FleetManagerNode()
-    world = World(node.contract, load_site_map(), (4, 3))
+    node = FmsNode()
+    world = World(node.contract, load_site_map(), "Q")
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     executor.add_node(world)

@@ -1,18 +1,29 @@
-"""Course map: cells, one-way lanes, zones, stations and parking, loaded from YAML.
+"""Course map: nodes, directed lanes, lock units, stations and parking, loaded from YAML.
 
-Cell coordinates, cell size and zone polygons are not agreed yet, so all of them live in
-site_map.yaml. Nothing else in the code base hard-codes a coordinate.
+A robot drives straight from node to node, in whatever direction the lane points. There is no
+grid. The real map is not agreed yet, so coordinates live in the map file and nothing else in
+the code base hard-codes one: a new map is new data.
+
+A lock unit is what one robot holds at a time, and it is also what the rest of the code calls a
+zone. Every node belongs to exactly one unit, and a lane belongs to the unit of the node it
+ends at:
+  - Lanes that end at one node could never be used together, so they share a lock, and that
+    lock's queue is also the merge's FIFO. Where one lane reaches each node, one lane is one lock.
+  - A two-way pair is one lock when bundled, so two robots cannot meet head-on on it.
+  - Lanes of different units too close for two robot bodies are found by conflict_pairs().
+
+`cell` in a method name is the old word for a node. The scenario judge still calls these
+methods, so they keep the name.
 """
 from __future__ import annotations
 
+import heapq
 import math
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-Cell = tuple[int, int]
 DEFAULT_MAP = Path(__file__).parent / "data" / "site_map.yaml"
 
 
@@ -23,192 +34,280 @@ class SiteMapError(ValueError):
 @dataclass(frozen=True)
 class Station:
     id: str
-    dock: Cell
-    queue: tuple[Cell, ...]
+    dock: object  # node
+    queue: tuple  # (from, to) lanes where robots line up for the dock
+    commit: object  # node: a robot holding its unit can no longer be sent elsewhere
     server: str  # who answers this station's action
     arms: tuple[str, ...]  # the arms working behind that server
     action: str  # fill or swap
 
 
 @dataclass(frozen=True)
-class Route:
-    name: str
-    flow: str
-    cells: tuple[Cell, ...]
+class Lane:
+    a: object  # node it starts at
+    b: object  # node it ends at
+    ax: float
+    ay: float
+    bx: float
+    by: float
+    ux: float  # unit vector from a to b
+    uy: float
+    length: float  # planning cost, the straight distance unless the file says otherwise
+    span: float  # straight distance
 
 
-def _cell(raw) -> Cell:
-    return (int(raw[0]), int(raw[1]))
+def _node_id(raw):
+    """A node is named by a string, or by [col, row] on a map converted from cells."""
+    if isinstance(raw, (list, tuple)):
+        return tuple(int(v) for v in raw)
+    return str(raw)
+
+
+def _point_segment(x, y, ax, ay, bx, by) -> float:
+    vx, vy = bx - ax, by - ay
+    denom = vx * vx + vy * vy
+    t = max(0.0, min(1.0, ((x - ax) * vx + (y - ay) * vy) / denom)) if denom else 0.0
+    return math.hypot(x - (ax + t * vx), y - (ay + t * vy))
+
+
+def _segment_distance(a1, a2, b1, b2) -> float:
+    """Shortest distance between two segments, each a pair of (x, y)."""
+    def side(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    if (side(a1, a2, b1) * side(a1, a2, b2) < 0
+            and side(b1, b2, a1) * side(b1, b2, a2) < 0):
+        return 0.0
+    return min(_point_segment(*a1, *b1, *b2), _point_segment(*a2, *b1, *b2),
+               _point_segment(*b1, *a1, *a2), _point_segment(*b2, *a1, *a2))
 
 
 class SiteMap:
-    def __init__(self, data: dict, source_text: str = ""):
+    def __init__(self, data: dict, source_text: str = "", bundle_two_way: bool | None = None):
         self.source_text = source_text
-        self.cols = int(data["grid"]["cols"])
-        self.rows = int(data["grid"]["rows"])
-        self.cell_size = float(data["cell_size_m"])
         self.origin = tuple(float(v) for v in data["origin_m"])
-        self.obstacles = {_cell(c) for c in data["obstacles"]}
-        self.arm_cells = {_cell(c) for c in data["arm_cells"]}
-        self.routes = {
-            name: Route(name, r["flow"], tuple(_cell(c) for c in r["cells"]))
-            for name, r in data["routes"].items()
-        }
-        self.stations = {
-            name: Station(name, _cell(s["dock"]), tuple(_cell(c) for c in s["queue"]),
-                          s["server"], tuple(s["arms"]), s["action"])
-            for name, s in data["stations"].items()
-        }
-        self.parking = tuple(_cell(c) for c in data["parking"])
-        self.zones = {name: frozenset(_cell(c) for c in cells)
-                      for name, cells in data["zones"].items()}
+        self.half_width = float(data["half_width_m"])
+        self.lane_entry = float(data["lane_entry_m"])
+        self._pose = {_node_id(n["id"]): (float(n["x"]), float(n["y"])) for n in data["nodes"]}
+        if bundle_two_way is None:
+            bundle_two_way = bool(data.get("bundle_two_way", True))
+        two_way = {name: (_node_id(a), _node_id(b))
+                   for name, (a, b) in (data.get("two_way") or {}).items()}
+        self.lanes = self._build_lanes(data.get("lanes") or [], two_way)
+        self._out: dict = {}
+        self._in: dict = {}
+        for lane in self.lanes.values():
+            self._out.setdefault(lane.a, []).append(lane)
+            self._in.setdefault(lane.b, []).append(lane)
+        self.stations = {name: self._station(name, s)
+                         for name, s in (data.get("stations") or {}).items()}
+        self.parking = tuple(self._known(_node_id(c), "parking") for c in data.get("parking") or [])
         self.docks = {s.dock for s in self.stations.values()}
-        self._overrides = {
-            tuple(int(v) for v in key.split(",")): (float(xy[0]), float(xy[1]))
-            for key, xy in (data.get("cell_overrides") or {}).items()
-        }
-        self._polygons = {
-            name: [(float(x), float(y)) for x, y in poly]
-            for name, poly in (data.get("zone_polygons") or {}).items()
-        }
-        self.zone_of = self._build_zone_of()
-        self._next = self._build_graph(data.get("links") or [])
-        self._validate()
+        self.zones = self._build_zones(data.get("units") or {}, two_way, bundle_two_way)
+        self.zone_of = {node: name for name, members in self.zones.items() for node in members}
+        self._segments = {zone: self._zone_segments(zone) for zone in self.zones}
+        for node in self._pose:
+            if node not in self._out and node not in self._in:
+                raise SiteMapError(f"{node} has no lane")
 
-    def _build_zone_of(self) -> dict[Cell, str]:
-        zone_of: dict[Cell, str] = {}
-        for name, cells in self.zones.items():
-            for cell in cells:
-                if cell in zone_of:
-                    raise SiteMapError(f"{cell} is in more than one zone")
-                zone_of[cell] = name
-        return zone_of
+    def _known(self, node, what: str):
+        if node not in self._pose:
+            raise SiteMapError(f"{what}: {node} is nowhere on the map")
+        return node
 
-    def node(self, cell: Cell, flow: str) -> tuple[Cell, str]:
-        """Docks carry no flow: a robot may leave a dock on any lane that starts there."""
-        return (cell, "" if cell in self.docks else flow)
+    def _build_lanes(self, raw: list[dict], two_way: dict) -> dict:
+        lanes: dict = {}
 
-    def _build_graph(self, links: list[dict]) -> dict:
-        graph: dict = {}
-        for route in self.routes.values():
-            for a, b in zip(route.cells, route.cells[1:], strict=False):
-                if abs(a[0] - b[0]) + abs(a[1] - b[1]) != 1:
-                    raise SiteMapError(f"route {route.name}: {a} and {b} are not adjacent")
-                graph.setdefault(self.node(a, route.flow), []).append(self.node(b, route.flow))
-        for link in links:
-            a, b = _cell(link["from"]), _cell(link["to"])
-            if abs(a[0] - b[0]) + abs(a[1] - b[1]) != 1:
-                raise SiteMapError(f"link: {a} and {b} are not adjacent")
-            graph.setdefault(self.node(a, link["from_flow"]), []).append(
-                self.node(b, link["to_flow"]))
-        return graph
+        def add(a, b, length=None):
+            self._known(a, "lane")
+            self._known(b, "lane")
+            if a == b:
+                raise SiteMapError(f"lane from {a} to itself")
+            if (a, b) in lanes:
+                raise SiteMapError(f"lane from {a} to {b} is written twice")
+            (ax, ay), (bx, by) = self._pose[a], self._pose[b]
+            span = math.hypot(bx - ax, by - ay)
+            if span <= 0.0:
+                raise SiteMapError(f"lane from {a} to {b} has no length")
+            lanes[(a, b)] = Lane(a, b, ax, ay, bx, by, (bx - ax) / span, (by - ay) / span,
+                                 float(length) if length is not None else span, span)
 
-    def _validate(self) -> None:
-        route_cells = {c for r in self.routes.values() for c in r.cells}
-        for cell in route_cells:
-            if not (0 <= cell[0] < self.cols and 0 <= cell[1] < self.rows):
-                raise SiteMapError(f"{cell} is outside the grid")
-            if cell in self.obstacles:
-                raise SiteMapError(f"{cell} is on a route and is an obstacle")
-            if cell in self.arm_cells:
-                raise SiteMapError(f"{cell} is on a route and is an arm cell")
-            if cell not in self.zone_of:
-                raise SiteMapError(f"{cell} is on a route but has no zone")
-        extra = set(self.zone_of) - route_cells
-        if extra:
-            raise SiteMapError(f"zone cells are on no route: {sorted(extra)}")
-        for station in self.stations.values():
-            for cell in (station.dock, *station.queue):
-                if cell not in route_cells:
-                    raise SiteMapError(f"station {station.id}: {cell} is on no route")
-        for cell in self.parking:
-            if cell not in route_cells:
-                raise SiteMapError(f"parking cell {cell} is on no route")
+        for lane in raw:
+            add(_node_id(lane["from"]), _node_id(lane["to"]), lane.get("length"))
+        for name, (a, b) in two_way.items():
+            self._known(a, f"two_way {name}")
+            self._known(b, f"two_way {name}")
+            add(a, b)
+            add(b, a)
+        return lanes
 
-    def plan(self, start: Cell, flow: str, goal: Cell, goal_flow: str | None = None) -> list[Cell]:
-        """Shortest path along the one-way lanes. Returned path includes both ends."""
-        origin = self.node(start, flow)
-        queue = deque([origin])
-        prev = {origin: None}
-        while queue:
-            current = queue.popleft()
-            at_goal = current[0] == goal and (goal_flow is None or current[1] == goal_flow)
-            if at_goal:
-                path = []
-                node = current
-                while node is not None:
-                    path.append(node[0])
-                    node = prev[node]
-                return path[::-1]
-            for nxt in self._next.get(current, []):
-                if nxt not in prev:
-                    prev[nxt] = current
-                    queue.append(nxt)
-        raise SiteMapError(f"no one-way path from {start} ({flow!r}) to {goal}")
+    def _station(self, name: str, raw: dict) -> Station:
+        dock = self._known(_node_id(raw["dock"]), f"station {name}")
+        queue = tuple((_node_id(a), _node_id(b)) for a, b in raw.get("queue") or [])
+        for lane in queue:
+            if lane not in self.lanes:
+                raise SiteMapError(f"station {name}: no lane from {lane[0]} to {lane[1]}")
+        commit = self._known(_node_id(raw.get("commit", raw["dock"])), f"station {name}")
+        return Station(name, dock, queue, commit, raw["server"], tuple(raw["arms"]), raw["action"])
 
-    def flow_after(self, a: Cell, b: Cell) -> str:
-        """Return the flow a robot is on after driving from a to b."""
-        for node_a, targets in self._next.items():
-            if node_a[0] != a:
-                continue
-            for node_b in targets:
-                if node_b[0] == b:
-                    return node_b[1]
-        raise SiteMapError(f"no lane from {a} to {b}")
+    def _build_zones(self, units: dict, two_way: dict, bundle: bool) -> dict:
+        """Every node in one unit: as written, else merged by a bundle, else on its own."""
+        name_of: dict = {}
+        for name, raw in units.items():
+            for member in raw:
+                node = self._known(_node_id(member), f"unit {name}")
+                if node in name_of:
+                    raise SiteMapError(f"{node} is in more than one unit")
+                name_of[node] = name
+        for node in self._pose:
+            name_of.setdefault(node, self.cell_id(node))
+        if bundle:
+            for name, (a, b) in two_way.items():
+                old = {name_of[a], name_of[b]}
+                for node, unit in name_of.items():
+                    if unit in old:
+                        name_of[node] = name
+        zones: dict = {}
+        for node, name in name_of.items():
+            zones.setdefault(name, set()).add(node)
+        return {name: frozenset(members) for name, members in zones.items()}
 
-    def flows_at(self, cell: Cell) -> list[str]:
-        """Flows that exist at a cell, used to place a robot that starts there."""
-        flows = {n[1] for n in self._next if n[0] == cell}
-        flows |= {t[1] for targets in self._next.values() for t in targets if t[0] == cell}
-        return sorted(flows)
+    def _zone_segments(self, zone: str) -> list[tuple]:
+        """The floor of a zone: its nodes, and its lanes from the point a robot has entered."""
+        members = self.zones[zone]
+        segments = [(*self._pose[n], *self._pose[n]) for n in members]
+        for node in members:
+            for lane in self._in.get(node, ()):
+                skip = 0.0 if lane.a in members else self.lane_entry
+                if skip < lane.span:
+                    segments.append((lane.ax + lane.ux * skip, lane.ay + lane.uy * skip,
+                                     lane.bx, lane.by))
+        return segments
 
-    def cell_pose(self, cell: Cell) -> tuple[float, float]:
-        if cell in self._overrides:
-            return self._overrides[cell]
-        return (self.origin[0] + (cell[0] + 0.5) * self.cell_size,
-                self.origin[1] + (cell[1] + 0.5) * self.cell_size)
+    # ---- geometry ---------------------------------------------------------------------------
 
-    def cell_id(self, cell: Cell) -> str:
-        return f"c{cell[0]}_{cell[1]}"
+    def lane(self, a, b) -> Lane:
+        return self.lanes[(a, b)]
 
-    def zone_cells(self, zone: str) -> frozenset:
-        return self.zones[zone]
+    def lanes_of_zone(self, zone: str) -> set:
+        return {key for key in self.lanes if key[1] in self.zones[zone]}
 
-    def nearest_cell(self, x: float, y: float, cells=None) -> Cell:
-        candidates = cells if cells is not None else self.zone_of
-        return min(candidates, key=lambda c: math.dist((x, y), self.cell_pose(c)))
+    def lane_progress(self, a, b, x: float, y: float) -> tuple[float, float]:
+        """s = (p - p_a)·u, how far along the lane, and e = |(p - p_a) - s·u|, how far off it."""
+        lane = self.lanes[(a, b)]
+        rx, ry = x - lane.ax, y - lane.ay
+        s = rx * lane.ux + ry * lane.uy
+        return s, math.hypot(rx - s * lane.ux, ry - s * lane.uy)
 
-    def _distance_to_cell(self, x: float, y: float, cell: Cell) -> float:
-        cx, cy = self.cell_pose(cell)
-        half = self.cell_size / 2
-        dx = max(abs(x - cx) - half, 0.0)
-        dy = max(abs(y - cy) - half, 0.0)
-        return math.hypot(dx, dy)
+    def cell_pose(self, cell) -> tuple[float, float]:
+        return self._pose[cell]
+
+    def cell_id(self, cell) -> str:
+        return f"c{cell[0]}_{cell[1]}" if isinstance(cell, tuple) else cell
+
+    def nearest_cell(self, x: float, y: float, cells=None, radius: float | None = None):
+        """The node whose unit a pose belongs to.
+
+        Standing on a node, that node: within `radius`, half_width by default. On a lane, the node
+        it leads to, because driving on a lane needs that node's unit. A true pose can use the
+        narrow default, a single noisy report cannot, so what decides from one report passes a
+        wider radius. `cells` restricts the answer to the nearest of those nodes.
+        """
+        if cells is not None:
+            return min(cells, key=lambda c: math.dist((x, y), self._pose[c]))
+        node = min(self._pose, key=lambda c: math.dist((x, y), self._pose[c]))
+        limit = self.half_width if radius is None else radius
+        if math.dist((x, y), self._pose[node]) <= limit:
+            return node
+        lane = min(self.lanes.values(),
+                   key=lambda one: _point_segment(x, y, one.ax, one.ay, one.bx, one.by))
+        return lane.b
 
     def distance_to_zone(self, x: float, y: float, zone: str) -> float:
-        """Distance from a pose to a zone. Zero when the pose is inside."""
-        if zone in self._polygons:
-            return _distance_to_polygon(x, y, self._polygons[zone])
-        return min(self._distance_to_cell(x, y, c) for c in self.zones[zone])
+        """Distance from a pose to a zone's floor. Zero when the pose is inside."""
+        nearest = min(_point_segment(x, y, *segment) for segment in self._segments[zone])
+        return max(0.0, nearest - self.half_width)
+
+    def shortest_exit_lane(self) -> float:
+        """Length of the shortest lane leaving a unit, which a release has to fit on."""
+        return min((lane.span for (a, b), lane in self.lanes.items()
+                    if self.zone_of[a] != self.zone_of[b]), default=math.inf)
+
+    # ---- conflict pairs -----------------------------------------------------------------------
+
+    def conflict_pairs(self, clearance_m: float, release_m: float) -> set[frozenset]:
+        """Pairs of units that must not be held together: their lanes pass closer than 2r.
+
+        Lanes that meet at a node would always count, and then nobody could follow anybody. A
+        robot gives up the unit behind it only after driving release_m along the next lane, so
+        from the shared node that stretch cannot hold it while another robot holds the first
+        unit, and only the rest of the lane counts. The two directions of a two-way pair are left
+        out: holding them together is what the bundle is for.
+        """
+        pairs: set[frozenset] = set()
+        lanes = list(self.lanes.values())
+        for i, one in enumerate(lanes):
+            for other in lanes[i + 1:]:
+                zone_a, zone_b = self.zone_of[one.b], self.zone_of[other.b]
+                if zone_a != zone_b and self._too_close(one, other, clearance_m, release_m):
+                    pairs.add(frozenset({zone_a, zone_b}))
+        return pairs
+
+    def _too_close(self, one: Lane, other: Lane, clearance: float, release: float) -> bool:
+        if frozenset({one.a, one.b}) == frozenset({other.a, other.b}):
+            return False  # a two-way pair
+        shared = {one.a, one.b} & {other.a, other.b}
+        if not shared:
+            return self._lane_distance(one, 0.0, other, 0.0) < clearance
+        node = next(iter(shared))
+        if one.a == node and other.a == node:  # a fork: either one can be the leader
+            return (self._lane_distance(one, release, other, 0.0) < clearance
+                    or self._lane_distance(one, 0.0, other, release) < clearance)
+        if one.a == node:  # other leads into one
+            return self._lane_distance(one, release, other, 0.0) < clearance
+        return self._lane_distance(one, 0.0, other, release) < clearance
+
+    @staticmethod
+    def _lane_distance(one: Lane, skip_one: float, other: Lane, skip_other: float) -> float:
+        """Distance between two lanes, leaving out the first metres of each."""
+        if skip_one >= one.span or skip_other >= other.span:
+            return math.inf
+        return _segment_distance(
+            (one.ax + one.ux * skip_one, one.ay + one.uy * skip_one), (one.bx, one.by),
+            (other.ax + other.ux * skip_other, other.ay + other.uy * skip_other),
+            (other.bx, other.by))
+
+    # ---- planning -----------------------------------------------------------------------------
+
+    def path_length(self, path: list) -> float:
+        return sum(self.lanes[(a, b)].length for a, b in zip(path, path[1:], strict=False))
+
+    def plan(self, start, goal) -> list:
+        """Shortest path along the lanes, in metres. The returned path includes both ends."""
+        best = {start: 0.0}
+        prev: dict = {start: None}
+        seen = 0  # breaks ties in the heap without comparing nodes
+        heap = [(0.0, seen, start)]
+        while heap:
+            cost, _, node = heapq.heappop(heap)
+            if node == goal:
+                path = []
+                while node is not None:
+                    path.append(node)
+                    node = prev[node]
+                return path[::-1]
+            if cost > best[node]:
+                continue
+            for lane in self._out.get(node, ()):
+                total = cost + lane.length
+                if total < best.get(lane.b, math.inf):
+                    best[lane.b], prev[lane.b] = total, node
+                    seen += 1
+                    heapq.heappush(heap, (total, seen, lane.b))
+        raise SiteMapError(f"no path along the lanes from {start} to {goal}")
 
 
-def _distance_to_polygon(x: float, y: float, poly: list[tuple[float, float]]) -> float:
-    inside = False
-    best = math.inf
-    n = len(poly)
-    for i in range(n):
-        ax, ay = poly[i]
-        bx, by = poly[(i + 1) % n]
-        if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
-            inside = not inside
-        vx, vy = bx - ax, by - ay
-        denom = vx * vx + vy * vy
-        t = max(0.0, min(1.0, ((x - ax) * vx + (y - ay) * vy) / denom)) if denom else 0.0
-        best = min(best, math.hypot(x - (ax + t * vx), y - (ay + t * vy)))
-    return 0.0 if inside else best
-
-
-def load_site_map(path=None) -> SiteMap:
+def load_site_map(path=None, bundle_two_way: bool | None = None) -> SiteMap:
     source = Path(path) if path else DEFAULT_MAP
     text = source.read_text(encoding="utf-8")
-    return SiteMap(yaml.safe_load(text), text)
+    return SiteMap(yaml.safe_load(text), text, bundle_two_way)

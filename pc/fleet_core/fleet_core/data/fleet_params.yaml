@@ -2,8 +2,15 @@
 basket_capacity: 4            # estimate: most items one basket holds, depends on the real basket
 ship_partial: true            # a basket with some items still goes out; an empty one stays
 robot_radius_m: 0.08          # estimate: Pinky body only, the tray behind it is not included yet
-release_margin_extra_m: 0.05  # estimate: added to the radius before a zone is released
-release_confirm_samples: 3    # consecutive reports outside the margin before a release
+release_margin_extra_m: 0.05  # scenario judge only: radius + this = off the course
+# On the path, the zone behind is released once a report is this far along the lane that left it,
+# measured as s = (p - p_i)·u. Rule: d >= r + eps + v * (tau + tick), so the body is past the zone
+# even when the report is eps off and tau + tick old: 0.08 + 0.03 + 0.2 * (0.2 + 0.1) = 0.17 m.
+# Also d >= 2r, because a robot behind may then drive up to the node just left. Estimates until
+# eps and tau are measured on the real robot; docs/worklog_2026-11-05.md has the pressure table.
+release_distance_m: 0.2
+release_confirm_samples: 3    # consecutive reports past that distance before a release
+lane_error_warn_m: 0.15       # warn when a robot is this far off its lane, e = |(p - p_i) - s·u|
 move_retry_limit: 2           # retries after the first failure, three attempts in total
 startup_wait_s: 10.0          # alert if a robot has not reported by then
 comm_timeout_s: 3.0           # estimate
@@ -15,7 +22,6 @@ swap_timeout_s: 60.0          # estimate: arm3 taking the full basket and placin
 zone_wait_warn_s: 60.0        # warn when a robot has waited this long for one zone
 deadlock_grace_s: 5.0         # wait before the second deadlock step
 score_same_call: -4.0         # a robot already called keeps the call unless another is clearly closer
-score_distance_weight: 0.3    # per cell along the one-way lanes
+score_distance_weight: 0.91   # per metre along the lanes
 priority_at_station: 200
 priority_has_cargo: 100
-commit_zone: Q-WORK-2         # a robot heading to the workspace keeps going once it holds this zone

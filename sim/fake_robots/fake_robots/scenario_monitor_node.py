@@ -32,6 +32,7 @@ from fake_robots.common import (
     load_site_map_param,
 )
 from fake_robots.judge import ScenarioJudge
+from fake_robots.safety_meter import SafetyMeter
 
 
 def _write_csv(path: Path, header: list[str], rows) -> None:
@@ -58,6 +59,8 @@ class ScenarioMonitorNode(Node):
             margin_m=margin if margin >= 0 else radius + float(params["release_margin_extra_m"]),
             grace_s=float(self.get_parameter("grace_s").value),
             radius_m=radius)
+        self.safety = SafetyMeter(site, radius,
+                                  on_course=lambda robot: not self.judge.off_course(robot))
         self._sc = ScenarioClock(self)
         self._result_dir = Path(self.get_parameter("result_dir").value)
         self._seen: dict[str, str] = {}
@@ -96,9 +99,12 @@ class ScenarioMonitorNode(Node):
 
     def _on_truth(self, msg: RobotState) -> None:
         self.judge.on_true_pose(msg.robot_id, msg.pose.x, msg.pose.y)
+        self.safety.on_pose(msg.robot_id, msg.pose.x, msg.pose.y)
 
     def _on_zones(self, msg: ZoneStateArray) -> None:
-        self.judge.on_zones(self._sc.now(), {z.zone_id: z.holder for z in msg.zones})
+        holders = {z.zone_id: z.holder for z in msg.zones}
+        self.judge.on_zones(self._sc.now(), holders)
+        self.safety.on_zones(self._sc.now(), holders)
 
     def _on_event(self, msg: FleetEvent) -> None:
         self.judge.on_event(self._sc.now(), msg.level, msg.source, msg.code, msg.detail)
@@ -142,6 +148,7 @@ class ScenarioMonitorNode(Node):
             return
         t = self._sc.now()
         self.judge.tick(t)
+        self.safety.tick(t)
         self._clear_removed_robots(t)
         if self.judge.finished(t):
             self._finish(t)
@@ -151,6 +158,8 @@ class ScenarioMonitorNode(Node):
         out = self._result_dir
         out.mkdir(parents=True, exist_ok=True)
         (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        (out / "safety.json").write_text(json.dumps(self.safety.summary(), indent=2),
+                                         encoding="utf-8")
         _write_csv(out / "events.csv", ["time_s", "level", "source", "code", "detail"],
                    self.judge.event_rows)
         _write_csv(out / "zones.csv", ["time_s", "zone", "old_holder", "new_holder"],

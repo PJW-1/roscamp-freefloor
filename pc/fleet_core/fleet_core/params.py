@@ -15,7 +15,9 @@ class FleetParams:
     ship_partial: bool
     robot_radius_m: float
     release_margin_extra_m: float
+    release_distance_m: float
     release_confirm_samples: int
+    lane_error_warn_m: float
     move_retry_limit: int
     startup_wait_s: float
     comm_timeout_s: float
@@ -30,12 +32,6 @@ class FleetParams:
     score_distance_weight: float
     priority_at_station: int
     priority_has_cargo: int
-    commit_zone: str
-
-    @property
-    def release_margin(self) -> float:
-        """How far outside a zone a pose must be before the zone is released."""
-        return self.robot_radius_m + self.release_margin_extra_m
 
 
 def load_params(path=None) -> FleetParams:

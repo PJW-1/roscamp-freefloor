@@ -1,13 +1,13 @@
 """Small builders shared by the FleetCore unit tests."""
-from fleet_core.fleet import FleetCore
 from fleet_core.params import load_params
-from fleet_core.site_map import load_site_map
+from grid_map import grid_site
+from legacy_core import FleetCore
 
 
 def make_core(robots, params=None):
     """Return a core and a one-element list holding the fake time."""
     now = [0.0]
-    core = FleetCore(load_site_map(), params or load_params(), list(robots), lambda: now[0])
+    core = FleetCore(grid_site(), params or load_params(), list(robots), lambda: now[0])
     return core, now
 
 

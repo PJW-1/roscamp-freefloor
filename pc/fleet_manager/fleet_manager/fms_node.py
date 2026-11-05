@@ -1,8 +1,9 @@
-"""ROS wrapper around FleetCore: forwards messages in and turns its commands into goals.
+"""The FMS process: traffic_core and orchestrator_core behind one ROS node.
 
-All decisions are made in fleet_core. Callbacks run on one executor thread, so FleetCore
-never sees concurrent calls. Names and QoS come from contract.yaml, coordinates from the
-site map, and policy values from fleet_params.yaml.
+All decisions are made in fleet_core. This node forwards messages in and turns the commands
+into goals. Callbacks run on one executor thread, so the cores never see concurrent calls.
+Names and QoS come from contract.yaml, coordinates from the site map, and policy values from
+fleet_params.yaml.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from fleet_core.commands import (
     SwapCmd,
 )
 from fleet_core.contract import load_contract, to_ros_qos
-from fleet_core.fleet import FleetCore
+from fleet_core.fms_core import FmsCore
 from fleet_core.params import load_params
 from fleet_core.site_map import load_site_map
 from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket
@@ -39,9 +40,9 @@ from fleet_manager import adapters
 from fleet_manager.goal_tracker import GoalTracker, ReportOutbox
 
 
-class FleetManagerNode(Node):
+class FmsNode(Node):
     def __init__(self):
-        super().__init__("fleet_manager")
+        super().__init__("fms_node")
         self.declare_parameter("robots", ["pinky1", "pinky2", "pinky3"])
         self.declare_parameter("contract_file", "")
         self.declare_parameter("map_file", "")
@@ -53,7 +54,7 @@ class FleetManagerNode(Node):
             get_package_share_directory("fleet_interfaces") + "/contract.yaml")
         self.contract = load_contract(contract_file)
         self.site = load_site_map(self.get_parameter("map_file").value or None)
-        self.core = FleetCore(
+        self.core = FmsCore(
             self.site, load_params(self.get_parameter("params_file").value or None),
             robots, self._now)
 
@@ -214,7 +215,7 @@ class FleetManagerNode(Node):
 
 def main() -> None:
     rclpy.init()
-    node = FleetManagerNode()
+    node = FmsNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

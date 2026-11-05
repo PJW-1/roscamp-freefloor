@@ -9,6 +9,7 @@ import yaml
 
 REPO = Path(__file__).parents[3]
 CONTRACT = REPO / "interfaces" / "fleet_interfaces" / "contract.yaml"
+GRID_MAP = REPO / "pc" / "fleet_core" / "test" / "data" / "grid_cells.yaml"
 
 
 def write_scenario(tmp_path, **over):

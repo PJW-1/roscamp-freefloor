@@ -3,15 +3,17 @@ from __future__ import annotations
 
 
 def wait_graph(zone_manager) -> dict[str, set[str]]:
-    """Return waiter -> holders for every queued request on a held zone."""
+    """Return waiter -> whoever stands between it and the zone it has asked for.
+
+    Not only holders: at a conflict pair the first in line can wait with its zone free, and a
+    cycle can then run through the line behind it.
+    """
     graph: dict[str, set[str]] = {}
-    for entry in zone_manager.snapshot().values():
-        holder = entry["holder"]
-        if holder is None:
-            continue
+    for zone, entry in zone_manager.snapshot().items():
         for waiter in entry["queue"]:
-            if waiter != holder:
-                graph.setdefault(waiter, set()).add(holder)
+            blockers = zone_manager.blockers(waiter, zone)
+            if blockers:
+                graph.setdefault(waiter, set()).update(blockers)
     return graph
 
 

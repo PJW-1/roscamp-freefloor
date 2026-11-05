@@ -25,8 +25,8 @@ def _setup(context):
     actions = [
         Node(
             package="fleet_manager",
-            executable="fleet_manager_node",
-            name="fleet_manager",
+            executable="fms_node",
+            name="fms_node",
             output="screen",
             parameters=[{
                 "use_sim_time": use_sim_clock,

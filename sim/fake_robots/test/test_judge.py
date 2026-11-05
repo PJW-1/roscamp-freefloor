@@ -1,10 +1,12 @@
 """ScenarioJudge: physical zone checks, order counts, order of work, the arms, the outcome."""
 import pytest
+from conftest import GRID_MAP
 from fake_robots.judge import ScenarioJudge, order_id_of
 from fake_robots.scenario import parse_scenario
 from fleet_core.site_map import load_site_map
 
-SITE = load_site_map()
+SITE = load_site_map(GRID_MAP)  # these tests are about the judge, on the cell layout
+CELL = 2 * SITE.half_width
 NOISE = 0.03
 SAME_ZONE = ((9, 1), (9, 0))  # both in Z-R1
 ZONE = "Z-R1"
@@ -108,7 +110,7 @@ def test_release_after_robot_left_with_noise_allowance_is_fine():
     j.on_zones(1.0, {ZONE: "pinky1"})
     # 0.10 m beyond the zone edge: more than margin(0.13) - 2*0.03 = 0.07
     x, y = at(SAME_ZONE[0])
-    j.on_robot_state(2.0, "pinky1", x + SITE.cell_size / 2 + 0.10, y, "MOVING")
+    j.on_robot_state(2.0, "pinky1", x + CELL / 2 + 0.10, y, "MOVING")
     j.on_zones(2.0, {ZONE: ""})
     assert check(j, "released_without_position_check", 2.0)["value"] == 0
 
@@ -181,7 +183,7 @@ def test_robot_outside_every_zone_is_not_counted_as_occupying_one():
     j = judge()
     x, y = at(SAME_ZONE[0])
     # Just left of the cell: that cell is still the nearest, but the pose is outside the zone.
-    j.on_robot_state(1.0, "pinky1", x - SITE.cell_size / 2 - 0.02, y, "MOVING")
+    j.on_robot_state(1.0, "pinky1", x - CELL / 2 - 0.02, y, "MOVING")
     put(j, 1.0, "pinky2", SAME_ZONE[0])
     j.tick(1.0)
     assert check(j, "zone_holder_max", 1.0)["value"] == 1
@@ -190,7 +192,7 @@ def test_robot_outside_every_zone_is_not_counted_as_occupying_one():
 def beyond(cell, gap):
     """A pose `gap` metres past the edge of the zone that holds `cell`."""
     x, y = at(cell)
-    return x + SITE.cell_size / 2 + gap, y
+    return x + CELL / 2 + gap, y
 
 
 def test_one_noisy_report_cannot_fail_a_release_when_the_robot_really_left():

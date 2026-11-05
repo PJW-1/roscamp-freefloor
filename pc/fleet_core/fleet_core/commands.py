@@ -1,6 +1,8 @@
-"""What FleetCore asks the outside world to do, and the views it publishes.
+"""The commands, results and views of the FMS cores.
 
-This is the public API the ROS wrapper is written against. Nothing here knows about ROS.
+The first part is what the ROS wrapper turns into goals and messages. The second part is what
+orchestrator_core and traffic_core say to each other through FmsCore, and never reaches ROS.
+Nothing here knows about ROS.
 """
 from __future__ import annotations
 
@@ -92,3 +94,54 @@ class AssignmentView:
     order_id: str
     station_id: str
     task_type: str  # TO_WORK | FILL | TO_OUTBOUND | SWAP | WAIT
+
+
+# ---- inside the FMS: orchestrator_core -> traffic_core --------------------------------------
+
+
+@dataclass(frozen=True)
+class DispatchCmd:
+    goal_id: int
+    station_id: str
+    robot_id: str = ""  # empty: traffic picks the robot
+
+
+@dataclass(frozen=True)
+class CancelDispatchCmd:
+    goal_id: int
+
+
+@dataclass(frozen=True)
+class ReleaseCmd:
+    robot: str
+
+
+@dataclass(frozen=True)
+class RobotFaultCmd:
+    """The arm side gave up on this robot, so traffic must treat it as failed."""
+
+    robot: str
+    reason: str
+
+
+# ---- inside the FMS: traffic_core -> orchestrator_core --------------------------------------
+
+NO_ROBOT = "NO_ROBOT"  # the only feedback phase anything reads today
+
+
+@dataclass(frozen=True)
+class DispatchFeedback:
+    goal_id: int
+    robot_id: str
+    phase: str
+
+
+@dataclass(frozen=True)
+class DispatchResult:
+    goal_id: int
+    success: bool
+    robot_id: str
+    reason: str = ""
+    error_x_cm: float = 0.0
+    error_y_cm: float = 0.0
+    error_yaw_deg: float = 0.0

@@ -12,6 +12,6 @@ setup(
     tests_require=['pytest'],
     zip_safe=True,
     entry_points={'console_scripts': [
-        'fleet_manager_node = fleet_manager.fleet_manager_node:main',
+        'fms_node = fleet_manager.fms_node:main',
     ]},
 )
