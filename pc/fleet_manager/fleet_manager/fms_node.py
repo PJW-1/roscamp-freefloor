@@ -159,8 +159,17 @@ class FmsNode(Node):
             return  # the first /clock message under simulated time has not come yet
         for command in self.core.tick():
             self._dispatch(command, now)
+        self._retry_cancels(now)
         self._flush_reports()
         self._publish_snapshots(now)
+
+    def _retry_cancels(self, now: float) -> None:
+        params = self.core.params
+        for server, goal_id in self._goals.retry_cancels(now, params.cancel_retry_s,
+                                                         params.cancel_warn_after):
+            detail = (f"goal {goal_id} on {server} has no result after "
+                      f"{params.cancel_warn_after} cancels, still asking")
+            self._dispatch(EventOut("WARN", "CANCEL_UNCONFIRMED", detail, server), now)
 
     def _flush_reports(self) -> None:
         for command in self._reports.drain(self._report_client.service_is_ready()):
@@ -204,7 +213,7 @@ class FmsNode(Node):
             self._send(self._swap[command.station_id], adapters.swap_goal(command),
                        (command.arm, command.goal_id), self._swap_done, self._swap_rejected)
         elif isinstance(command, CancelCmd):
-            self._goals.cancel((command.robot, command.goal_id))
+            self._goals.cancel((command.robot, command.goal_id), now)
         elif isinstance(command, ReportOrderCmd):
             self._reports.add(command)
         elif isinstance(command, EventOut):

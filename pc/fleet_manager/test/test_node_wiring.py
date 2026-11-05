@@ -20,6 +20,7 @@ from fleet_core.site_map import load_site_map  # noqa: E402
 from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket  # noqa: E402
 from fleet_interfaces.msg import (  # noqa: E402
     AssignmentArray,
+    FleetEvent,
     Order,
     OrderBoard,
     OrderItem,
@@ -63,7 +64,12 @@ class World(Node):
         self.hold_fill = threading.Event()  # while set, a fill runs until it is canceled
         self.canceled_fills = []
         self.fill_cancel_reason = "CANCELED"
+        self.refuse_fill_cancel = False
+        self.fill_cancel_asks = 0
         name = contract.name
+        self.events = []
+        self.create_subscription(
+            FleetEvent, name("events"), self.events.append, to_ros_qos(contract.qos("events")))
         self.board = self.create_publisher(
             OrderBoard, name("order_board"), to_ros_qos(contract.qos("order_board")))
         self.state = self.create_publisher(
@@ -88,7 +94,7 @@ class World(Node):
         self.create_service(ReportOrder, name("report_order"), self._on_report)
         self._servers = [
             ActionServer(self, FillBasket, name("fill_basket"), self._on_fill,
-                         callback_group=group, cancel_callback=lambda _: CancelResponse.ACCEPT),
+                         callback_group=group, cancel_callback=self._on_fill_cancel),
             ActionServer(self, SwapBasket, name("swap_basket", arm="arm3"), self._on_swap,
                          callback_group=group),
         ]
@@ -134,6 +140,10 @@ class World(Node):
         handle.succeed()
         return FillBasket.Result(success=True, placed=items(wanted))
 
+    def _on_fill_cancel(self, _handle):
+        self.fill_cancel_asks += 1
+        return CancelResponse.REJECT if self.refuse_fill_cancel else CancelResponse.ACCEPT
+
     def _on_swap(self, handle):
         self.swaps.append((handle.request.order_id, handle.request.take_full,
                            handle.request.put_empty))
@@ -159,6 +169,7 @@ def graph():
     thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
     yield world
+    world.hold_fill.clear()  # a test that failed must not leave a server thread spinning
     executor.shutdown()
     thread.join(timeout=5)
     world.destroy_node()
@@ -311,3 +322,28 @@ def test_a_stop_answered_with_the_status_alone_is_no_failed_attempt(graph):
     orchestrator = graph.fms.core.orchestrator
     assert wait_for(lambda: orchestrator.robot_view("pinky1")["placed"]), "no result came in"
     assert orchestrator.robot_view("pinky1")["attempts"] == 0
+
+
+def events_of(world, code):
+    return [e for e in world.events if e.code == code]
+
+
+def test_a_refused_cancel_is_sent_again_and_warned_about_once_until_the_result_comes(graph):
+    graph.hold_fill.set()
+    graph.refuse_fill_cancel = True
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.fills), "the fill never reached the server"
+    publish(graph, "STOP", {"A": 1, "C": 2})
+    assert wait_for(lambda: events_of(graph, "CANCEL_UNCONFIRMED"), 10.0), graph.fill_cancel_asks
+    assert graph.fill_cancel_asks >= 3
+    event = events_of(graph, "CANCEL_UNCONFIRMED")[0]
+    assert (event.level, event.source) == ("WARN", "workcell")
+    assert "goal" in event.detail
+    asks = graph.fill_cancel_asks
+    assert wait_for(lambda: graph.fill_cancel_asks > asks, 5.0), "it stopped trying"
+    graph.hold_fill.clear()
+    assert wait_for(lambda: not graph.fms._goals._cancels, 5.0), "the result ended nothing"
+    asks = graph.fill_cancel_asks
+    time.sleep(1.5)
+    assert graph.fill_cancel_asks == asks, "the result came, so nobody has to ask any more"
+    assert len(events_of(graph, "CANCEL_UNCONFIRMED")) == 1
