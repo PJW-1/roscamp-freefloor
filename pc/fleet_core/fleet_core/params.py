@@ -30,6 +30,7 @@ class FleetParams:
     swap_timeout_s: float
     cancel_retry_s: float
     cancel_warn_after: int
+    report_retry_s: float
     zone_wait_warn_s: float
     deadlock_grace_s: float
     score_same_call: float

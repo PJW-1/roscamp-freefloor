@@ -174,6 +174,11 @@ def test_confirm_clear_for_an_unknown_robot_is_refused():
     assert response.accepted is False and list(response.released_zones) == []
 
 
+@pytest.mark.parametrize("accepted", [True, False])
+def test_the_reply_to_a_report_is_read_here_too(accepted):
+    assert adapters.report_accepted(ReportOrder.Response(accepted=accepted)) is accepted
+
+
 def _finished(action, status, **fields):
     return action.Impl.GetResultService.Response(status=status, result=action.Result(**fields))
 

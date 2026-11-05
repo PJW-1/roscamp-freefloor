@@ -152,10 +152,58 @@ def test_a_cancel_waiting_for_an_acceptance_that_never_comes_is_warned_about_too
     assert handle.cancels == 2, "accepted late, and it keeps being asked"
 
 
+def due(outbox, now, ready=True):
+    return [item for _, item in outbox.due(now, ready, RETRY_S)]
+
+
 def test_outbox_keeps_reports_until_the_service_is_ready():
     outbox = ReportOutbox()
     outbox.add("a")
     outbox.add("b")
-    assert outbox.drain(ready=False) == []
-    assert outbox.drain(ready=True) == ["a", "b"]
-    assert outbox.drain(ready=True) == []
+    assert due(outbox, 0.0, ready=False) == []
+    assert due(outbox, 0.0) == ["a", "b"]
+
+
+def test_outbox_sends_a_report_again_only_after_the_retry_period():
+    outbox = ReportOutbox()
+    outbox.add("a")
+    assert due(outbox, 10.0) == ["a"]
+    assert due(outbox, 10.9) == []
+    assert due(outbox, 11.0) == ["a"]
+    assert due(outbox, 11.5) == [], "the period runs from the last send"
+    assert due(outbox, 12.0) == ["a"]
+
+
+def test_outbox_sends_nothing_while_the_service_is_gone_and_at_once_when_it_is_back():
+    outbox = ReportOutbox()
+    outbox.add("a")
+    assert due(outbox, 0.0) == ["a"]
+    assert due(outbox, 5.0, ready=False) == []
+    assert due(outbox, 5.1) == ["a"]
+
+
+def test_outbox_drops_a_report_once_it_is_done():
+    outbox = ReportOutbox()
+    outbox.add("a")
+    outbox.add("b")
+    (first, _), (second, _) = outbox.due(0.0, True, RETRY_S)
+    assert outbox.done(first) is True
+    assert due(outbox, 5.0) == ["b"]
+    assert outbox.done(second) is True
+    assert due(outbox, 10.0) == []
+
+
+def test_outbox_says_when_a_second_reply_finds_the_report_already_gone():
+    """A report sent twice can be answered twice. Only the first answer may raise an event."""
+    outbox = ReportOutbox()
+    outbox.add("a")
+    [(report_id, _)] = outbox.due(0.0, True, RETRY_S)
+    assert outbox.done(report_id) is True
+    assert outbox.done(report_id) is False
+
+
+def test_outbox_takes_reports_that_cannot_be_hashed():
+    outbox = ReportOutbox()
+    outbox.add({"placed": {"A": 1}})
+    outbox.add({"placed": {"A": 1}})
+    assert due(outbox, 0.0) == [{"placed": {"A": 1}}, {"placed": {"A": 1}}]

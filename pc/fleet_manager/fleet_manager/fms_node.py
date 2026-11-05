@@ -160,7 +160,7 @@ class FmsNode(Node):
         for command in self.core.tick():
             self._dispatch(command, now)
         self._retry_cancels(now)
-        self._flush_reports()
+        self._flush_reports(now)
         self._publish_snapshots(now)
 
     def _retry_cancels(self, now: float) -> None:
@@ -171,9 +171,23 @@ class FmsNode(Node):
                       f"{params.cancel_warn_after} cancels, still asking")
             self._dispatch(EventOut("WARN", "CANCEL_UNCONFIRMED", detail, server), now)
 
-    def _flush_reports(self) -> None:
-        for command in self._reports.drain(self._report_client.service_is_ready()):
-            self._report_client.call_async(adapters.report_request(command))
+    def _flush_reports(self, now: float) -> None:
+        for report_id, command in self._reports.due(now, self._report_client.service_is_ready(),
+                                                    self.core.params.report_retry_s):
+            future = self._report_client.call_async(adapters.report_request(command))
+            future.add_done_callback(partial(self._report_answered, report_id, command))
+
+    def _report_answered(self, report_id, command, future) -> None:
+        try:
+            accepted = adapters.report_accepted(future.result())
+        except Exception as exc:  # it stays in the outbox and goes out again
+            self.get_logger().warning(f"report of {command.order_id} got no reply: {exc}")
+            return
+        if self._reports.done(report_id) and not accepted:
+            self._dispatch(EventOut("ERROR", "ORDER_REPORT_REFUSED",
+                                    f"{command.order_id} {command.status} refused by central, "
+                                    "nobody will work or report it now", command.robot),
+                           self._now())
 
     def _publish_snapshots(self, now: float) -> None:
         zones = self.core.zones_view()

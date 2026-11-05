@@ -154,6 +154,10 @@ def swap_goal(cmd) -> SwapBasket.Goal:
                            take_full=bool(cmd.take_full), put_empty=bool(cmd.put_empty))
 
 
+def report_accepted(response) -> bool:
+    return response.accepted
+
+
 def report_request(cmd) -> ReportOrder.Request:
     return ReportOrder.Request(
         order_id=cmd.order_id,

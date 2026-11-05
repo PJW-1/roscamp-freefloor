@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,10 +31,12 @@ from fleet_interfaces.msg import (  # noqa: E402
 )
 from fleet_interfaces.srv import ReportOrder  # noqa: E402
 from fleet_manager.fms_node import FmsNode  # noqa: E402
+from fleet_manager.goal_tracker import ReportOutbox  # noqa: E402
 from rclpy.action import ActionServer, CancelResponse  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
 from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from rclpy.task import Future  # noqa: E402
 from std_msgs.msg import Header  # noqa: E402
 
 REPLAY = Path(__file__).parents[3] / "tools" / "replay.py"
@@ -64,6 +67,8 @@ class World(Node):
         self.hold_fill = threading.Event()  # while set, a fill runs until it is canceled
         self.canceled_fills = []
         self.fill_cancel_reason = "CANCELED"
+        self.report_accepted = True
+        self.report_delay_s = 0.0
         self.refuse_fill_cancel = False
         self.fill_cancel_asks = 0
         name = contract.name
@@ -91,7 +96,8 @@ class World(Node):
             Header, name("heartbeat"), lambda _m: self.beats.append(time.monotonic()),
             to_ros_qos(contract.qos("heartbeat")))
         self.create_timer(0.02, self._publish_state, callback_group=group)
-        self.create_service(ReportOrder, name("report_order"), self._on_report)
+        self.create_service(ReportOrder, name("report_order"), self._on_report,
+                            callback_group=group)
         self._servers = [
             ActionServer(self, FillBasket, name("fill_basket"), self._on_fill,
                          callback_group=group, cancel_callback=self._on_fill_cancel),
@@ -153,7 +159,8 @@ class World(Node):
 
     def _on_report(self, request, response):
         self.reports.append(request)
-        response.accepted = True
+        time.sleep(self.report_delay_s)
+        response.accepted = self.report_accepted
         return response
 
 
@@ -347,3 +354,47 @@ def test_a_refused_cancel_is_sent_again_and_warned_about_once_until_the_result_c
     time.sleep(1.5)
     assert graph.fill_cancel_asks == asks, "the result came, so nobody has to ask any more"
     assert len(events_of(graph, "CANCEL_UNCONFIRMED")) == 1
+
+
+def test_a_report_with_no_reply_yet_is_sent_again_and_ends_with_the_reply(graph):
+    graph.report_delay_s = 2.5  # longer than report_retry_s
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: len(graph.reports) >= 2), f"reports {graph.reports}"
+    assert {r.order_id for r in graph.reports} == {"O-001"}
+    assert wait_for(lambda: not graph.fms._reports._items, 10.0), "the reply ended nothing"
+    sent = len(graph.reports)
+    time.sleep(2.5)
+    assert len(graph.reports) == sent, "the reply came, so nothing goes out again"
+    assert not events_of(graph, "ORDER_REPORT_REFUSED")
+
+
+def test_an_accepted_report_is_sent_once(graph):
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.reports), f"fills {graph.fills}, swaps {graph.swaps}"
+    assert wait_for(lambda: not graph.fms._reports._items, 5.0), "the reply ended nothing"
+    time.sleep(2.5)
+    assert len(graph.reports) == 1
+
+
+def test_a_refused_report_is_dropped_with_one_error_naming_the_order(graph):
+    graph.report_accepted = False
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: events_of(graph, "ORDER_REPORT_REFUSED")), f"{graph.reports}"
+    event = events_of(graph, "ORDER_REPORT_REFUSED")[0]
+    assert event.level == "ERROR" and "O-001" in event.detail
+    assert not graph.fms._reports._items
+    time.sleep(2.5)
+    assert len(graph.reports) == 1, "a refusal is an answer, so it does not go out again"
+    assert len(events_of(graph, "ORDER_REPORT_REFUSED")) == 1
+
+
+def test_a_failed_reply_keeps_the_report_for_sending_again():
+    report = SimpleNamespace(order_id="O-001")
+    outbox = ReportOutbox()
+    outbox.add(report)
+    [(report_id, _)] = outbox.due(0.0, True, 2.0)
+    future = Future()
+    future.set_exception(RuntimeError("central went away"))
+    node = SimpleNamespace(_reports=outbox, get_logger=lambda: SimpleNamespace(warning=print))
+    FmsNode._report_answered(node, report_id, report, future)
+    assert outbox.due(2.0, True, 2.0) == [(report_id, report)]
