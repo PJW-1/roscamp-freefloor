@@ -24,6 +24,7 @@ ROBOT = "pinky1"
 ORDER = OrderRecord("O-001", {"A": 1})
 GOALS = ("MoveCmd", "DockCmd")
 WAIT_S = load_params().move_retry_wait_s
+TOLERANCE_M = load_params().arrival_tolerance_m
 
 
 class Run:
@@ -108,6 +109,11 @@ def rejects(run, command):
 
 def not_sent(run, command):
     run.core.on_goal_not_sent(command.robot, command.goal_id)
+
+
+def says_success_without_moving(run, command):
+    if is_move(command):
+        run.core.on_move_result(command.robot, command.goal_id, True, "")
 
 
 def to_the_dock(answer_dock):
@@ -335,3 +341,96 @@ def test_a_record_with_a_missing_server_plays_back(tmp_path):
     assert sum('"in": "on_goal_not_sent"' in line for line in lines) >= 2
     result = replay.replay(path)
     assert result.compared and result.same, (result.line, result.recorded, result.produced)
+
+
+# ---- defect 2: a success has to be where it says -------------------------------------------
+
+
+def test_success_on_the_first_lane_with_a_pose_that_never_moved_is_a_failed_attempt():
+    run = Run()
+    run.run_until(lambda: run.view()["state"] == "ERROR", 30.0, says_success_without_moving)
+    run.tick()
+    assert run.core.traffic.status_view(ROBOT)["fault_reason"] == "NOT_AT_TARGET"
+    assert run.view()["cell"] == "P-6", "it never left"
+    assert len(run.times()) == 3
+    assert all(gap >= WAIT_S for gap in run.gaps())
+    assert run.codes().count("GOAL_RETRY") == 2
+    assert run.codes().count("GOAL_FAILED") == 1
+    assert "NOT_AT_TARGET" in next(e for e in run.events if e.code == "GOAL_RETRY").detail
+
+
+def test_no_dock_goes_out_away_from_the_dock_node():
+    run = Run(start="Q")
+    run.run(30.0, says_success_without_moving)
+    assert run.sent[0][1].target_id == "W"
+    assert not run.times("DockCmd")
+    assert run.view()["state"] == "ERROR"
+
+
+def test_an_honest_arrival_within_the_tolerance_advances():
+    def stops_short(run, command):
+        if is_move(command):
+            run.pose = (command.x - 0.9 * TOLERANCE_M, command.y)
+            run.report()
+            run.core.on_move_result(command.robot, command.goal_id, True, "")
+        else:
+            run.core.on_dock_result(command.robot, command.goal_id, True)
+
+    run = Run()
+    run.run_until(lambda: run.view()["state"] == "FILLING", 60.0, stops_short)
+    assert "GOAL_RETRY" not in run.codes()
+    assert run.sent[0][1].target_id == "N"
+
+
+def test_a_stop_past_the_tolerance_goes_again_to_the_same_node_and_then_on():
+    first = []
+
+    def stops_short_once(run, command):
+        if is_move(command) and not first:
+            first.append(command)
+            run.pose = (command.x - 1.1 * TOLERANCE_M, command.y)
+            run.report()
+            run.core.on_move_result(command.robot, command.goal_id, True, "")
+        else:
+            honest(run, command)
+
+    run = Run()
+    run.run_until(lambda: run.view()["state"] == "FILLING", 60.0, stops_short_once)
+    assert run.sent[0][1].target_id == run.sent[1][1].target_id
+    assert run.gaps()[0] >= WAIT_S
+    assert run.codes().count("GOAL_RETRY") == 1
+
+
+def test_the_attempts_start_over_after_a_real_arrival():
+    run = Run()
+    run.tick(says_success_without_moving)
+    assert run.view()["attempts"] == 1
+    run.run(WAIT_S)
+    arrive(run, run.sent[-1][1])
+    assert run.view()["attempts"] == 0
+
+
+def test_a_success_while_the_robot_is_silent_is_not_checked_against_the_old_pose():
+    """The pose is stale then, and recovery judges the position anyway."""
+    run = Run()
+    run.tick()
+    goal = run.sent[0][1]
+    run.now[0] += run.core.params.comm_timeout_s + 0.1
+    run.core.tick()
+    assert run.view()["state"] == "COMM_LOST"
+    run.core.on_move_result(ROBOT, goal.goal_id, True, "")
+    assert run.view()["attempts"] == 0
+    assert run.core.traffic._missions[ROBOT].goal is None
+    assert "NOT_AT_TARGET" not in str(run.core.tick())
+
+
+def test_a_dock_result_is_not_checked_against_the_pose():
+    run = Run(start="Q")
+    run.run_until(lambda: run.times("DockCmd"), 30.0, to_the_dock(lambda *_: None))
+    x, y = run.core.site.cell_pose("W")
+    run.pose = (x + 0.5, y)
+    run.report()
+    run.core.on_dock_result(ROBOT, run.sent[-1][1].goal_id, True)
+    run.tick()
+    assert "GOAL_RETRY" not in run.codes()
+    assert run.view()["state"] == "FILLING"

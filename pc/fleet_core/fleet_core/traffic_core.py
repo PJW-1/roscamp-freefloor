@@ -49,6 +49,7 @@ PLACEMENT_CONFLICT = "PLACEMENT_CONFLICT"
 NO_FAULT = "NONE"  # what /fleet/robots says when nothing is wrong
 ON_A_GOAL = ("MOVING", "DOCKING")  # what a robot says in its state report
 _COMM_REASON = {COMM_LOST: "NO_STATE", RECOVERING: "CHECKING_POSE"}
+NOT_AT_TARGET = "NOT_AT_TARGET"  # a move said it succeeded, and the pose says otherwise
 
 RUN = "RUN"
 STOP = "STOP"
@@ -228,6 +229,8 @@ class TrafficCore:
             return
         m.goal = None
         m.not_sent_warned = False
+        if success and not m.comm and not self._at_target(m, goal):
+            success, reason = False, NOT_AT_TARGET
         if success:
             m.idx = max(m.idx, goal.target_idx)
             m.attempts = 0
@@ -503,6 +506,10 @@ class TrafficCore:
         if m.dispatch:
             self._out.append(DispatchResult(m.dispatch.goal_id, False, m.name, reason))
             m.dispatch = None
+
+    def _at_target(self, m: _Mission, goal: _Goal) -> bool:
+        target = self.site.cell_pose(m.path[goal.target_idx])
+        return math.dist((m.x, m.y), target) <= self.params.arrival_tolerance_m
 
     def _goal_failed(self, m: _Mission, reason: str) -> None:
         m.attempts += 1

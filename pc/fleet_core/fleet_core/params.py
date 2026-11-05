@@ -20,6 +20,7 @@ class FleetParams:
     lane_error_warn_m: float
     move_retry_limit: int
     move_retry_wait_s: float
+    arrival_tolerance_m: float
     startup_wait_s: float
     comm_timeout_s: float
     heartbeat_period_s: float

@@ -135,6 +135,7 @@ def test_a_robot_off_its_lane_on_the_next_goal_is_reported_again():
     # Past the node it left, so the next zone can be asked for and the goal after this one sent.
     place(core, "r1", "W", core.params.release_distance_m + 0.05, first.target_id)
     core.tick()
+    place(core, "r1", first.target_id)
     core.on_move_result("r1", first.goal_id, True, "")
     second = move_of(core.tick(), "r1")[-1]
     assert second.goal_id != first.goal_id
