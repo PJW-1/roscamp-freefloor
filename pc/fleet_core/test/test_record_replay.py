@@ -78,6 +78,7 @@ def test_every_way_into_the_core_is_recorded():
         "on_order_board": ("RUN", [OrderRecord("O-1", {"A": 1})]),
         "on_move_result": ("r1", 7, True, ""),
         "on_goal_rejected": ("r1", 7),
+        "on_goal_not_sent": ("r1", 7),
         "on_dock_result": ("r1", 7, True, 1.0, 1.0, 0.5),
         "on_fill_result": (7, True, {"A": 1}, {}, ""),
         "on_swap_result": (7, True, True, True, ""),

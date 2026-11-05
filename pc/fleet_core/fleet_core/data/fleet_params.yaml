@@ -13,6 +13,8 @@ release_distance_m: 0.2
 release_confirm_samples: 3    # consecutive reports past that distance before a release
 lane_error_warn_m: 0.15       # warn when a robot is this far off its lane, e = |(p - p_i) - s·u|
 move_retry_limit: 2           # retries after the first failure, three attempts in total
+move_retry_wait_s: 2.0        # estimate: three attempts outlast comm_timeout_s, so a comm loss shows first
+arrival_tolerance_m: 0.15     # estimate: a move's success counts only this close to the target node
 startup_wait_s: 10.0          # alert if a robot has not reported by then
 comm_timeout_s: 3.0           # estimate
 heartbeat_period_s: 0.5       # proposal for /fms/heartbeat. Wall clock, it watches a process

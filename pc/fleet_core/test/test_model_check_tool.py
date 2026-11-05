@@ -104,6 +104,20 @@ def test_calls_that_change_nothing_can_be_left_out(small_map, bundled):
         bundled.states, bundled.deadlocks, bundled.starved)
 
 
+def test_no_step_of_the_search_fails_a_goal_so_a_state_needs_no_retry_time(small_map, bundled):
+    """A retry time would be search state, and with time standing still it would never end."""
+
+    class Watched(model_check.Model):
+        def apply(self, event):
+            super().apply(event)
+            for mission in self.core._missions.values():
+                assert (mission.attempts, mission.retry_at) == (0, 0.0), event
+
+    site = load_site_map(small_map, bundle_two_way=True)
+    watched = model_check.check(site, robots=2, model_class=Watched)
+    assert watched.states == bundled.states
+
+
 def test_a_robot_queues_for_one_zone_at_a_time(small_map, unbundled):
     """wait_zone on /fleet/robots can name one zone only because of this."""
 
