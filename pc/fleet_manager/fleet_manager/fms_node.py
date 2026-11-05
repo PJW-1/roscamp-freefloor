@@ -167,8 +167,9 @@ class FmsNode(Node):
         params = self.core.params
         for server, goal_id in self._goals.retry_cancels(now, params.cancel_retry_s,
                                                          params.cancel_warn_after):
-            detail = (f"goal {goal_id} on {server} has no result after "
-                      f"{params.cancel_warn_after} cancels, still asking")
+            waited = params.cancel_warn_after * params.cancel_retry_s
+            detail = (f"goal {goal_id} on {server} has no result {waited:.0f} s after it was "
+                      "canceled, still asking")
             self._dispatch(EventOut("WARN", "CANCEL_UNCONFIRMED", detail, server), now)
 
     def _flush_reports(self, now: float) -> None:
