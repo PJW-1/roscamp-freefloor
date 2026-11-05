@@ -189,13 +189,15 @@ def test_confirm_clear_fails_a_named_dispatch_with_the_reason_the_orchestrator_e
 
 
 def test_a_robot_giving_up_on_its_move_fails_its_named_dispatch():
-    core, _ = make({"r1": (6, 5)})
+    core, now = make({"r1": (6, 5)})
     core.on_dispatch(1, OUTBOUND, "r1")
     move = cmds(core.tick(), "MoveCmd")[0]
     goal_id = move.goal_id
     seen = []
     for _ in range(core.params.move_retry_limit + 1):
         core.on_move_result("r1", goal_id, False, "NAV_ABORTED")
+        now[0] += core.params.move_retry_wait_s
+        report(core, "r1", (6, 5))
         out = core.tick()
         seen += out
         moves = cmds(out, "MoveCmd")

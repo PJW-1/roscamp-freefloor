@@ -197,10 +197,11 @@ def test_holds_at_most_two_zones_and_requests_the_third_only_after_a_release():
 
 
 def test_retry_keeps_zones_and_resends_the_same_target():
-    core, _ = started({"r1": (9, 5)})
+    core, now = started({"r1": (9, 5)})
     goal = cmds(core.tick(), "MoveCmd")[0]
     held = core.zones.held_by("r1")
     core.on_move_result("r1", goal.goal_id, False, "NAV_ABORTED")
+    now[0] += core.params.move_retry_wait_s
     place(core, "r1", (9, 5))
     retry = cmds(core.tick(), "MoveCmd")[0]
     assert retry.target_id == goal.target_id
@@ -209,10 +210,12 @@ def test_retry_keeps_zones_and_resends_the_same_target():
 
 
 def test_rejected_goal_counts_as_a_failed_attempt():
-    core, _ = started({"r1": (9, 5)})
+    core, now = started({"r1": (9, 5)})
     for _ in range(core.params.move_retry_limit + 1):
         goal = cmds(core.tick(), "MoveCmd")[0]
         core.on_goal_rejected("r1", goal.goal_id)
+        now[0] += core.params.move_retry_wait_s
+        place(core, "r1", (9, 5))
     assert view(core, "r1")["state"] == "ERROR"
     assert "GOAL_FAILED" in codes(core.tick())
 
@@ -522,12 +525,13 @@ def test_call_turns_a_robot_on_its_way_to_waiting_back_to_work():
 
 def test_retry_target_survives_a_new_destination():
     """A failed goal's retry drives to the same cell even if the path changed meanwhile."""
-    core, _ = started({"r1": (2, 1)}, [O1])
+    core, now = started({"r1": (2, 1)}, [O1])
     core.zones.force_acquire("x", "Q-WORK-2")
     first = cmds(core.tick(), "MoveCmd")[0]
     assert first.target_id == core.site.cell_id((2, 3))
     core.on_move_result("r1", first.goal_id, False, "NAV_ABORTED")
     core.on_order_board("RUN", [])
+    now[0] += core.params.move_retry_wait_s
     place(core, "r1", (2, 1))
     assert cmds(core.tick(), "MoveCmd")[0].target_id == first.target_id
     assert view(core, "r1")["phase"] == "TO_PARK"

@@ -96,6 +96,7 @@ class _Mission:
     goal: _Goal | None = None
     settle_idx: int | None = None  # drive here first, so a resumed goal stays on the lane
     attempts: int = 0
+    retry_at: float = 0.0  # no new move or dock before this, after a failed attempt
     called: bool = False
     dispatch: _Dispatch | None = None  # a dispatch that named this robot
     hold: bool = False  # kept at the station until it is released or sent on
@@ -484,6 +485,7 @@ class TrafficCore:
 
     def _goal_failed(self, m: _Mission, reason: str) -> None:
         m.attempts += 1
+        m.retry_at = self._clock() + self.params.move_retry_wait_s
         if m.attempts > self.params.move_retry_limit:
             self._fail(m, reason)
             self._event("ERROR", "GOAL_FAILED",
@@ -806,7 +808,7 @@ class TrafficCore:
         if m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK):
             self._drive(m)
         elif m.phase == DOCKING:
-            if m.goal is None:
+            if m.goal is None and self._clock() >= m.retry_at:
                 goal_id = self._next_goal_id()
                 m.goal = _Goal(DOCK, goal_id)
                 self._out.append(DockCmd(m.name, goal_id, m.dest))
@@ -896,6 +898,8 @@ class TrafficCore:
                         f"held by {self.zones.holder(zone) or 'nobody'}", m.name)
 
     def _issue_move(self, m: _Mission) -> None:
+        if m.goal is None and self._clock() < m.retry_at:
+            return
         held = self.zones.held_by(m.name)
         if m.settle_idx is not None and m.goal is None:
             settle = m.settle_idx
