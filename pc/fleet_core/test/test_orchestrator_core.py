@@ -280,3 +280,154 @@ def test_a_cancel_this_fms_asked_for_stays_harmless():
     core.on_fill_result(fill.goal_id, False, {"A": 1}, {}, "CANCELED")
     assert "FILL_RETRY" not in codes(core.take_output())
     assert core.robot_view("r1")["attempts"] == 0
+
+
+def lose_result(core, now, limit):
+    """Let the running arm job time out and its cancel go unanswered."""
+    now[0] += limit + 0.1
+    core.check_arm_timeouts(now[0])
+    core.take_output()
+    now[0] += core.params.arm_cancel_wait_s + 0.1
+    core.check_arm_timeouts(now[0])
+    assert "ARM_NO_RESULT" in codes(core.take_output())
+
+
+def lost_fill():
+    core, now, fill = filling()
+    lose_result(core, now, core.params.fill_timeout_s)
+    return core, fill
+
+
+def lost_swap():
+    core, now, swap = swapping()
+    core.take_output()
+    lose_result(core, now, core.params.swap_timeout_s)
+    return core, swap
+
+
+def late_event(out):
+    events = [e for e in cmds(out, "EventOut") if e.code == "ARM_LATE_RESULT"]
+    assert len(events) == 1
+    assert (events[0].level, events[0].robot) == ("WARN", "r1")
+    return events[0].detail
+
+
+def test_a_late_fill_result_goes_on_the_order_that_is_still_bound():
+    core, fill = lost_fill()
+    core.on_fill_result(fill.goal_id, False, {"A": 1}, {}, "CANCELED")
+    out = core.take_output()
+    detail = late_event(out)
+    assert "{'A': 1}" in detail and "workcell" in detail and str(fill.goal_id) in detail
+    assert core.robot_view("r1")["placed"] == {"A": 1}
+    assert core.order_of("r1") == "O-001"
+    assert not only(out, ReleaseCmd), "the operator still has to look"
+    assert core.robot_view("r1")["attempts"] == 0, "the attempt is over, not failed again"
+
+
+def test_a_late_swap_that_took_the_basket_reports_the_order_as_on_time():
+    core, swap = lost_swap()
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    out = core.take_output()
+    detail = late_event(out)
+    assert "took_full=True" in detail and "put_empty_done=False" in detail
+    reports = cmds(out, "ReportOrderCmd")
+    assert [(r.order_id, r.status) for r in reports] == [("O-001", "SHIPPED")]
+    assert reports[0].placed == {"A": 1, "C": 1}
+    assert core.shipped == 1
+    assert core.order_of("r1") == ""
+    assert core.robot_view("r1")["basket"] == "NONE"
+    assert not only(out, ReleaseCmd), "the operator still has to look"
+
+
+def test_a_late_swap_that_finished_both_steps_leaves_an_empty_basket_and_no_release():
+    core, swap = lost_swap()
+    core.on_swap_result(swap.goal_id, True, True, True)
+    out = core.take_output()
+    assert [r.status for r in cmds(out, "ReportOrderCmd")] == ["SHIPPED"]
+    assert core.robot_view("r1")["basket"] == "EMPTY"
+    assert not only(out, ReleaseCmd)
+
+
+def test_after_a_late_swap_result_clearing_the_robot_requeues_nothing_and_reports_nothing():
+    core, swap = lost_swap()
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    core.take_output()
+    core.on_robot_removed("r1")
+    out = core.take_output()
+    assert "ORDER_REQUEUED" not in codes(out)
+    assert not cmds(out, "ReportOrderCmd")
+    assert not only(out, DispatchCmd), "nobody is called for it"
+    assert core._pending() == [], "the board still lists it, and it is not to be worked again"
+
+
+def test_a_late_swap_that_did_not_take_the_basket_changes_nothing():
+    core, swap = lost_swap()
+    core.on_swap_result(swap.goal_id, False, False, False, "CANCELED")
+    out = core.take_output()
+    assert "took_full=False" in late_event(out)
+    assert not cmds(out, "ReportOrderCmd")
+    assert core.order_of("r1") == "O-001"
+    assert core.robot_view("r1")["basket"] == "FULL"
+
+
+def test_a_late_result_counts_only_once():
+    core, swap = lost_swap()
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    core.take_output()
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    assert core.take_output() == []
+    assert core.shipped == 1
+
+
+def test_a_late_swap_result_after_the_clear_warns_of_a_second_shipment_and_changes_nothing():
+    core, swap = lost_swap()
+    core.on_robot_removed("r1")
+    assert "ORDER_REQUEUED" in codes(core.take_output())
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    out = core.take_output()
+    detail = late_event(out)
+    assert "took_full=True" in detail and "O-001" in detail and "twice" in detail
+    assert not cmds(out, "ReportOrderCmd")
+    assert core.shipped == 0
+    assert [o.order_id for o in core._pending()] == ["O-001"], "the requeue stays"
+
+
+def test_a_late_fill_result_after_the_clear_warns_of_a_second_fill_and_changes_nothing():
+    core, fill = lost_fill()
+    core.on_robot_removed("r1")
+    core.take_output()
+    core.on_fill_result(fill.goal_id, True, {"A": 1}, {})
+    detail = late_event(core.take_output())
+    assert "{'A': 1}" in detail and "O-001" in detail and "twice" in detail
+    assert core.robot_view("r1")["placed"] == {}
+
+
+def test_a_late_put_after_the_order_was_reported_only_says_so():
+    core, now, swap = swapping()
+    core.on_swap_result(swap.goal_id, False, True, False, "GRIPPER")
+    core.take_output()
+    now[0] += core.params.arm_retry_wait_s
+    core.step("r1")
+    retry = cmds(core.take_output(), "SwapCmd")[0]
+    lose_result(core, now, core.params.swap_timeout_s)
+    core.on_swap_result(retry.goal_id, True, False, True)
+    out = core.take_output()
+    assert "twice" not in late_event(out)
+    assert not cmds(out, "ReportOrderCmd")
+    assert core.shipped == 1
+
+
+def test_the_result_of_a_job_canceled_by_the_clear_stays_silent():
+    """That job never reached ARM_NO_RESULT: the operator knew it was running when clearing."""
+    core, _, fill = filling()
+    core.on_robot_removed("r1")
+    core.take_output()
+    core.on_fill_result(fill.goal_id, True, {"A": 1}, {})
+    assert core.take_output() == []
+
+
+def test_a_result_nobody_waits_for_stays_silent():
+    core, _, fill = filling()
+    core.on_fill_result(fill.goal_id + 100, True, {"A": 1}, {})
+    core.on_swap_result(fill.goal_id + 100, True, True, True)
+    assert core.take_output() == []

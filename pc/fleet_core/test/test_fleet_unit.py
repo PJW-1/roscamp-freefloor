@@ -929,7 +929,7 @@ def test_fill_timeout_cancels_then_a_result_in_time_is_used():
     assert view(core, "r1")["state"] == "TO_OUTBOUND"
 
 
-def test_fill_with_no_result_after_the_cancel_is_an_error_and_the_late_result_is_ignored():
+def test_fill_with_no_result_after_the_cancel_is_an_error_and_the_late_result_only_adds_to_it():
     core, now, fill = filling()
     advance(core, now, core.params.fill_timeout_s + 0.1)
     out = advance(core, now, core.params.arm_cancel_wait_s + 0.1)
@@ -938,7 +938,11 @@ def test_fill_with_no_result_after_the_cancel_is_an_error_and_the_late_result_is
     v = view(core, "r1")
     assert (v["state"], v["order"]) == ("ERROR", "O-001")
     core.on_fill_result(fill.goal_id, True, {"A": 1, "C": 1}, {})
-    assert view(core, "r1")["placed"] == {}, "too late, the operator decides now"
+    assert "ARM_LATE_RESULT" in codes(core.tick())
+    v = view(core, "r1")
+    assert v["placed"] == {"A": 1, "C": 1}, "it is in the basket, so the order says so"
+    assert (v["state"], v["order"]) == ("ERROR", "O-001"), "the operator still has to look"
+    assert not cmds(core.tick(), "FillCmd")
 
 
 def test_swap_with_no_result_after_the_cancel_is_an_error():
@@ -950,6 +954,22 @@ def test_swap_with_no_result_after_the_cancel_is_an_error():
     assert view(core, "r1")["state"] == "ERROR"
     assert view(core, "r1")["basket"] == "FULL"
     assert core.shipped == 0
+
+
+def test_a_late_swap_result_ships_once_and_the_clear_does_not_put_the_order_back():
+    core, now, swap = swapping()
+    advance(core, now, core.params.swap_timeout_s + 0.1, OUT_DOCK)
+    advance(core, now, core.params.arm_cancel_wait_s + 0.1, OUT_DOCK)
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    out = core.tick()
+    assert "ARM_LATE_RESULT" in codes(out)
+    assert [c.status for c in cmds(out, "ReportOrderCmd")] == ["SHIPPED"]
+    assert view(core, "r1")["state"] == "ERROR", "the operator still has to look"
+    core.confirm_clear("r1", core.zones.held_by("r1"), "basket gone, tray empty")
+    out = core.tick()
+    assert "ORDER_REQUEUED" not in codes(out)
+    assert not cmds(out, "ReportOrderCmd")
+    assert core.shipped == 1
 
 
 def test_arm_gets_the_cancel_wait_to_stop_not_the_shorter_recovery_check():
