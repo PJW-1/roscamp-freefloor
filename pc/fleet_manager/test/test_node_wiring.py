@@ -62,6 +62,7 @@ class World(Node):
         self.assignments = []
         self.hold_fill = threading.Event()  # while set, a fill runs until it is canceled
         self.canceled_fills = []
+        self.fill_cancel_reason = "CANCELED"
         name = contract.name
         self.board = self.create_publisher(
             OrderBoard, name("order_board"), to_ros_qos(contract.qos("order_board")))
@@ -128,7 +129,7 @@ class World(Node):
                 handle.canceled()
                 self.canceled_fills.append(handle.request.order_id)
                 return FillBasket.Result(success=False, placed=items({first: 1}),
-                                         reason="CANCELED")
+                                         reason=self.fill_cancel_reason)
             time.sleep(0.01)
         handle.succeed()
         return FillBasket.Result(success=True, placed=items(wanted))
@@ -297,3 +298,16 @@ def test_stop_cancels_the_fill_on_its_server_and_run_sends_what_remains(graph):
     assert wait_for(lambda: graph.reports), f"fills {graph.fills}"
     assert graph.fills[1][3] == {"C": 2}, "A was placed before the stop"
     assert graph.reports[0].status == "SHIPPED"
+
+
+def test_a_stop_answered_with_the_status_alone_is_no_failed_attempt(graph):
+    """The server calls canceled() and leaves the reason empty: the goal status says it all."""
+    graph.hold_fill.set()
+    graph.fill_cancel_reason = ""
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.fills), "the fill never reached the server"
+    publish(graph, "STOP", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.canceled_fills), "the cancel never reached the server"
+    orchestrator = graph.fms.core.orchestrator
+    assert wait_for(lambda: orchestrator.robot_view("pinky1")["placed"]), "no result came in"
+    assert orchestrator.robot_view("pinky1")["attempts"] == 0

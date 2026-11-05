@@ -239,7 +239,7 @@ class FmsNode(Node):
     def _goal_result(self, key, on_result, on_rejected, future) -> None:
         self._goals.finished(key)
         try:
-            result = future.result().result
+            result = adapters.goal_result(future.result())
         except Exception as exc:
             self.get_logger().error(f"goal {key} lost its result: {exc}")
             on_rejected(key)

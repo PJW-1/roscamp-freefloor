@@ -232,3 +232,51 @@ def test_a_failed_outbound_dispatch_keeps_the_order_for_the_operator():
     assert core.robot_view("r1")["basket"] == "FULL"
     core.step("r1")
     assert not core.take_output()
+
+
+def test_a_fill_the_server_canceled_by_itself_counts_as_an_attempt_with_the_retry_wait():
+    """Nobody here asked. Without the count it would be sent again on every tick, with no limit."""
+    core, now, fill = filling()
+    core.on_fill_result(fill.goal_id, False, {"A": 1}, {}, "CANCELED")
+    assert "FILL_RETRY" in codes(core.take_output())
+    assert core.robot_view("r1")["attempts"] == 1
+    assert core.robot_view("r1")["placed"] == {"A": 1}
+    core.step("r1")
+    assert not cmds(core.take_output(), "FillCmd"), "the retry wait applies"
+    now[0] += core.params.arm_retry_wait_s
+    core.step("r1")
+    assert cmds(core.take_output(), "FillCmd")
+
+
+def test_a_swap_the_server_canceled_by_itself_counts_as_an_attempt_with_the_retry_wait():
+    core, now, swap = swapping()
+    core.on_swap_result(swap.goal_id, False, False, False, "CANCELED")
+    assert "SWAP_RETRY" in codes(core.take_output())
+    assert core.robot_view("r1")["attempts"] == 1
+    core.step("r1")
+    assert not cmds(core.take_output(), "SwapCmd"), "the retry wait applies"
+    now[0] += core.params.arm_retry_wait_s
+    core.step("r1")
+    assert cmds(core.take_output(), "SwapCmd")
+
+
+def test_a_server_that_keeps_canceling_by_itself_runs_out_of_attempts():
+    core, now, fill = filling()
+    for _ in range(core.params.move_retry_limit):
+        core.on_fill_result(fill.goal_id, False, {}, {}, "CANCELED")
+        now[0] += core.params.arm_retry_wait_s
+        core.step("r1")
+        fill = cmds(core.take_output(), "FillCmd")[0]
+    core.on_fill_result(fill.goal_id, False, {}, {}, "CANCELED")
+    out = core.take_output()
+    assert "FILL_FAILED" in codes(out)
+    assert [c.robot for c in only(out, RobotFaultCmd)] == ["r1"]
+
+
+def test_a_cancel_this_fms_asked_for_stays_harmless():
+    core, _, fill = filling()
+    core.on_order_board("STOP", [O1])
+    core.take_output()
+    core.on_fill_result(fill.goal_id, False, {"A": 1}, {}, "CANCELED")
+    assert "FILL_RETRY" not in codes(core.take_output())
+    assert core.robot_view("r1")["attempts"] == 0

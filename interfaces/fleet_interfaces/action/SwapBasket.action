@@ -6,6 +6,8 @@ string station_id
 bool take_full
 bool put_empty
 ---
+string REASON_CANCELED="CANCELED"
+
 bool success
 bool took_full
 bool put_empty_done

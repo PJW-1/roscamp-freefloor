@@ -278,7 +278,7 @@ class OrchestratorCore:
         self._out.append(CancelCmd(r.arm.server, r.arm.goal_id))
 
     def _arm_attempt_failed(self, r, job, reason, retry_code, failed_code) -> None:
-        if reason == CANCELED and not job.timed_out:
+        if reason == CANCELED and job.canceled_at is not None and not job.timed_out:
             return  # STOP canceled it, nothing went wrong
         r.attempts += 1
         r.arm_retry_at = self._clock() + self.params.arm_retry_wait_s

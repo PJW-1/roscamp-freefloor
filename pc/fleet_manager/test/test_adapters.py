@@ -4,6 +4,7 @@ import pytest
 pytest.importorskip("rclpy")
 pytest.importorskip("fleet_interfaces")
 
+from action_msgs.msg import GoalStatus  # noqa: E402
 from fleet_core.commands import (  # noqa: E402
     AssignmentView,
     DockCmd,
@@ -16,6 +17,7 @@ from fleet_core.commands import (  # noqa: E402
     SwapCmd,
     ZoneView,
 )
+from fleet_core.orchestrator_core import CANCELED  # noqa: E402
 from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket  # noqa: E402
 from fleet_interfaces.msg import (  # noqa: E402
     Assignment,
@@ -170,3 +172,49 @@ def test_confirm_clear_with_no_zones_is_still_accepted():
 def test_confirm_clear_for_an_unknown_robot_is_refused():
     response = adapters.confirm_clear_response(ConfirmClear.Response(), None)
     assert response.accepted is False and list(response.released_zones) == []
+
+
+def _finished(action, status, **fields):
+    return action.Impl.GetResultService.Response(status=status, result=action.Result(**fields))
+
+
+@pytest.mark.parametrize("action", [MoveTo, FillBasket, SwapBasket])
+def test_a_canceled_goal_with_no_reason_reads_as_canceled(action):
+    result = adapters.goal_result(_finished(action, GoalStatus.STATUS_CANCELED, success=False))
+    assert result.reason == "CANCELED"
+
+
+def test_an_aborted_goal_with_no_reason_reads_as_aborted():
+    result = adapters.goal_result(_finished(FillBasket, GoalStatus.STATUS_ABORTED))
+    assert result.reason == "ABORTED"
+
+
+@pytest.mark.parametrize("status", [GoalStatus.STATUS_CANCELED, GoalStatus.STATUS_ABORTED])
+def test_the_reason_of_the_server_stays(status):
+    result = adapters.goal_result(_finished(SwapBasket, status, reason="GRIPPER"))
+    assert result.reason == "GRIPPER"
+
+
+def test_a_succeeded_goal_gets_no_reason():
+    result = adapters.goal_result(_finished(MoveTo, GoalStatus.STATUS_SUCCEEDED, success=True))
+    assert result.reason == ""
+
+
+def test_the_rest_of_the_result_comes_through_with_the_status():
+    response = _finished(FillBasket, GoalStatus.STATUS_CANCELED,
+                         placed=adapters.to_order_items({"A": 1}))
+    assert adapters.fill_result(adapters.goal_result(response)) == (
+        False, {"A": 1}, {}, "CANCELED")
+
+
+@pytest.mark.parametrize("status", [GoalStatus.STATUS_CANCELED, GoalStatus.STATUS_ABORTED,
+                                    GoalStatus.STATUS_SUCCEEDED])
+def test_a_result_with_no_reason_field_keeps_working(status):
+    result = adapters.goal_result(_finished(Dock, status, success=True, error_x_cm=1.5))
+    assert adapters.dock_result(result) == (True, 1.5, 0.0, 0.0)
+
+
+def test_the_arm_actions_name_the_same_cancel_reason_the_core_looks_for():
+    assert FillBasket.Result.REASON_CANCELED == CANCELED
+    assert SwapBasket.Result.REASON_CANCELED == CANCELED
+    assert MoveTo.Result.REASON_CANCELED == CANCELED
