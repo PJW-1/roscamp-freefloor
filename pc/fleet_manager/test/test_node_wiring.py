@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -278,6 +279,29 @@ def test_a_record_of_the_running_node_plays_back_to_the_same_commands(tmp_path):
     assert played.returncode == 0, played.stdout + played.stderr
     assert "same as recorded" in played.stdout
     assert '"out": "ReportOrderCmd"' in record.read_text(encoding="utf-8")
+
+
+def test_a_robot_goal_with_no_server_is_not_a_rejection_and_an_arm_goal_still_is():
+    rclpy.init(args=["--ros-args", "-p", "robots:=[pinky1]"])
+    node = FmsNode()
+    try:
+        node.core = MagicMock()
+        client = MagicMock()
+        client.server_is_ready.return_value = False
+        node._send(client, None, ("pinky1", 7), node._move_done, node._robot_rejected)
+        node._send(client, None, ("pinky1", 8), node._dock_done, node._robot_rejected)
+        assert [c.args for c in node.core.on_goal_not_sent.call_args_list] == [
+            ("pinky1", 7), ("pinky1", 8)]
+        node.core.on_goal_rejected.assert_not_called()
+        node._send(client, None, ("workcell", 9), node._fill_done, node._fill_rejected)
+        node.core.on_fill_result.assert_called_once_with(9, False, {}, {}, "REJECTED")
+        node._send(client, None, ("arm3", 10), node._swap_done, node._swap_rejected)
+        node.core.on_swap_result.assert_called_once_with(10, False, False, False, "REJECTED")
+        assert node.core.on_goal_not_sent.call_count == 2
+        client.send_goal_async.assert_not_called()
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 def test_the_heartbeat_comes_twice_a_second(graph):

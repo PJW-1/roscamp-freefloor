@@ -214,7 +214,10 @@ class FmsNode(Node):
     # ------------------------------------------------------------------ action plumbing
     def _send(self, client, goal, key, on_result, on_rejected) -> None:
         if not client.server_is_ready():
-            on_rejected(key)
+            if on_rejected == self._robot_rejected:
+                self.core.on_goal_not_sent(key[0], key[1])  # not a failed attempt
+            else:
+                on_rejected(key)
             return
         self._goals.sent(key)
         future = client.send_goal_async(goal)

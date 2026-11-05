@@ -97,6 +97,7 @@ class _Mission:
     settle_idx: int | None = None  # drive here first, so a resumed goal stays on the lane
     attempts: int = 0
     retry_at: float = 0.0  # no new move or dock before this, after a failed attempt
+    not_sent_warned: bool = False  # GOAL_NOT_SENT said, and no goal has reached a server since
     called: bool = False
     dispatch: _Dispatch | None = None  # a dispatch that named this robot
     hold: bool = False  # kept at the station until it is released or sent on
@@ -226,6 +227,7 @@ class TrafficCore:
         if goal is None or goal.id != goal_id or goal.kind != MOVE:
             return
         m.goal = None
+        m.not_sent_warned = False
         if success:
             m.idx = max(m.idx, goal.target_idx)
             m.attempts = 0
@@ -239,9 +241,24 @@ class TrafficCore:
         if goal is None or goal.id != goal_id:
             return
         m.goal = None
+        m.not_sent_warned = False
         if goal.kind == MOVE:
             m.settle_idx = goal.target_idx
         self._goal_failed(m, "REJECTED")
+
+    def on_goal_not_sent(self, robot, goal_id) -> None:
+        """Its action server is not there, so the goal never left. No attempt was made."""
+        m = self._missions[robot]
+        goal = m.goal
+        if goal is None or goal.id != goal_id:
+            return
+        m.goal = None
+        if goal.kind == MOVE:
+            m.settle_idx = goal.target_idx
+        m.retry_at = self._clock() + self.params.move_retry_wait_s
+        if not m.not_sent_warned:
+            m.not_sent_warned = True
+            self._event("WARN", "GOAL_NOT_SENT", f"no {goal.kind} server, trying again", robot)
 
     def on_dock_result(self, robot, goal_id, success, error_x_cm=0.0, error_y_cm=0.0,
                        error_yaw_deg=0.0) -> None:
@@ -250,6 +267,7 @@ class TrafficCore:
         if goal is None or goal.id != goal_id or goal.kind != DOCK:
             return
         m.goal = None
+        m.not_sent_warned = False
         if not success:
             self._goal_failed(m, "DOCK_FAILED")
             return
@@ -315,6 +333,9 @@ class TrafficCore:
     def tick_begin(self, now: float) -> bool:
         """Startup and comm checks. Returns True once every robot has reported."""
         everyone_here = self._everyone_reported(now)
+        for m in self._missions.values():
+            if m.goal:  # one that did not leave is reported before the next tick
+                m.not_sent_warned = False
         self._check_comm(now)
         self._finish_recoveries(now)
         return everyone_here

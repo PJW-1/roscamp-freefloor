@@ -3,6 +3,9 @@
 One robot on the default map, one tick per 0.1 s, and the robot's answers given as a function:
 what comes back for a goal, right after the tick that sent it, as the node passes them on.
 """
+import sys
+from pathlib import Path
+
 import pytest
 import yaml
 from core_helpers import cmds
@@ -11,6 +14,11 @@ from fleet_core.fms_core import FmsCore
 from fleet_core.params import load_params
 from fleet_core.site_map import SiteMap, load_site_map
 from fleet_core.traffic_core import TrafficCore
+
+REPO = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO / "tools"))
+
+import replay  # noqa: E402
 
 ROBOT = "pinky1"
 ORDER = OrderRecord("O-001", {"A": 1})
@@ -96,6 +104,10 @@ def nav_aborts(run, command):
 
 def rejects(run, command):
     run.core.on_goal_rejected(command.robot, command.goal_id)
+
+
+def not_sent(run, command):
+    run.core.on_goal_not_sent(command.robot, command.goal_id)
 
 
 def to_the_dock(answer_dock):
@@ -241,3 +253,85 @@ def test_extending_a_goal_that_is_still_running_does_not_wait():
     for _ in range(core.params.release_confirm_samples):
         core.on_robot_state("r1", x + 0.5, y, 0.0, "MOVING")
     assert [c.target_id for c in cmds(core.tick(), "MoveCmd")] == ["O"]
+
+
+# ---- a server that is not there -----------------------------------------------------------
+
+
+def test_a_server_missing_for_30_s_does_not_fault_the_robot():
+    run = Run()
+    run.run(30.0, not_sent)
+    assert run.view()["state"] == "TO_WORK"
+    assert run.view()["attempts"] == 0
+    assert run.codes().count("GOAL_NOT_SENT") == 1
+    assert next(e for e in run.events if e.code == "GOAL_NOT_SENT").level == "WARN"
+    assert "GOAL_RETRY" not in run.codes()
+    assert all(gap >= WAIT_S for gap in run.gaps())
+    assert len(run.times()) > 10, "it keeps trying"
+    run.run_until(lambda: run.view()["state"] == "FILLING", 60.0, honest)
+
+
+def test_a_dock_server_missing_for_30_s_does_not_fault_the_robot():
+    run = Run()
+    run.run_until(lambda: run.times("DockCmd"), 60.0, to_the_dock(not_sent))
+    run.run(30.0, to_the_dock(not_sent))
+    assert run.view()["state"] == "DOCKING"
+    assert run.view()["attempts"] == 0
+    assert run.codes().count("GOAL_NOT_SENT") == 1
+    assert all(gap >= WAIT_S for gap in run.gaps("DockCmd"))
+    run.run_until(lambda: run.view()["state"] == "FILLING", 10.0, honest)
+
+
+def test_not_sent_keeps_the_settle_index_as_a_rejection_does_and_keeps_the_zones():
+    run = Run()
+    run.tick(not_sent)
+    mission = run.core.traffic._missions[ROBOT]
+    assert mission.goal is None
+    assert mission.settle_idx is not None
+    held = run.view()["held"]
+    run.run(WAIT_S)
+    assert run.view()["held"] == held
+    assert run.sent[1][1].target_id == run.sent[0][1].target_id
+
+
+def test_a_goal_that_is_not_the_current_one_is_ignored_when_not_sent():
+    run = Run()
+    run.tick()
+    goal = run.sent[0][1]
+    run.core.on_goal_not_sent(ROBOT, goal.goal_id + 100)
+    assert run.core.traffic._missions[ROBOT].goal.id == goal.goal_id
+    run.tick()
+    assert "GOAL_NOT_SENT" not in run.codes()
+
+
+def test_the_warning_comes_again_after_a_goal_reached_the_server():
+    run = Run()
+    run.tick(not_sent)
+    run.run(WAIT_S)  # this one went out and nothing came back for it, so it is running
+    run.tick()
+    goal = run.core.traffic._missions[ROBOT].goal
+    assert goal is not None
+    nav_aborts(run, run.sent[-1][1])
+    run.run_until(lambda: run.codes().count("GOAL_NOT_SENT") == 2, WAIT_S + 1.0, not_sent)
+
+
+def test_the_warning_comes_again_after_a_goal_answered_before_the_next_tick():
+    run = Run()
+    run.tick(not_sent)
+    run.run(WAIT_S, rejects)
+    assert len(run.times()) == 2
+    run.run(WAIT_S, not_sent)
+    run.tick()
+    assert run.codes().count("GOAL_NOT_SENT") == 2
+
+
+def test_a_record_with_a_missing_server_plays_back(tmp_path):
+    lines = []
+    run = Run(write=lines.append)
+    run.run(5.0, not_sent)
+    run.run_until(lambda: run.view()["state"] == "FILLING", 60.0, honest)
+    path = tmp_path / "run.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert sum('"in": "on_goal_not_sent"' in line for line in lines) >= 2
+    result = replay.replay(path)
+    assert result.compared and result.same, (result.line, result.recorded, result.produced)

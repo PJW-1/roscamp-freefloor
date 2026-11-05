@@ -99,6 +99,11 @@ class FmsCore:
         self.traffic.on_goal_rejected(robot, goal_id)
         self._pump()
 
+    def on_goal_not_sent(self, robot, goal_id) -> None:
+        self._input("on_goal_not_sent", robot, goal_id)
+        self.traffic.on_goal_not_sent(robot, goal_id)
+        self._pump()
+
     def on_dock_result(self, robot, goal_id, success, error_x_cm=0.0, error_y_cm=0.0,
                        error_yaw_deg=0.0) -> None:
         self._input("on_dock_result", robot, goal_id, success, error_x_cm, error_y_cm,
