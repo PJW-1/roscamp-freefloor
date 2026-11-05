@@ -283,6 +283,10 @@ class TrafficCore:
         return list(self._missions)
 
     @property
+    def everyone_placed(self) -> bool:
+        return not self._not_placed()
+
+    @property
     def running(self) -> bool:
         return self._run_mode == RUN
 
@@ -387,9 +391,12 @@ class TrafficCore:
         self._goal_seq += 1
         return self._goal_seq
 
+    def _not_placed(self) -> list[_Mission]:
+        return [m for m in self._missions.values()
+                if not m.placed and m.fault != OUT_OF_SERVICE]
+
     def _everyone_reported(self, now: float) -> bool:
-        missing = [m for m in self._missions.values()
-                   if not m.placed and m.fault != OUT_OF_SERVICE]
+        missing = self._not_placed()
         if not missing:
             return True
         if self._startup_since is None:
@@ -428,6 +435,9 @@ class TrafficCore:
         m.path = [cell]
         m.idx = 0
         m.phase = PARKED if cell in self.site.parking else IDLE
+        # Past d it is on the lane into that node, and a straight line from there is no lane.
+        if math.dist((m.x, m.y), self.site.cell_pose(cell)) > self.params.release_distance_m:
+            m.settle_idx = 0
         if m.fault_reason == PLACEMENT_CONFLICT:
             m.fault = ""
             m.fault_reason = ""

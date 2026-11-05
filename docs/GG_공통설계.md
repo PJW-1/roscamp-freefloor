@@ -58,9 +58,14 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `/{pinky}/navigate_to_pose` 액션(Nav2): 핑키 안에서 pinky_fsm → Nav2. contract.yaml에 `real_only`로 있고, FMS는 부르지 않는다
 - `/cmd_vel`(Nav2, pinky_dock → pinky_bringup), `/scan`, `/odom`(pinky_bringup → Nav2): 핑키 안의 연결이다. 제조사 패키지와 Nav2의 일반적인 이름이고 contract.yaml에는 없다. 3대를 namespace로 나누는 구성은 시험 전이다
 
-새로 제안하는 바깥 인터페이스 (합의 전. 코드에 넣은 뒤 이름과 숫자를 여기에 확정해 적는다):
-- `/fleet/robots` 토픽: FMS → central. 로봇별 상태 뷰(fsm_state, fault, fault_reason, wait_for 등). `/fleet/assignments`와 `/fleet/zones`는 호환을 위해 유지한다
-- `/fms/heartbeat` 토픽: FMS → 핑키. 끊기면 핑키 FSM이 스스로 멈춘다
+새로 제안하는 바깥 인터페이스 (팀 합의 전. 코드와 `contract.yaml`에는 들어 있다):
+- `/fleet/robots` RobotStatusArray 토픽(LATCHED, 1 Hz): FMS → central. 로봇마다 robot_id, fsm_state(핑키 보고 그대로), task_type, order_id, fault(NONE, ERROR, COMM_LOST, OUT_OF_SERVICE, RECOVERING), fault_reason, wait_zone, wait_robots, battery, x, y, yaw. `/fleet/assignments`와 `/fleet/zones`는 호환을 위해 유지한다. 위치, 배터리, fsm_state는 마지막 보고 값이다
+- `/fms/heartbeat` std_msgs/Header 토픽(STATE QoS, 2 Hz, `heartbeat_period_s` 0.5 s): FMS → 핑키. **핑키 FSM 계약(FSM 담당과 확인 필요):**
+  - 이동 또는 도킹 목표를 실행 중일 때, 마지막 heartbeat 또는 목표 수락에서 `heartbeat_timeout_s`(제안 1.5 s, heartbeat 3번)가 지나면 그 목표를 취소하고 정지한다. 목표 수락도 FMS가 살아 있다는 증거로 친다. 새 FMS의 첫 목표가 첫 heartbeat보다 먼저 올 수 있기 때문이다.
+  - 할 일이 없는 로봇은 heartbeat가 없어도 아무것도 하지 않고 상태 보고를 계속한다. 멈춘 뒤 온 새 목표는 받는다.
+  - 시간은 벽시계로 잰다. 프로세스를 감시하는 값이기 때문이다.
+  - 통신 두절도 같다. FMS가 살아 있어도 heartbeat를 못 받으면 멈춘다.
+  - **FMS 쪽 약속:** 시작한 뒤 `heartbeat_timeout_s + heartbeat_period_s`(2 s) 동안 heartbeat를 내지 않고 상태 보고도 받지 않는다. 이전 FMS의 목표로 달리던 로봇이 그 사이에 모두 멈춘다. 그 뒤 로봇의 `move_to`, `dock` 서버를 찾았고 전원이 보고해야 움직이기 시작한다.
 
 run_mode는 FMS가 OrderBoard로 받는다. 삭제된 것: TaskBoard, StationCount, BoxArray, ArmTransfer, ReportDone, `/{arm}/load`, `/{arm}/unload`, `/central/tasks`, `/central/report_done`.
 

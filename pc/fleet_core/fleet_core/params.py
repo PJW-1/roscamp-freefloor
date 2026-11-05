@@ -21,6 +21,8 @@ class FleetParams:
     move_retry_limit: int
     startup_wait_s: float
     comm_timeout_s: float
+    heartbeat_period_s: float
+    heartbeat_timeout_s: float
     recover_check_s: float
     arm_cancel_wait_s: float
     arm_retry_wait_s: float

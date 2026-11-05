@@ -19,6 +19,8 @@ topics:
   - {key: order_board, name: "/central/orders", type: fleet_interfaces/msg/OrderBoard, qos: LATCHED}
   - {key: assignments, name: "/fleet/assignments", type: fleet_interfaces/msg/AssignmentArray, qos: LATCHED}
   - {key: robots, name: "/fleet/robots", type: fleet_interfaces/msg/RobotStatusArray, qos: LATCHED}
+  # A proposal until the FSM owner agrees. A robot that stops hearing it stops by itself.
+  - {key: heartbeat, name: "/fms/heartbeat", type: std_msgs/msg/Header, qos: STATE}
   - {key: zones, name: "/fleet/zones", type: fleet_interfaces/msg/ZoneStateArray, qos: LATCHED}
   - {key: events, name: "/central/events", type: fleet_interfaces/msg/FleetEvent, qos: EVENT}
 

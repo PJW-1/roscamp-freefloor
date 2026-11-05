@@ -14,11 +14,13 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import Header
 
 from fake_robots.common import (
     TRUTH_TOPIC,
     ScenarioClock,
     load_contract_param,
+    load_params_param,
     load_scenario_param,
     load_site_map_param,
     node_name,
@@ -62,6 +64,7 @@ class FakePinkyNode(Node):
                          parameter_overrides=parameter_overrides, **kwargs)
         self.declare_parameter("robot_id", "pinky1")
         self.declare_parameter("state_rate_hz", 10.0)
+        self.declare_parameter("heartbeat_timeout_s", -1.0)  # below 0: params file, 0: never stop
         self.robot_id = self.get_parameter("robot_id").value
         contract = load_contract_param(self)
         site = load_site_map_param(self)
@@ -81,6 +84,10 @@ class FakePinkyNode(Node):
         self._goals: dict[bytes, _Goal] = {}
         self._rest = RobotState.STATE_IDLE
         self._last_t = self._sc.now()
+        timeout = float(self.get_parameter("heartbeat_timeout_s").value)
+        self._beat_timeout = (timeout if timeout >= 0
+                              else float(load_params_param(self)["heartbeat_timeout_s"]))
+        self._last_beat = time.monotonic()
 
         self._state_pub = self.create_publisher(
             RobotState, contract.name("robot_state", pinky=self.robot_id),
@@ -88,6 +95,9 @@ class FakePinkyNode(Node):
         self._truth_pub = self.create_publisher(
             RobotState, TRUTH_TOPIC.format(robot=self.robot_id),
             to_ros_qos(contract.qos("robot_state")))
+        self.create_subscription(
+            Header, contract.name("heartbeat"), self._on_heartbeat,
+            to_ros_qos(contract.qos("heartbeat")))
         group = ReentrantCallbackGroup()
         self._move_server = self._server(
             MoveTo, contract.name("move_to", pinky=self.robot_id), "move", group)
@@ -120,6 +130,16 @@ class FakePinkyNode(Node):
     def _running(self) -> bool:
         return self._alive and rclpy.ok()
 
+    # -- the heartbeat ------------------------------------------------------------------
+
+    def _on_heartbeat(self, _msg) -> None:
+        if not self._faults.comms_down(self._sc.now()):
+            self._last_beat = time.monotonic()
+
+    def _heartbeat_lost(self) -> bool:
+        """Wall clock: it watches a process, and sim time runs ahead of a loaded machine."""
+        return 0 < self._beat_timeout < time.monotonic() - self._last_beat
+
     # -- goal handling ------------------------------------------------------------------
 
     def _unreachable(self) -> bool:
@@ -146,6 +166,7 @@ class FakePinkyNode(Node):
             if self._active is not None:
                 self._end(self._active, False, MoveTo.Result.REASON_CANCELED)
             self._active = goal
+            self._last_beat = time.monotonic()  # a goal shows somebody is there
             goal.start_at = t
             if kind == "move":
                 pose = handle.request.target_pose
@@ -216,6 +237,9 @@ class FakePinkyNode(Node):
                 self._remove(goal)
                 return
             if dt <= 0 or goal is None or goal.done.is_set() or self._faults.stuck(t):
+                return
+            if self._heartbeat_lost():
+                self._end(goal, False, MoveTo.Result.REASON_CANCELED)
                 return
             if goal.kind == "move":
                 if goal.abort_at is not None and t >= goal.abort_at:

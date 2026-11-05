@@ -65,7 +65,8 @@ def _setup(context):
                                          "start_delay_s": CLOCK_START_DELAY_S,
                                          "rate_hz": CLOCK_RATE_HZ}]))
     for robot in arg["fake_robots"].split():
-        actions.append(node("fake_pinky_node", f"fake_{robot}", robot_id=robot))
+        actions.append(node("fake_pinky_node", f"fake_{robot}", robot_id=robot,
+                            params_file=arg["params_file"]))
     workcell, vision_arms, swap_arms = split_fake_arms(
         arg["fake_arms"], load_site_map(arg["map_file"] or None))
     if workcell:

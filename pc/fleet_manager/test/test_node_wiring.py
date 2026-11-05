@@ -22,6 +22,7 @@ from fleet_interfaces.msg import (  # noqa: E402
     OrderItem,
     RobotState,
     RobotStatusArray,
+    ZoneStateArray,
 )
 from fleet_interfaces.srv import ReportOrder  # noqa: E402
 from fleet_manager.fms_node import FmsNode  # noqa: E402
@@ -29,6 +30,7 @@ from rclpy.action import ActionServer, CancelResponse  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
 from rclpy.executors import MultiThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from std_msgs.msg import Header  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("ROS_DOMAIN_ID", "") in ("", "6")
@@ -43,8 +45,9 @@ def items(counts):
 class World(Node):
     """One robot that does what it is told at once, the two arm servers, and central."""
 
-    def __init__(self, contract, site, cell):
+    def __init__(self, contract, site, cell, robot="pinky1", robot_servers=True):
         super().__init__("wiring_world")
+        self.robot = robot
         group = ReentrantCallbackGroup()
         self.site = site
         self.pose = site.cell_pose(cell)
@@ -58,31 +61,46 @@ class World(Node):
         self.board = self.create_publisher(
             OrderBoard, name("order_board"), to_ros_qos(contract.qos("order_board")))
         self.state = self.create_publisher(
-            RobotState, name("robot_state", pinky="pinky1"),
+            RobotState, name("robot_state", pinky=robot),
             to_ros_qos(contract.qos("robot_state")))
         self.create_subscription(
             AssignmentArray, name("assignments"),
             lambda m: self.assignments.append(list(m.assignments)),
             to_ros_qos(contract.qos("assignments")))
+        self.zones = []
+        self.create_subscription(
+            ZoneStateArray, name("zones"), self.zones.append, to_ros_qos(contract.qos("zones")))
         self.status = []
         self.create_subscription(
             RobotStatusArray, name("robots"), self.status.append,
             to_ros_qos(contract.qos("robots")))
+        self.beats = []
+        self.create_subscription(
+            Header, name("heartbeat"), lambda _m: self.beats.append(time.monotonic()),
+            to_ros_qos(contract.qos("heartbeat")))
         self.create_timer(0.02, self._publish_state, callback_group=group)
         self.create_service(ReportOrder, name("report_order"), self._on_report)
         self._servers = [
-            ActionServer(self, MoveTo, name("move_to", pinky="pinky1"), self._on_move,
-                         callback_group=group),
-            ActionServer(self, Dock, name("dock", pinky="pinky1"), self._on_dock,
-                         callback_group=group),
             ActionServer(self, FillBasket, name("fill_basket"), self._on_fill,
                          callback_group=group, cancel_callback=lambda _: CancelResponse.ACCEPT),
             ActionServer(self, SwapBasket, name("swap_basket", arm="arm3"), self._on_swap,
                          callback_group=group),
         ]
+        self._contract, self._group = contract, group
+        if robot_servers:
+            self.serve_robot()
+
+    def serve_robot(self):
+        name, group = self._contract.name, self._group
+        self._servers += [
+            ActionServer(self, MoveTo, name("move_to", pinky=self.robot), self._on_move,
+                         callback_group=group),
+            ActionServer(self, Dock, name("dock", pinky=self.robot), self._on_dock,
+                         callback_group=group),
+        ]
 
     def _publish_state(self):
-        msg = RobotState(robot_id="pinky1", state=RobotState.STATE_IDLE)
+        msg = RobotState(robot_id=self.robot, state=RobotState.STATE_IDLE)
         msg.pose.x, msg.pose.y = self.pose
         self.state.publish(msg)
 
@@ -128,6 +146,7 @@ def graph():
     rclpy.init(args=["--ros-args", "-p", "robots:=[pinky1]", "-p", "tick_hz:=50.0"])
     node = FmsNode()
     world = World(node.contract, load_site_map(), "Q")
+    world.fms = node
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     executor.add_node(world)
@@ -177,6 +196,56 @@ def test_the_status_of_every_robot_comes_out_about_once_a_second(graph):
     robot = last.robots[0]
     assert (robot.robot_id, robot.fsm_state, robot.fault) == ("pinky1", "IDLE", "NONE")
     assert (robot.x, robot.y) != (0.0, 0.0)
+
+
+def test_a_new_fms_stays_silent_until_any_goal_of_an_old_one_must_have_stopped(graph):
+    """Read first, then check it is still silent: time only runs one way."""
+    fms = graph.fms
+    while True:
+        on_map, beats = fms.core.traffic.robot_view("pinky1")["on_map"], list(graph.beats)
+        if not fms.silent():
+            break
+        assert not on_map, "took a report during the silence"
+        assert not beats, "a heartbeat during the silence"
+        time.sleep(0.02)
+    assert wait_for(lambda: fms.core.traffic.robot_view("pinky1")["on_map"], 10.0)
+
+
+def test_a_robot_counts_only_once_its_goals_can_reach_it():
+    """A new FMS hears reports before it has found the action servers. A goal sent then would be
+    refused, and the retries would be gone in a moment. Until all count it says nothing about
+    the locks either: it does not know them yet, and that is not the same as free.
+
+    Not pinky1: a server of the tests before this one can linger in the graph for a moment.
+    """
+    rclpy.init(args=["--ros-args", "-p", "robots:=[pinky3]", "-p", "tick_hz:=50.0"])
+    node = FmsNode()
+    world = World(node.contract, load_site_map(), "Q", robot="pinky3", robot_servers=False)
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
+    executor.add_node(world)
+    thread = threading.Thread(target=executor.spin, daemon=True)
+    thread.start()
+    try:
+        assert wait_for(lambda: not node.silent(), 20.0)
+        time.sleep(1.0)
+        assert not node.core.traffic.robot_view("pinky3")["on_map"]
+        assert not world.zones
+        world.serve_robot()
+        assert wait_for(lambda: node.core.traffic.robot_view("pinky3")["on_map"], 20.0)
+        assert wait_for(lambda: world.zones, 5.0)
+    finally:
+        executor.shutdown()
+        thread.join(timeout=5)
+        world.destroy_node()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_the_heartbeat_comes_twice_a_second(graph):
+    assert wait_for(lambda: len(graph.beats) >= 5, 20.0), graph.beats
+    gaps = [b - a for a, b in zip(graph.beats, graph.beats[1:], strict=False)]
+    assert 0.3 <= sum(gaps) / len(gaps) <= 0.8, gaps
 
 
 def test_stop_cancels_the_fill_on_its_server_and_run_sends_what_remains(graph):

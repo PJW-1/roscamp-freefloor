@@ -4,7 +4,7 @@
 Fake mode (CI, simulation) skips entries that only exist on real robots; real mode checks
 them too. Entries whose provider is intentionally not running are skipped by key or name:
 
-  check_interfaces.py --mode fake --wait-s 5 --skip zones,assignments,robots,confirm_clear
+  check_interfaces.py --mode fake --wait-s 5 --skip zones,assignments,robots,heartbeat,confirm_clear
 
 Exit code 0 when there is no error (warnings are printed), 1 otherwise.
 """

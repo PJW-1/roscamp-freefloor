@@ -297,6 +297,17 @@ def test_nothing_moves_while_a_placement_is_refused():
     assert core.robot_view("b")["on_map"] is False
 
 
+def test_everyone_is_placed_only_when_nobody_is_left_to_report():
+    core = TrafficCore(load_site_map(), load_params(), ["a", "b"], lambda: 0.0)
+    assert not core.everyone_placed
+    place(core, "a", "A")
+    assert not core.everyone_placed
+    place(core, "b", "N", 0.3, "S")
+    assert not core.everyone_placed, "refused"
+    core.confirm_clear("b", [], "lifted off")
+    assert core.everyone_placed
+
+
 def test_a_refused_placement_is_said_once_however_often_it_reports():
     core, _ = refused_on_the_crossing()
     for _ in range(5):
@@ -321,4 +332,36 @@ def test_clearing_a_refused_robot_frees_the_others_and_keeps_it_off_the_map():
     assert (core.robot_view("b")["on_map"], held(core, "b")) == (False, [])
     send(core, "a", "OUTBOUND")
     assert move_of(core.tick(), "a")
+
+
+def found_along_a_lane(robot, node, to, along):
+    core = TrafficCore(load_site_map(), load_params(), [robot], lambda: 0.0)
+    place(core, robot, node, along, to)
+    core.on_run_mode("RUN")
+    return core
+
+
+def test_a_robot_found_along_a_lane_drives_to_its_end_first():
+    """A new FMS finds robots wherever they stopped. A straight line from there to the next
+    node is no lane."""
+    core = found_along_a_lane("r1", "W", "A", 0.28)
+    send(core, "r1", "OUTBOUND")
+    move = move_of(core.tick(), "r1")[0]
+    assert move.target_id == "A"
+    assert core.robot_view("r1")["cell"] == "A"
+    place(core, "r1", "A")
+    core.on_move_result("r1", move.goal_id, True, "")
+    assert move_of(core.tick(), "r1")[0].target_id == "B"
+
+
+def test_a_robot_found_along_a_lane_with_nothing_to_do_still_gets_off_it():
+    core = found_along_a_lane("r1", "W", "A", 0.28)
+    assert move_of(core.tick(), "r1")[0].target_id == "A"
+
+
+def test_a_robot_found_within_d_of_a_node_is_on_that_node():
+    core = found_along_a_lane("r1", "W", "A", 0.1)
+    send(core, "r1", "OUTBOUND")
+    assert move_of(core.tick(), "r1")[0].target_id == "A"
+    assert held(core, "r1") == ["W", "AVENUE"]
 

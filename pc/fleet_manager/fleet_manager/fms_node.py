@@ -7,6 +7,7 @@ fleet_params.yaml.
 """
 from __future__ import annotations
 
+import time
 from functools import partial
 
 import rclpy
@@ -35,7 +36,9 @@ from fleet_interfaces.msg import (
 )
 from fleet_interfaces.srv import ConfirmClear, ReportOrder
 from rclpy.action import ActionClient
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
+from std_msgs.msg import Header
 
 from fleet_manager import adapters
 from fleet_manager.goal_tracker import GoalTracker, ReportOutbox
@@ -61,14 +64,26 @@ class FmsNode(Node):
 
         self._goals = GoalTracker()
         self._reports = ReportOutbox()
+        self._reached = set()
         self._last_zones = None
         self._last_assignments = None
         self._create_interfaces(robots)
         self.create_timer(1.0 / self.get_parameter("tick_hz").value, self._on_tick)
         self.create_timer(1.0, self._publish_robots)
+        params = self.core.params
+        # A robot still on a goal of an FMS before this one stops once the beats have been gone
+        # for its timeout. Until then this one sends nothing and takes no report. Wall clock:
+        # this watches a process, and sim time runs ahead of a loaded machine's messages.
+        self._silent_until = (time.monotonic() + params.heartbeat_timeout_s
+                              + params.heartbeat_period_s)
+        self.create_timer(params.heartbeat_period_s, self._publish_heartbeat,
+                          clock=Clock(clock_type=ClockType.STEADY_TIME))
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
+
+    def silent(self) -> bool:
+        return time.monotonic() < self._silent_until
 
     def _qos(self, key):
         return to_ros_qos(self.contract.qos(key))
@@ -81,6 +96,8 @@ class FmsNode(Node):
             AssignmentArray, name("assignments"), self._qos("assignments"))
         self._robots_pub = self.create_publisher(
             RobotStatusArray, name("robots"), self._qos("robots"))
+        self._heartbeat_pub = self.create_publisher(
+            Header, name("heartbeat"), self._qos("heartbeat"))
         self._events_pub = self.create_publisher(FleetEvent, name("events"), self._qos("events"))
         self.create_subscription(
             OrderBoard, name("order_board"), self._on_order_board, self._qos("order_board"))
@@ -105,7 +122,16 @@ class FmsNode(Node):
 
     # ------------------------------------------------------------------ inputs
     def _on_robot_state(self, robot, msg: RobotState) -> None:
-        self.core.on_robot_state(robot, *adapters.robot_report(msg))
+        if not self.silent() and self._reachable(robot):
+            self.core.on_robot_state(robot, *adapters.robot_report(msg))
+
+    def _reachable(self, robot) -> bool:
+        """A robot counts once goals can reach it. A new FMS hears reports before it has found
+        the action servers, and goals sent then are refused and use up the retries."""
+        if (robot not in self._reached and self._move[robot].server_is_ready()
+                and self._dock[robot].server_is_ready()):
+            self._reached.add(robot)
+        return robot in self._reached
 
     def _on_order_board(self, msg: OrderBoard) -> None:
         self.core.on_order_board(adapters.order_board_mode(msg), adapters.order_board_orders(msg))
@@ -117,8 +143,8 @@ class FmsNode(Node):
     # ------------------------------------------------------------------ output loop
     def _on_tick(self) -> None:
         now = self._now()
-        if now <= 0.0:
-            return  # waiting for the first /clock message under simulated time
+        if now <= 0.0 or self.silent():
+            return  # the first /clock message under simulated time has not come yet
         for command in self.core.tick():
             self._dispatch(command, now)
         self._flush_reports()
@@ -130,13 +156,19 @@ class FmsNode(Node):
 
     def _publish_snapshots(self, now: float) -> None:
         zones = self.core.zones_view()
-        if zones != self._last_zones:
+        # Until all have reported this FMS does not know the locks, which is not the same as free.
+        if self.core.traffic.everyone_placed and zones != self._last_zones:
             self._last_zones = zones
             self._zones_pub.publish(adapters.zones_to_msg(zones, now))
         assignments = self.core.assignments_view()
         if assignments != self._last_assignments:
             self._last_assignments = assignments
             self._assignments_pub.publish(adapters.assignments_to_msg(assignments, now))
+
+    def _publish_heartbeat(self) -> None:
+        if not self.silent():
+            self._heartbeat_pub.publish(Header(stamp=self.get_clock().now().to_msg(),
+                                               frame_id=self.get_name()))
 
     def _publish_robots(self) -> None:
         now = self._now()

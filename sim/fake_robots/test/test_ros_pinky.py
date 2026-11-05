@@ -42,11 +42,12 @@ class Probe:
         return fut.result()
 
 
-def start(harness, tmp_path, **scenario):
+def start(harness, tmp_path, heartbeat_timeout_s=0.0, **scenario):
+    """No FMS here, so by default the robot does not wait to hear from one."""
     from fake_robots.fake_pinky_node import FakePinkyNode
     harness.add(FakePinkyNode(parameter_overrides=harness.params(
         robot_id="pinky1", scenario_file=write_scenario(tmp_path, **scenario),
-        state_rate_hz=20.0)))
+        state_rate_hz=20.0, heartbeat_timeout_s=heartbeat_timeout_s)))
     return Probe(harness)
 
 
@@ -172,3 +173,98 @@ def test_dock_reports_phase_and_error(harness, tmp_path):
     assert res.success is True and res.error_x_cm == pytest.approx(1.0, abs=0.5)
     assert phases
     assert p.states[-1][1].state == RobotState.STATE_DOCKED
+
+
+# ---- the heartbeat ----------------------------------------------------------------------
+
+SLOW = {"pinky1": {"start": "P-6", "speed_mps": 0.1, "pose_noise_m": 0.0}}
+BEAT_TIMEOUT_S = 0.5
+
+
+def beat(p):
+    """Play the FMS: a heartbeat from now on."""
+    from std_msgs.msg import Header
+    pub = p.node.create_publisher(Header, CONTRACT_OBJ.name("heartbeat"),
+                                  to_ros_qos(CONTRACT_OBJ.qos("heartbeat")))
+    return p.node.create_timer(0.1, lambda: pub.publish(Header(frame_id="fms")))
+
+
+def watch_truth(p):
+    from fake_robots.common import TRUTH_TOPIC
+    truth = []
+    p.node.create_subscription(
+        RobotState, TRUTH_TOPIC.format(robot="pinky1"),
+        lambda m: truth.append((time.monotonic(), m.pose.x, m.pose.y)),
+        to_ros_qos(CONTRACT_OBJ.qos("robot_state")))
+    return truth
+
+
+def test_a_move_stops_when_no_heartbeat_comes(harness, tmp_path):
+    p = start(harness, tmp_path, heartbeat_timeout_s=BEAT_TIMEOUT_S, robots=SLOW)
+    assert wait_until(lambda: p.states, 5.0)
+    truth = watch_truth(p)
+    sent = time.monotonic()
+    handle = p.goal("QO")
+    assert handle.accepted, "the goal itself shows somebody is there"
+    res = result_of(handle, 5.0).result
+    took = time.monotonic() - sent
+    assert res.success is False and res.reason == MoveTo.Result.REASON_CANCELED
+    assert BEAT_TIMEOUT_S * 0.8 <= took <= BEAT_TIMEOUT_S + 1.0, took
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_IDLE, 2.0)
+    mark = time.monotonic()
+    assert wait_until(lambda: truth and truth[-1][0] > mark + 0.3, 3.0)
+    stopped = [(x, y) for when, x, y in truth if when >= mark]
+    assert len(set(stopped)) == 1, "it kept going"
+
+
+def test_a_heartbeat_keeps_a_move_going_past_the_timeout(harness, tmp_path):
+    p = start(harness, tmp_path, heartbeat_timeout_s=BEAT_TIMEOUT_S, robots={
+        "pinky1": {"start": "P-5", "speed_mps": 0.2, "pose_noise_m": 0.0}})
+    beat(p)
+    time.sleep(0.3)
+    target = "P-6"
+    sent = time.monotonic()
+    res = result_of(p.goal(target), 10.0).result
+    assert res.success is True
+    assert time.monotonic() - sent > BEAT_TIMEOUT_S, "the move has to outlast the timeout"
+
+
+def test_a_robot_that_stopped_takes_the_next_goal(harness, tmp_path):
+    p = start(harness, tmp_path, heartbeat_timeout_s=BEAT_TIMEOUT_S, robots=SLOW)
+    assert result_of(p.goal("QO"), 5.0).result.success is False
+    beat(p)
+    second = p.goal("P-5")
+    assert second.accepted
+    assert result_of(second, 15.0).result.success is True
+
+
+def test_a_dock_stops_too(harness, tmp_path):
+    p = start(harness, tmp_path, heartbeat_timeout_s=BEAT_TIMEOUT_S,
+              dock={"duration_s": 30.0, "error_cm": 1.0})
+    fut = p.dock.send_goal_async(Dock.Goal(dock_id="WORK"))
+    assert wait_until(fut.done, 5.0) and fut.result().accepted
+    assert result_of(fut.result(), 5.0).result.success is False
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_IDLE, 2.0)
+
+
+def test_no_heartbeat_gets_through_a_comm_loss(harness, tmp_path):
+    p = start(harness, tmp_path, heartbeat_timeout_s=BEAT_TIMEOUT_S, robots=SLOW, faults=[
+        {"at_s": 1.5, "robot": "pinky1", "type": "comm_loss", "duration_s": 60.0}])
+    truth = watch_truth(p)
+    beat(p)
+    assert wait_until(lambda: p.states, 5.0)
+    assert p.goal("QO").accepted
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] > 0.2, 5.0), "state kept coming"
+    time.sleep(BEAT_TIMEOUT_S + 0.5)
+    mark = time.monotonic()
+    assert wait_until(lambda: truth[-1][0] > mark + 0.3, 3.0)
+    assert len({(x, y) for when, x, y in truth if when >= mark}) == 1, "it kept going"
+
+
+def test_a_robot_with_nothing_to_do_does_not_mind_the_silence(harness, tmp_path):
+    p = start(harness, tmp_path, heartbeat_timeout_s=BEAT_TIMEOUT_S)
+    assert wait_until(lambda: p.states, 5.0)
+    time.sleep(BEAT_TIMEOUT_S + 0.3)
+    assert p.states[-1][1].state == RobotState.STATE_IDLE
+    assert time.monotonic() - p.states[-1][0] < 0.5, "it keeps reporting"
+

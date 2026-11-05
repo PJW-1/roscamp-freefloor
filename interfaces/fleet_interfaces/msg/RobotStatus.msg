@@ -5,6 +5,8 @@ string FAULT_COMM_LOST="COMM_LOST"
 string FAULT_OUT_OF_SERVICE="OUT_OF_SERVICE"
 string FAULT_RECOVERING="RECOVERING"
 
+# fsm_state, battery, x, y and yaw are its last report, however old that is. Only fault says a
+# robot has gone silent, and only while it has no other fault.
 string robot_id
 string fsm_state        # what the pinky reported, as it reported it. Empty before its first report
 string task_type        # Assignment.TYPE_*. Empty when it is off the floor

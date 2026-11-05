@@ -104,6 +104,20 @@ def test_calls_that_change_nothing_can_be_left_out(small_map, bundled):
         bundled.states, bundled.deadlocks, bundled.starved)
 
 
+def test_a_robot_queues_for_one_zone_at_a_time(small_map, unbundled):
+    """wait_zone on /fleet/robots can name one zone only because of this."""
+
+    class OneQueue(model_check.Model):
+        def capture(self):
+            for name in self.names:
+                queued = [zone for zone, who in self.core.zones._arrived if who == name]
+                assert len(queued) <= 1, f"{name} queues for {queued}"
+            return super().capture()
+
+    site = load_site_map(small_map, bundle_two_way=False)
+    assert model_check.check(site, robots=2, model_class=OneQueue).states == unbundled.states
+
+
 def test_several_processes_give_the_same_answer(small_map, unbundled):
     site = load_site_map(small_map, bundle_two_way=False)
     parallel = model_check.check(site, robots=2, workers=2)
