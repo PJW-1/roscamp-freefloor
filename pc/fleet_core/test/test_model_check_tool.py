@@ -111,7 +111,8 @@ def test_no_step_of_the_search_fails_a_goal_so_a_state_needs_no_retry_time(small
         def apply(self, event):
             super().apply(event)
             for mission in self.core._missions.values():
-                assert (mission.attempts, mission.retry_at) == (0, 0.0), event
+                state = (mission.attempts, mission.retry_at, mission.arrival_by)
+                assert state == (0, 0.0, None), event
 
     site = load_site_map(small_map, bundle_two_way=True)
     watched = model_check.check(site, robots=2, model_class=Watched)

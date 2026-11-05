@@ -25,6 +25,7 @@ ORDER = OrderRecord("O-001", {"A": 1})
 GOALS = ("MoveCmd", "DockCmd")
 WAIT_S = load_params().move_retry_wait_s
 TOLERANCE_M = load_params().arrival_tolerance_m
+SETTLE_S = load_params().arrival_settle_s
 
 
 class Run:
@@ -401,9 +402,54 @@ def test_a_stop_past_the_tolerance_goes_again_to_the_same_node_and_then_on():
     assert run.codes().count("GOAL_RETRY") == 1
 
 
+def test_a_report_that_lags_behind_the_result_is_not_a_failed_attempt():
+    """The result can overtake the report that shows the arrival."""
+    def result_first(run, command):
+        if is_move(command):
+            run.core.on_move_result(command.robot, command.goal_id, True, "")
+            run.pose = (command.x, command.y)  # reported on the next tick
+        else:
+            run.core.on_dock_result(command.robot, command.goal_id, True)
+
+    run = Run()
+    run.run_until(lambda: run.view()["state"] == "FILLING", 60.0, result_first)
+    assert "GOAL_RETRY" not in run.codes()
+    assert all(gap < WAIT_S for gap in run.gaps())
+
+
+def test_a_pose_that_stays_away_is_a_failed_attempt_only_when_the_settle_time_is_over():
+    run = Run()
+    run.tick(says_success_without_moving)
+    run.run(SETTLE_S - 0.2)
+    assert run.view()["attempts"] == 0
+    assert "GOAL_RETRY" not in run.codes()
+    assert len(run.times()) == 1, "nothing goes out while the reports can still catch up"
+    run.run(0.3)
+    assert run.view()["attempts"] == 1
+    assert "NOT_AT_TARGET" in next(e for e in run.events if e.code == "GOAL_RETRY").detail
+    assert len(run.times()) == 1, "and then it waits like any failed attempt"
+
+
+def test_losing_comm_while_the_pose_is_awaited_leaves_the_judgement_to_recovery():
+    run = Run()
+    run.tick(says_success_without_moving)
+    run.now[0] += run.core.params.comm_timeout_s + 0.1
+    run.events += cmds(run.core.tick(), "EventOut")
+    assert run.view()["state"] == "COMM_LOST"
+    run.run_until(lambda: run.view()["state"] == "FILLING", 60.0, honest)
+    assert "GOAL_RETRY" not in run.codes()
+
+
+def test_on_the_default_map_a_robot_counted_as_arrived_can_release_the_zone_behind_it():
+    """A whole tolerance short on the shortest lane still has to leave s > d."""
+    margin = load_site_map().shortest_exit_lane() - load_params().release_distance_m
+    assert TOLERANCE_M < margin
+
+
 def test_the_attempts_start_over_after_a_real_arrival():
     run = Run()
     run.tick(says_success_without_moving)
+    run.run(SETTLE_S + 0.1)
     assert run.view()["attempts"] == 1
     run.run(WAIT_S)
     arrive(run, run.sent[-1][1])

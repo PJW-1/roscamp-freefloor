@@ -98,6 +98,7 @@ class _Mission:
     settle_idx: int | None = None  # drive here first, so a resumed goal stays on the lane
     attempts: int = 0
     retry_at: float = 0.0  # no new move or dock before this, after a failed attempt
+    arrival_by: float | None = None  # a success came ahead of the pose: reports have until then
     not_sent_warned: bool = False  # GOAL_NOT_SENT said, and no goal has reached a server since
     called: bool = False
     dispatch: _Dispatch | None = None  # a dispatch that named this robot
@@ -229,9 +230,10 @@ class TrafficCore:
             return
         m.goal = None
         m.not_sent_warned = False
-        if success and not m.comm and not self._at_target(m, goal):
-            success, reason = False, NOT_AT_TARGET
-        if success:
+        if success and not m.comm and not self._at_target(m, goal.target_idx):
+            m.settle_idx = goal.target_idx
+            m.arrival_by = m.retry_at = self._clock() + self.params.arrival_settle_s
+        elif success:
             m.idx = max(m.idx, goal.target_idx)
             m.attempts = 0
         else:
@@ -365,6 +367,7 @@ class TrafficCore:
         """Follow poses and free passed zones. Returns True while a wait cycle halts new moves."""
         for m in self._missions.values():
             if m.available:
+                self._judge_arrival(m, now)
                 self._track_progress(m)
                 self._release_passed_zones(m)
         return self._check_deadlock(now)
@@ -525,9 +528,23 @@ class TrafficCore:
             self._out.append(DispatchResult(m.dispatch.goal_id, False, m.name, reason))
             m.dispatch = None
 
-    def _at_target(self, m: _Mission, goal: _Goal) -> bool:
-        target = self.site.cell_pose(m.path[goal.target_idx])
+    def _at_target(self, m: _Mission, index: int) -> bool:
+        target = self.site.cell_pose(m.path[index])
         return math.dist((m.x, m.y), target) <= self.params.arrival_tolerance_m
+
+    def _judge_arrival(self, m: _Mission, now: float) -> None:
+        """A move said it succeeded with the last report too far off. Later reports decide."""
+        if m.arrival_by is None:
+            return
+        if self._at_target(m, m.settle_idx):
+            m.idx = max(m.idx, m.settle_idx)
+            m.settle_idx = None
+            m.arrival_by = None
+            m.retry_at = 0.0
+            m.attempts = 0
+        elif now >= m.arrival_by:
+            m.arrival_by = None
+            self._goal_failed(m, NOT_AT_TARGET)
 
     def _goal_failed(self, m: _Mission, reason: str) -> None:
         m.attempts += 1
@@ -636,6 +653,7 @@ class TrafficCore:
         if m.goal:
             self._cancel_goal(m)
         m.settle_idx = None
+        m.arrival_by = None
         self._event("INFO", "COMM_RESTORED", "checking the pose before resuming", m.name)
 
     def _finish_recoveries(self, now: float) -> None:

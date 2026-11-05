@@ -141,6 +141,11 @@ def test_zone_is_released_only_by_pose_never_by_result_or_time():
     core.tick()
     assert "Q-OUT-2" in core.zones.held_by("r1"), "goal success alone frees nothing"
 
+    now[0] += core.params.move_retry_wait_s  # the pose never followed, so the move goes again
+    place(core, "r1", (9, 5))
+    core.tick()
+    assert "Q-OUT-2" in core.zones.held_by("r1"), "nor does time"
+
     x, y = core.site.cell_pose((9, 5))
     distance = core.params.release_distance_m
     # Along the lane to (9, 4), so y falls. Just under the release distance is still too close.
@@ -534,6 +539,20 @@ def test_retry_target_survives_a_new_destination():
     now[0] += core.params.move_retry_wait_s
     place(core, "r1", (2, 1))
     assert cmds(core.tick(), "MoveCmd")[0].target_id == first.target_id
+    assert view(core, "r1")["phase"] == "TO_PARK"
+
+
+def test_a_move_awaiting_its_pose_keeps_its_target_when_the_path_changes():
+    core, _ = started({"r1": (2, 1)}, [O1])
+    core.zones.force_acquire("x", "Q-WORK-2")
+    first = cmds(core.tick(), "MoveCmd")[0]
+    core.on_move_result("r1", first.goal_id, True, "")  # the reports have not caught up yet
+    core.on_order_board("RUN", [])
+    seen = codes(core.tick())
+    place(core, "r1", (2, 3))
+    seen += codes(core.tick())
+    assert "GOAL_RETRY" not in seen
+    assert view(core, "r1")["cell"] == (2, 3)
     assert view(core, "r1")["phase"] == "TO_PARK"
 
 
