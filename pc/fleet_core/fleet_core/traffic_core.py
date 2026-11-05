@@ -545,7 +545,6 @@ class TrafficCore:
     def _watch_lane_error(self, m: _Mission) -> None:
         """Locks assume a robot stays on its lane. Say so when one does not, once per goal."""
         if not (m.goal and m.goal.kind == MOVE and m.goal.target_idx > 0):
-            m.off_lane, m.off_lane_warned = 0, False
             return
         a, b = m.path[m.goal.target_idx - 1], m.path[m.goal.target_idx]
         s, e = self.site.lane_progress(a, b, m.x, m.y)
@@ -935,4 +934,5 @@ class TrafficCore:
         yaw = math.atan2(step[1], step[0]) if step else m.yaw
         goal_id = self._next_goal_id()
         m.goal = _Goal(MOVE, goal_id, target_idx, step)
+        m.off_lane, m.off_lane_warned = 0, False
         self._out.append(MoveCmd(m.name, goal_id, self.site.cell_id(cell), x, y, yaw))

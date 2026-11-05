@@ -115,6 +115,34 @@ def test_a_robot_far_off_its_lane_is_reported_once():
     assert codes(core.tick()).count("LANE_ERROR") == 1
 
 
+def test_a_robot_off_its_lane_on_the_next_goal_is_reported_again():
+    """The next goal can go out with no report in between, so nothing else marks the new goal."""
+    core, _ = make({"r1": "W"})
+    send(core, "r1", "OUTBOUND")
+    first = move_of(core.tick(), "r1")[-1]
+    samples = core.params.release_confirm_samples
+    off = core.params.lane_error_warn_m + 0.05
+
+    def report_beside(a, b):
+        x, y = core.site.cell_pose(a)
+        lane = core.site.lane(a, b)
+        for _ in range(samples):
+            core.on_robot_state("r1", x - lane.uy * off, y + lane.ux * off, 0.0, "MOVING")
+
+    report_beside("W", first.target_id)
+    assert codes(core.tick()).count("LANE_ERROR") == 1
+
+    # Past the node it left, so the next zone can be asked for and the goal after this one sent.
+    place(core, "r1", "W", core.params.release_distance_m + 0.05, first.target_id)
+    core.tick()
+    core.on_move_result("r1", first.goal_id, True, "")
+    second = move_of(core.tick(), "r1")[-1]
+    assert second.goal_id != first.goal_id
+
+    report_beside(first.target_id, second.target_id)
+    assert codes(core.tick()).count("LANE_ERROR") == 1
+
+
 def test_a_robot_on_its_lane_is_not_reported_around_a_corner():
     core, _ = make({"r1": "W"})
     send(core, "r1", "OUTBOUND")
