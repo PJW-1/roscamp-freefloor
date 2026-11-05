@@ -1,4 +1,6 @@
 """Traffic on the default map: diagonal lanes, a two-way avenue, and a crossing with no node."""
+from dataclasses import replace
+
 import pytest
 from core_helpers import cmds, codes
 from fleet_core.commands import EventOut
@@ -406,3 +408,18 @@ def test_a_robot_that_keeps_moving_is_called_out_like_a_silent_one():
     events = [e for e in core.tick() if isinstance(e, EventOut)]
     assert [e.code for e in events] == ["ROBOT_NOT_REPORTING"]
     assert "stand still" in events[0].detail
+
+
+@pytest.mark.parametrize("d", [0.1, 0.16])
+def test_a_release_distance_within_two_radii_is_refused(d):
+    """A robot just past it still touches one at the node it left. Every pair of lanes meeting
+    at a node turns into a conflict pair, and all that shows is robots refused at the start."""
+    with pytest.raises(ValueError, match="twice the robot radius"):
+        TrafficCore(load_site_map(), replace(load_params(), release_distance_m=d), ["r1"],
+                    lambda: 0.0)
+
+
+def test_the_conflict_pairs_stay_as_they_are_just_past_two_radii():
+    core = TrafficCore(load_site_map(), replace(load_params(), release_distance_m=0.17), ["r1"],
+                       lambda: 0.0)
+    assert core.site.conflict_pairs(0.16, 0.17) == {frozenset({"AVENUE", "S"})}

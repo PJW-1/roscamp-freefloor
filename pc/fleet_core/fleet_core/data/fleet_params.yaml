@@ -6,7 +6,8 @@ release_margin_extra_m: 0.05  # scenario judge only: radius + this = off the cou
 # On the path, the zone behind is released once a report is this far along the lane that left it,
 # measured as s = (p - p_i)·u. Rule: d >= r + eps + v * (tau + tick), so the body is past the zone
 # even when the report is eps off and tau + tick old: 0.08 + 0.03 + 0.2 * (0.2 + 0.1) = 0.17 m.
-# Also d >= 2r, because a robot behind may then drive up to the node just left. Estimates until
+# Also d > 2r, because a robot behind may then drive up to the node just left, and d >= 2r + eps
+# if the one in front may stop right after a report that was eps ahead of it. Estimates until
 # eps and tau are measured on the real robot; docs/worklog_2026-11-05.md has the pressure table.
 release_distance_m: 0.2
 release_confirm_samples: 3    # consecutive reports past that distance before a release

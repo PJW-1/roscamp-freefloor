@@ -4,6 +4,7 @@ import random
 import pytest
 from fake_robots.motion import (
     ArmFaults,
+    DelayLine,
     FaultSchedule,
     Motion,
     abort_at_shutdown,
@@ -47,6 +48,29 @@ def test_noise_is_seeded_and_zero_sigma_is_exact():
     b = noisy_pose(1.0, 2.0, 0.03, random.Random(5))
     assert a == b and a != (1.0, 2.0)
     assert noisy_pose(1.0, 2.0, 0.0, random.Random(5)) == (1.0, 2.0)
+
+
+def test_what_goes_in_a_delay_line_comes_out_late_and_in_order():
+    line = DelayLine(0.5)
+    line.push(1.0, "a")
+    line.push(1.1, "b")
+    assert line.due(1.4) == []
+    assert line.due(1.5) == ["a"]
+    assert line.due(1.7) == ["b"]
+    assert line.due(9.0) == []
+
+
+def test_a_delay_line_with_no_delay_lets_it_straight_through():
+    line = DelayLine(0.0)
+    line.push(1.0, "a")
+    assert line.due(1.0) == ["a"]
+
+
+def test_what_is_still_in_a_cleared_delay_line_is_lost():
+    line = DelayLine(0.5)
+    line.push(1.0, "a")
+    line.clear()
+    assert line.due(2.0) == []
 
 
 def faults():

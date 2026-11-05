@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections import deque
 
 
 def finish_action(handle, success: bool) -> None:
@@ -66,6 +67,26 @@ def noisy_pose(x: float, y: float, sigma: float, rng: random.Random) -> tuple[fl
     if sigma <= 0.0:
         return x, y
     return x + rng.gauss(0.0, sigma), y + rng.gauss(0.0, sigma)
+
+
+class DelayLine:
+    """What goes in comes out `delay` later, in order. With no delay, straight through."""
+
+    def __init__(self, delay: float):
+        self._delay = delay
+        self._waiting: deque = deque()
+
+    def push(self, t: float, item) -> None:
+        self._waiting.append((t + self._delay, item))
+
+    def due(self, t: float) -> list:
+        out = []
+        while self._waiting and self._waiting[0][0] <= t:
+            out.append(self._waiting.popleft()[1])
+        return out
+
+    def clear(self) -> None:
+        self._waiting.clear()
 
 
 class FaultSchedule:

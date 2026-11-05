@@ -37,6 +37,20 @@ def test_defaults_are_filled(site):
     assert sc.expect.zone_holder_max == 1 and sc.expect.all_orders_finished is True
     assert sc.expect.orders_shipped is None and sc.expect.orders_shipped_min == 0
     assert sc.expect.fifo_violations == 0 and sc.expect.dual_arm_overlaps == 0
+    assert sc.robots["pinky1"].report_delay_s == 0.0 and sc.robots["pinky1"].stop_error_m == 0.0
+
+
+def test_a_robot_can_report_late_and_stop_off_target(site):
+    robots = {"pinky1": {"start": "P-6", "report_delay_s": 0.5, "stop_error_m": 0.02}}
+    cfg = parse_scenario(minimal(robots=robots), site).robots["pinky1"]
+    assert (cfg.report_delay_s, cfg.stop_error_m) == (0.5, 0.02)
+
+
+@pytest.mark.parametrize("key", ["report_delay_s", "stop_error_m"])
+def test_a_negative_delay_or_stop_error_is_refused(site, key):
+    robots = {"pinky1": {"start": "P-6", key: -0.1}}
+    with pytest.raises(ScenarioError, match=key):
+        parse_scenario(minimal(robots=robots), site)
 
 
 def test_inventory_defaults_to_the_stock_total(site):

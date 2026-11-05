@@ -135,6 +135,59 @@ def test_true_pose_has_no_noise_and_keeps_coming_during_comm_loss(harness, tmp_p
     assert (truth[-1][1].pose.x, truth[-1][1].pose.y) == pytest.approx((x, y), abs=1e-9)
 
 
+def truth_of(p):
+    from fake_robots.common import TRUTH_TOPIC
+    truth = []
+    p.node.create_subscription(
+        RobotState, TRUTH_TOPIC.format(robot="pinky1"), truth.append,
+        to_ros_qos(CONTRACT_OBJ.qos("robot_state")))
+    return truth
+
+
+def test_a_late_report_says_where_the_robot_was_when_it_was_measured(harness, tmp_path):
+    p = start(harness, tmp_path, robots={"pinky1": {
+        "start": "P-6", "speed_mps": 0.1, "pose_noise_m": 0.0, "report_delay_s": 1.0}})
+    truth = truth_of(p)
+    assert wait_until(lambda: p.states and truth, 5.0)
+    p.goal("N")
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_MOVING, 5.0)
+    assert wait_until(lambda: p.states[-1][1].pose.x != SITE.cell_pose("P-6")[0], 5.0)
+    time.sleep(0.5)  # moving at full speed for at least the whole delay
+    told, now = p.states[-1][1], truth[-1]
+    gap = ((told.pose.x - now.pose.x) ** 2 + (told.pose.y - now.pose.y) ** 2) ** 0.5
+    assert gap == pytest.approx(0.1, abs=0.04)  # speed * delay
+    age = (p.node.get_clock().now().nanoseconds / 1e9
+           - (told.stamp.sec + told.stamp.nanosec / 1e9))
+    assert age == pytest.approx(1.0, abs=0.3)
+
+
+def test_reports_measured_during_a_comm_loss_never_come(harness, tmp_path):
+    p = start(harness, tmp_path, robots={"pinky1": {
+        "start": "P-6", "speed_mps": 0.1, "pose_noise_m": 0.0, "report_delay_s": 1.0}},
+        faults=[{"at_s": 2.0, "robot": "pinky1", "type": "comm_loss", "duration_s": 2.0}])
+    assert wait_until(lambda: p.states, 5.0)
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] > 0.5, 6.0), "never went silent"
+    back = len(p.states)
+    assert wait_until(lambda: len(p.states) > back, 6.0), "never came back"
+    came = p.states[back][1].stamp
+    # Comms return at 4 s after the first tick of the clock. What was measured before that is gone.
+    first = p.states[0][1].stamp
+    assert (came.sec + came.nanosec / 1e9) - (first.sec + first.nanosec / 1e9) > 2.5
+
+
+def test_a_move_ends_off_its_target_by_the_stop_error(harness, tmp_path):
+    p = start(harness, tmp_path, robots={"pinky1": {
+        "start": "P-6", "speed_mps": 1.0, "pose_noise_m": 0.0, "stop_error_m": 0.05}})
+    truth = truth_of(p)
+    target = SITE.cell_pose("N")
+    assert result_of(p.goal("N")).result.success
+    assert wait_until(lambda: truth, 5.0)
+    time.sleep(0.2)
+    stopped = truth[-1].pose
+    off = ((stopped.x - target[0]) ** 2 + (stopped.y - target[1]) ** 2) ** 0.5
+    assert 0.0 < off < 0.3
+
+
 def test_start_accepts_a_waiting_cell_name(harness, tmp_path):
     p = start(harness, tmp_path)  # pinky1 starts at P-6
     assert wait_until(lambda: p.states, 5.0)

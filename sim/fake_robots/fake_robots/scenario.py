@@ -44,6 +44,8 @@ class RobotCfg:
     start: tuple[int, int]
     speed_mps: float = 0.2
     pose_noise_m: float = 0.0
+    report_delay_s: float = 0.0  # a report goes out this long after it was measured
+    stop_error_m: float = 0.0  # one sigma per axis: where a move really ends around its target
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,13 @@ def _positive(data: dict, key: str, default=None) -> float:
     value = data.get(key, default)
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
         raise ScenarioError(f"{key} must be a positive number, got {value!r}")
+    return float(value)
+
+
+def _not_negative(data: dict, key: str) -> float:
+    value = data.get(key, 0.0)
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+        raise ScenarioError(f"{key} must not be negative, got {value!r}")
     return float(value)
 
 
@@ -241,6 +250,8 @@ def parse_scenario(data: dict, site_map) -> Scenario:
             start=_resolve_start(raw["start"], site_map),
             speed_mps=_positive(raw, "speed_mps", 0.2),
             pose_noise_m=float(raw.get("pose_noise_m", 0.0)),
+            report_delay_s=_not_negative(raw, "report_delay_s"),
+            stop_error_m=_not_negative(raw, "stop_error_m"),
         )
     if not robots:
         raise ScenarioError("scenario has no robots")

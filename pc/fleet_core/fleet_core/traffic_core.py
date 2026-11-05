@@ -127,6 +127,11 @@ class TrafficCore:
                 f"the shortest lane leaving a zone ({site.shortest_exit_lane()} m) must exceed "
                 f"the release distance ({params.release_distance_m} m), or a robot stopped at "
                 "its end never releases the zone behind it")
+        if params.release_distance_m <= 2 * params.robot_radius_m:
+            raise ValueError(
+                f"the release distance ({params.release_distance_m} m) must exceed twice the "
+                f"robot radius ({params.robot_radius_m} m), or a robot just past it still "
+                "touches one at the node it left")
         self.site = site
         self.params = params
         self.zones = ZoneManager(site.zones, clock, site.conflict_pairs(

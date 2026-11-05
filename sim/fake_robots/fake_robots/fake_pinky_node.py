@@ -26,6 +26,7 @@ from fake_robots.common import (
     node_name,
 )
 from fake_robots.motion import (
+    DelayLine,
     FaultSchedule,
     Motion,
     abort_at_shutdown,
@@ -75,6 +76,7 @@ class FakePinkyNode(Node):
         self._faults = FaultSchedule(scenario.faults, self.robot_id)
         x, y = site.cell_pose(cfg.start)
         self._motion = Motion(x, y)
+        self._reports = DelayLine(cfg.report_delay_s)
         self._off_course = (site.origin[0] - OFF_COURSE_M, site.origin[1] - OFF_COURSE_M)
         self._removed = False
         self._sc = ScenarioClock(self)
@@ -171,7 +173,8 @@ class FakePinkyNode(Node):
             if kind == "move":
                 pose = handle.request.target_pose
                 goal.target_id = handle.request.target_id
-                self._motion.set_target(pose.x, pose.y)
+                self._motion.set_target(*noisy_pose(pose.x, pose.y, self._cfg.stop_error_m,
+                                                    self._rng))
                 if self._faults.take_nav_abort(t):
                     eta = self._motion.remaining() / self._cfg.speed_mps
                     goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # abort before arrival
@@ -271,6 +274,7 @@ class FakePinkyNode(Node):
                 robot_id=self.robot_id,
                 pose=Pose2D(x=self._motion.x, y=self._motion.y, theta=self._motion.yaw)))
             if self._unreachable():
+                self._reports.clear()  # what had not gone out is lost with the link
                 return
             goal = self._active
             busy = goal is not None and not goal.done.is_set()
@@ -279,12 +283,14 @@ class FakePinkyNode(Node):
             else:
                 state = self._rest
             x, y = noisy_pose(self._motion.x, self._motion.y, self._cfg.pose_noise_m, self._rng)
-            msg = RobotState(
+            self._reports.push(t, RobotState(
                 robot_id=self.robot_id, pose=Pose2D(x=x, y=y, theta=self._motion.yaw),
                 battery=90.0, state=state,
                 current_goal=goal.target_id if busy and goal.kind == "move" else "",
-                stamp=self.get_clock().now().to_msg())
-        self._state_pub.publish(msg)
+                stamp=self.get_clock().now().to_msg()))
+            due = self._reports.due(t)
+        for msg in due:
+            self._state_pub.publish(msg)
 
 
 def main(args=None):

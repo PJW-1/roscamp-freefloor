@@ -15,7 +15,7 @@
 | `pc/fleet_manager` | `fleet_core`를 ROS에 연결하는 노드 | 동작 |
 | `sim/fake_robots`, `sim/scenarios` | 가짜 핑키, 작업공간 서버, 출고 팔, 비전, 중앙, 시계, 심판 노드와 시나리오 | 동작 |
 | `sim/maps` | 비교용 일방통행 지도 2개. 기본 지도는 `pc/fleet_core/fleet_core/data/site_map.yaml` | 동작 |
-| `tools` | 전수 검사(`model_check.py`), 격자 지도 변환(`convert_grid_map.py`) | 동작 |
+| `tools` | 전수 검사(`model_check.py`), 기록 재생(`replay.py`), 지연·잡음 압박 시험(`pressure_sweep.py`), 격자 지도 변환(`convert_grid_map.py`) | 동작 |
 | `bringup/iponic_bringup` | `pc.launch.py` | 동작 |
 | `scripts/check_interfaces.py` | 실행 중인 시스템을 `contract.yaml`과 비교 | 동작 |
 | `pc/central`, `pinky/*`, `arm/*` | 담당자가 채울 빈 패키지 | 비어 있음 |
@@ -174,6 +174,6 @@ Python 패키지의 `setup.py`에는 `tests_require=['pytest']`를 넣어야 합
 ## 알려진 약점
 
 - 두 스테이션 사이는 대로 하나로만 다니고 대로 전체가 잠금 하나이므로, 대로에서 멈춘 로봇 1대는 그 이동을 모두 막습니다(`stuck_robot`이 이 상황입니다).
-- 가짜 로봇은 목표에 정확히 서므로 위치 오차에서 오는 문제(덜 가서 멈춰 뒤 구역이 해제되지 않는 경우 등)는 이 시험으로 드러나지 않습니다.
+- 시나리오의 가짜 로봇은 기본값으로 목표에 정확히 서고 보고 지연도 없습니다. `stop_error_m`, `report_delay_s`를 주면 압박 시험을 할 수 있지만(`tools/pressure_sweep.py`), 실제 로봇의 오차 분포를 재현하지는 않습니다.
 - `dual_arm_overlaps`는 상태 메시지로 판정합니다. 상태 토픽은 best effort이므로 메시지를 잃으면 겹침을 잘못 판정할 수 있습니다.
 - 팔의 동작 시간, 재고 기록, 바구니 용량은 모두 가정입니다. 실제 바구니와 그리퍼로 잰 값이 아닙니다.
