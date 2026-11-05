@@ -391,11 +391,12 @@ class TrafficCore:
         m.idx = 0
         m.phase = PARKED if cell in self.site.parking else IDLE
         zone = self._zone(cell)
+        in_the_way = self.zones.holders_around(zone, m.name)
         if not self.zones.force_acquire(m.name, zone):
             m.fault = ERROR
             m.fault_reason = "PLACEMENT_CONFLICT"
             self._event("ERROR", "PLACEMENT_CONFLICT",
-                        f"{zone} is held by {self.zones.holder(zone)}", m.name)
+                        f"{m.name} cannot take {zone}, held: {in_the_way}", m.name)
 
     def _upcoming(self, m: _Mission) -> tuple[str, str | None]:
         """The robot's current zone and the next different zone on its path."""
@@ -465,7 +466,10 @@ class TrafficCore:
 
         On its path: s > d along the lane leaving the zone. Why d is big enough is in
         fleet_params.yaml. Not on it (a zone ahead, or a robot moved by hand): at least d from the
-        zone's floor.
+        zone's centre lines, the same measure as s.
+
+        s is a projection, so it says nothing about a robot far off its lane. Lanes of the zone
+        close to the exit lane are a conflict pair already, and LANE_ERROR reports the rest.
         """
         lane = self._exit_lane(m, zone)
         if lane:
@@ -474,6 +478,7 @@ class TrafficCore:
         return self._off_the_floor(m, zone)
 
     def _off_the_floor(self, m: _Mission, zone: str) -> bool:
+        # The floor is half_width either side of the centre lines, so this is back to those.
         distance = self.site.distance_to_zone(m.x, m.y, zone) + self.site.half_width
         return distance >= self.params.release_distance_m
 

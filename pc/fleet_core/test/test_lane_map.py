@@ -25,6 +25,15 @@ def build(where, pairs, **extra):
 STRAIGHT = {"a": (0, 0), "b": (1, 0), "c": (2, 0)}
 
 
+# ---- the file ---------------------------------------------------------------------------
+
+
+def test_lanes_written_against_each_other_have_to_be_declared_two_way():
+    """Otherwise a file can have a two-way road nobody decided to lock as one, by a typo."""
+    with pytest.raises(SiteMapError, match="two_way"):
+        build({"a": (0, 0), "b": (1, 0)}, [("a", "b"), ("b", "a")])
+
+
 # ---- geometry ---------------------------------------------------------------------------
 
 

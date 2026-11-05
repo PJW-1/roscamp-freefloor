@@ -501,7 +501,8 @@ class SimWorld:
     # ---- invariants ---------------------------------------------------------------------
 
     def _check_releases(self, before):
-        """A zone only leaves its holder with the reported pose too far from it to touch."""
+        """A zone only leaves its holder with the reported pose 2r from the zone's centre lines:
+        a robot on those lines cannot touch it."""
         after = self.core.zones.snapshot()
         least = 2 * self.params.robot_radius_m
         for zone, old in before.items():

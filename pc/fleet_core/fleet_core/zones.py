@@ -66,14 +66,21 @@ class ZoneManager:
         return True
 
     def force_acquire(self, robot: str, zone: str) -> bool:
-        """Initial placement: take a free zone past the queue. Refused if someone holds it."""
-        holder = self._holder[zone]
-        if holder == robot:
+        """Initial placement: take a free zone past the queue.
+
+        Refused if someone holds it or a zone it is a conflict pair with.
+        """
+        if self._holder[zone] == robot:
             return True
-        if holder is not None:
+        if self.holders_around(zone, robot):
             return False
         self._grant(robot, zone)
         return True
+
+    def holders_around(self, zone: str, robot: str) -> dict[str, str]:
+        """Others holding this zone or a zone it is a conflict pair with: zone -> holder."""
+        return {z: self._holder[z] for z in (zone, *sorted(self._conflicts[zone]))
+                if self._holder[z] not in (None, robot)}
 
     def cancel_request(self, robot: str, zone: str) -> bool:
         queue = self._queue[zone]

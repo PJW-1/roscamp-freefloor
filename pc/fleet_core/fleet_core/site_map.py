@@ -134,6 +134,9 @@ class SiteMap:
 
         for lane in raw:
             add(_node_id(lane["from"]), _node_id(lane["to"]), lane.get("length"))
+        for a, b in lanes:
+            if (b, a) in lanes:
+                raise SiteMapError(f"lanes {a} to {b} and back must be one two_way entry")
         for name, (a, b) in two_way.items():
             self._known(a, f"two_way {name}")
             self._known(b, f"two_way {name}")

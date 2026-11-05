@@ -58,6 +58,14 @@ def test_force_acquire_places_a_robot_and_refuses_a_held_zone(zones):
     assert zones.holder("A") == "r1"
 
 
+def test_force_acquire_is_refused_across_a_conflict_pair():
+    zones = ZoneManager(["A", "B"], clock=lambda: 0.0, conflicts=[frozenset({"A", "B"})])
+    assert zones.force_acquire("r1", "A") is True
+    assert zones.force_acquire("r2", "B") is False
+    assert zones.holder("B") is None
+    assert zones.force_acquire("r1", "B") is True, "one robot may hold both"
+
+
 def test_force_acquire_takes_the_robot_out_of_the_queue(zones):
     zones.request("r1", "A")
     zones.request("r2", "A")

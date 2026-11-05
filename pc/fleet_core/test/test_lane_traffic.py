@@ -259,3 +259,20 @@ def test_recovery_on_a_node_is_not_thrown_by_a_noisy_report():
     core._finish_recovery(m)
     assert not m.fault
     assert m.path == ["P-5"]
+
+
+def test_a_robot_placed_across_a_conflict_pair_from_another_is_refused():
+    """Holding AVENUE and S together would let two robots drive through the crossing at once."""
+    site = load_site_map()
+    core = TrafficCore(site, load_params(), ["a", "b"], lambda: 0.0)
+    x, y = site.cell_pose("A")
+    core.on_robot_state("a", x, y, 0.0, "IDLE")
+    lane = site.lane("N", "S")
+    core.on_robot_state("b", lane.ax + lane.ux * 0.3, lane.ay + lane.uy * 0.3, 0.0, "IDLE")
+    assert core.zones.held_by("a") == ["AVENUE"]
+    assert core.zones.held_by("b") == []
+    assert core.robot_view("b")["fault"] == "ERROR"
+    events = [e for e in core.take_output() if e.code == "PLACEMENT_CONFLICT"]
+    assert len(events) == 1
+    assert "AVENUE" in events[0].detail and "a" in events[0].detail
+

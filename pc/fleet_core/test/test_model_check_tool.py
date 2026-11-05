@@ -111,6 +111,31 @@ def test_several_processes_give_the_same_answer(small_map, unbundled):
         unbundled.states, unbundled.deadlocks, unbundled.starved, unbundled.example)
 
 
+def test_with_three_reports_a_zone_is_freed_on_the_third(small_map):
+    model = model_check.Model(load_site_map(small_map), 1, start=["W"], confirm=3)
+    model.restore(model.initial)
+    model.apply(("send", "r1"))
+    model.apply(("pass", "r1"))
+    assert "W" in model.core.zones.held_by("r1")
+    model.apply(("report", "r1"))
+    assert "W" in model.core.zones.held_by("r1")
+    model.apply(("report", "r1"))
+    assert "W" not in model.core.zones.held_by("r1")
+
+
+def test_with_three_reports_the_same_way_still_ends_in_a_wait_cycle(small_map, unbundled):
+    """Searching all of it takes minutes, so that comparison is in the worklog."""
+    model = model_check.Model(load_site_map(small_map, bundle_two_way=False), 2, confirm=3)
+    model.restore(model.initial)
+    for step in unbundled.example:
+        kind, _, robot = step.rpartition(" ")
+        model.apply((kind, robot) if robot in model.names else (step,))
+        if kind in ("pass", "arrive"):
+            model.apply(("report", robot))
+            model.apply(("report", robot))
+    assert model.has_cycle()
+
+
 def test_a_state_limit_is_reported_as_an_incomplete_search(small_map):
     site = load_site_map(small_map, bundle_two_way=False)
     cut = model_check.check(site, robots=2, max_states=50)

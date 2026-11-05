@@ -15,21 +15,28 @@ step any one of these can happen, followed by one tick of the core:
     pass X          X reports it is past d along its lane
     arrive X        X finishes its move
     docked X        X finishes its dock
+    report X        one more report from X (only with --confirm above 1)
     nothing         only the tick
 
 A call that cannot change anything (a second dispatch, a release with nothing to release) is the
-same step as `nothing`, so it is left out. test_model_check_tool.py runs with them to show that.
+same step as `nothing`, so it is left out. test_model_check_tool.py compares the two on a small map.
 
 Output is (states, deadlocks, starved), and one shortest way into a deadlock.
   deadlock: a state with a wait cycle. The check does not go on from there, because time stands
-    still here and the retreat of the real core never comes.
+    still here and the retreat of the real core never comes. A later cancel could still undo one,
+    and it counts anyway.
   starved: (state, robot) pairs where the robot still has somewhere to drive and no sequence of
-    events other than a cancel ever gives it a move again. Every member of a deadlock counts.
+    events other than a cancel ever gives it a move again. Every member of a deadlock counts. Zero
+    means a way out always exists, not that every schedule takes it: an order of events that keeps
+    passing a robot over is not counted. Against that there is the FIFO in zones.py.
 
 What it does not cover: geometry beyond the lock rules, faults, timing and comm loss. A pose is
-only "on the node" or "just past d on the lane". A zone is released on the first report past it
-instead of the third, which cannot hide a cycle: a robot that has passed a zone and has not freed
-it yet is in no queue, so nothing it holds can be part of a wait cycle through it.
+only "on the node" or "just past d on the lane".
+
+By default a zone is freed on the first report past it, not the third. A robot that has passed a
+zone and not freed it yet is in no queue, so it should not be part of a wait cycle through that
+zone. That is an argument, and the default search does not prove it. --confirm 3 searches every
+order of those reports too, at the cost of many more states. The worklog has both where both ran.
 """
 from __future__ import annotations
 
@@ -56,13 +63,15 @@ from fleet_core.traffic_core import DOCK, MOVE, TrafficCore, _Dispatch, _Goal  #
 PAST = 0.01  # how far beyond d a robot reports when it passes
 NAMED = 100  # goal ids of named dispatches start here, so they never meet an open call's
 CHUNK = 500  # states per job when several processes work
+ROBOT_FIELDS = 12  # the length of the part of a state that describes one robot
 
 
 class Model:
     """One core, set to any stored state, so a step costs no copying of objects."""
 
-    def __init__(self, site, robots: int, start=None, params=None):
-        params = replace(params or load_params(), release_confirm_samples=1)
+    def __init__(self, site, robots: int, start=None, params=None, confirm: int = 1):
+        self.confirm = confirm
+        params = replace(params or load_params(), release_confirm_samples=confirm)
         self.site = site
         self.d = params.release_distance_m
         self.names = [f"r{i + 1}" for i in range(robots)]
@@ -82,8 +91,8 @@ class Model:
     def _all_events(self) -> list[tuple]:
         found = [("nothing",), ("open call",), ("cancel call",)]
         for name in self.names:
-            found += [(kind, name)
-                      for kind in ("send", "cancel", "release", "pass", "arrive", "docked")]
+            found += [(kind, name) for kind in ("send", "cancel", "release", "pass", "arrive",
+                                                "docked", "report")]
         return found
 
     def _conflict_groups(self) -> dict:
@@ -110,9 +119,12 @@ class Model:
                 target = m.goal.target_idx - first if m.goal.kind == MOVE else 0
                 goal = (m.goal.kind, target, m.goal.step)
             settle = None if m.settle_idx is None else m.settle_idx - first
+            counted = ()
+            if self.confirm > 1:
+                counted = tuple(sorted((z, min(n, self.confirm)) for z, n in m.outside.items()))
             robots.append((m.phase, tuple(m.path[first:]), m.idx - first, m.dest, goal, settle,
                            m.called, m.dispatch.station_id if m.dispatch else None, m.hold,
-                           m.await_pick, self.pose[name]))
+                           m.await_pick, self.pose[name], counted))
         zones = core.zones
         holders = tuple(sorted((z, h) for z, h in zones._holder.items() if h))
         requests = sorted(zones._arrived.items(), key=lambda item: item[1])
@@ -134,12 +146,12 @@ class Model:
         for number, name in enumerate(self.names):
             m = core._missions[name]
             (m.phase, path, m.idx, m.dest, goal, m.settle_idx, m.called, station, m.hold,
-             m.await_pick, self.pose[name]) = state[number]
+             m.await_pick, self.pose[name], counted) = state[number]
             m.path = list(path)
             m.goal = _Goal(goal[0], 1, goal[1], goal[2]) if goal else None
             m.dispatch = _Dispatch(NAMED + number, station) if station else None
             m.x, m.y = self.xy(self.pose[name])
-            m.outside = {}
+            m.outside = dict(counted)
             m.off_lane, m.off_lane_warned, m.wait_zone, m.attempts = 0, False, None, 0
         holders, queue = state[len(self.names)]
         zones = core.zones
@@ -170,9 +182,11 @@ class Model:
 
     # ---- events ---------------------------------------------------------------------------
 
-    def _tick(self) -> None:
+    def _tick(self, reporter: str | None = None) -> None:
+        """Everyone reports, or with several reports to count only the robot that moved."""
         core = self.core
-        for name in self.names:
+        reporters = self.names if self.confirm == 1 else [reporter] if reporter else []
+        for name in reporters:
             m = core._missions[name]
             core.on_robot_state(name, m.x, m.y, 0.0, "IDLE")
         core.tick()
@@ -200,6 +214,8 @@ class Model:
                 found.append(("arrive", name))
             elif m.goal and m.goal.kind == DOCK:
                 found.append(("docked", name))
+            if self.confirm > 1:
+                found.append(("report", name))
         return found
 
     @staticmethod
@@ -230,7 +246,7 @@ class Model:
             core.on_move_result(event[1], m.goal.id, True, "")
         elif kind == "docked":
             core.on_dock_result(event[1], core._missions[event[1]].goal.id, True)
-        self._tick()
+        self._tick(event[1] if kind in ("pass", "arrive", "report") else None)
 
     def expand(self, states: Iterable[tuple]) -> list:
         """For each state: None if it is a deadlock, otherwise (event code, successor) pairs."""
@@ -277,9 +293,9 @@ def _is_cancel(event: tuple) -> bool:
 _worker_model: Model | None = None
 
 
-def _start_worker(model_class, site, robots, start, params) -> None:
+def _start_worker(model_class, site, robots, start, params, confirm) -> None:
     global _worker_model
-    _worker_model = model_class(site, robots, start, params)
+    _worker_model = model_class(site, robots, start, params, confirm)
 
 
 def _work(states: list) -> list:
@@ -341,8 +357,9 @@ class _Store:
 
 
 def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, workers: int = 1,
-          progress=None, model_class=Model, stop_at_first: bool = False) -> Result:
-    model = model_class(site, robots, start, params)
+          progress=None, model_class=Model, stop_at_first: bool = False,
+          confirm: int = 1) -> Result:
+    model = model_class(site, robots, start, params, confirm)
     store = _Store(robots)
     store.add(model.initial)
     parents = array("I", [0])
@@ -355,7 +372,7 @@ def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, w
     pool = None
     if workers > 1:
         pool = multiprocessing.get_context("fork").Pool(
-            workers, _start_worker, (model_class, site, robots, start, params))
+            workers, _start_worker, (model_class, site, robots, start, params, confirm))
     try:
         while frontier:
             if max_states and len(store) >= max_states:
@@ -390,7 +407,7 @@ def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, w
             pool.terminate()
     starved = _count_starved(store, robots, edges_from, edges_to) if complete else -1
     example = _way_to(dead, parents, parent_events, model.event_list)
-    robot_parts = sum(1 for part in store.parts if len(part) == 11)
+    robot_parts = sum(1 for part in store.parts if len(part) == ROBOT_FIELDS)
     return Result(len(store), len(dead), starved, example, complete, robot_parts)
 
 
@@ -399,7 +416,7 @@ def _count_starved(store: _Store, robots: int, edges_from, edges_to) -> int:
     wants = np.zeros(len(store.parts), dtype=bool)
     drives = np.zeros(len(store.parts), dtype=bool)
     for number, part in enumerate(store.parts):
-        if len(part) == 11:
+        if len(part) == ROBOT_FIELDS:
             phase, path, idx, _, goal, settle, *_ = part
             drives[number] = goal is not None
             wants[number] = phase.startswith("TO_") and (
@@ -442,6 +459,8 @@ def main() -> int:
     parser.add_argument("--stop-at-first", action="store_true",
                         help="stop at the first level with a deadlock, for a map too big to finish")
     parser.add_argument("--workers", type=int, default=1, help="processes working on the states")
+    parser.add_argument("--confirm", type=int, default=1,
+                        help="reports past a zone that free it. The real core takes 3")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -453,7 +472,8 @@ def main() -> int:
         print(f"  {known} known, {frontier} to do, {dead} deadlocks", file=sys.stderr, flush=True)
 
     result = check(site, args.robots, start, max_states=args.max_states, workers=args.workers,
-                   progress=None if args.quiet else show, stop_at_first=args.stop_at_first)
+                   progress=None if args.quiet else show, stop_at_first=args.stop_at_first,
+                   confirm=args.confirm)
     if args.json:
         print(json.dumps(vars(result)))
         return 0

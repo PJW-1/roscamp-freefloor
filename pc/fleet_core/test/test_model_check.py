@@ -17,6 +17,7 @@ import itertools
 from collections import defaultdict
 
 import pytest
+from fleet_core.site_map import load_site_map
 from grid_map import grid_site
 
 ROBOTS = 3
@@ -25,6 +26,7 @@ WORK, OUTBOUND = (5, 3), (9, 3)
 # Sanity control: the return drives back along the outbound lane, so two robots can meet
 # head-on. The checker must report deadlocks here or "none" for the design means nothing.
 CONTROL = (33480, 66, 8304)  # measured
+CLEARANCE, RELEASE = 0.16, 0.2  # 2r and d
 
 
 def design_graph(site):
@@ -50,17 +52,41 @@ def head_on_graph(site):
     return succ
 
 
-def check(site, succ, robots=ROBOTS):
+def route_graph(site):
+    """A node is (node, stop). Between stops a robot keeps to the route the planner gives it,
+    so unlike design_graph it cannot dodge a robot coming the other way. At a stop it can be sent
+    to any other."""
+    stops = {name: station.dock for name, station in site.stations.items()}
+    stops["PARK"] = site.parking[-1]
+    free_to_turn = set(stops.values()) | set(site.parking)
+    succ = defaultdict(set)
+    for node in site.zone_of:
+        for name, goal in stops.items():
+            if node != goal:
+                succ[(node, name)].add((site.plan(node, goal)[1], name))
+            if node in free_to_turn:
+                succ[(node, name)].update((node, other) for other in stops if other != name)
+    return succ
+
+
+def check(site, succ, robots=ROBOTS, conflicts=()):
     """Return (states, deadlocks, starved robot states) over every placement."""
     zone_of = site.zone_of
     nodes = set(succ) | {v for vs in succ.values() for v in vs}
-    single = [(n,) for n in sorted(nodes)]
-    single += [(u, v) for u in sorted(succ) for v in sorted(succ[u])]
+    single = [(n,) for n in sorted(nodes, key=str)]
+    single += [(u, v) for u in sorted(succ, key=str) for v in sorted(succ[u], key=str)]
+    near = defaultdict(set)  # a zone and the zones it is a conflict pair with
+    for pair in conflicts:
+        one, other = tuple(pair)
+        near[one].add(other)
+        near[other].add(one)
     held = {s: frozenset(zone_of[n[0]] for n in s) for s in single}
+    blocks = {s: held[s].union(*(near[z] for z in held[s])) for s in single}
 
     states = [
         combo for combo in itertools.product(single, repeat=robots)
-        if all(held[a].isdisjoint(held[b]) for a, b in itertools.combinations(combo, 2))
+        if all(blocks[a].isdisjoint(held[b]) and blocks[b].isdisjoint(held[a])
+               for a, b in itertools.combinations(combo, 2))
     ]
 
     forward = {}
@@ -71,7 +97,7 @@ def check(site, succ, robots=ROBOTS):
             if len(me) == 2:  # in transit: leaving the old cell needs no permission
                 per_robot.append([state[:i] + ((me[1],),) + state[i + 1:]])
                 continue
-            busy = set().union(*(held[s] for j, s in enumerate(state) if j != i))
+            busy = set().union(*(blocks[s] for j, s in enumerate(state) if j != i))
             per_robot.append([
                 state[:i] + ((me[0], v),) + state[i + 1:]
                 for v in succ.get(me[0], ()) if zone_of[v[0]] not in busy
@@ -129,3 +155,32 @@ def test_frozen_robot_table(site):
     assert set(rows[True]) == set(site.parking), "only a waiting cell leaves the loop free"
     assert len(rows[True]) == 6
     assert len(rows[False]) == len(site.zone_of) - 6
+
+
+# ---- the default map --------------------------------------------------------------------
+#
+# Only the lock graph and the routes the planner gives. tools/model_check.py drives the real core
+# on this map over every order of calls, and is too slow to run here with three robots.
+
+
+def _pairs(site):
+    return site.conflict_pairs(CLEARANCE, RELEASE)
+
+
+def test_default_map_any_lane_at_any_time_has_no_deadlock_and_no_starvation():
+    site = load_site_map()
+    assert _pairs(site) == {frozenset({"AVENUE", "S"})}
+    _, deadlocks, starved = check(site, design_graph(site), conflicts=_pairs(site))
+    assert (deadlocks, starved) == (0, 0)
+
+
+def test_default_map_with_routes_kept_has_no_deadlock_and_no_starvation():
+    site = load_site_map()
+    _, deadlocks, starved = check(site, route_graph(site), robots=2, conflicts=_pairs(site))
+    assert (deadlocks, starved) == (0, 0)
+
+
+def test_default_map_with_routes_kept_starves_robots_when_the_avenue_is_not_one_lock():
+    site = load_site_map(bundle_two_way=False)
+    _, _, starved = check(site, route_graph(site), robots=2, conflicts=_pairs(site))
+    assert starved > 0, "a checker that finds nothing here proves nothing about the bundle"
