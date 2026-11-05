@@ -86,7 +86,8 @@ class Probe(Node):
 
     def _on_goals(self, robot, msg) -> None:
         if msg.status_list:
-            self.last_goal[robot] = max(msg.status_list, key=_accepted_at).status
+            # Reversed: of two goals in one clock step, the later one in the list counts.
+            self.last_goal[robot] = max(reversed(msg.status_list), key=_accepted_at).status
 
     def moving(self) -> list[str]:
         """Who says it is moving. A robot that has gone silent says nothing."""
@@ -170,9 +171,9 @@ def test_robots_stop_without_the_fms_and_a_new_one_waits_for_all_of_them(probe, 
         print(f"robots moved for this long after the kill: {took}")
         assert all(t <= timeout_s + SLACK_S for t in took.values()), took
         # Nobody got there by itself: every one of them had its goal ended short of the target.
+        assert wait_for(lambda: all(probe.last_goal.get(r) == GoalStatus.STATUS_ABORTED
+                                    for r in ROBOTS), 10), probe.last_goal
         print(f"last goal of each: {probe.last_goal}")
-        assert all(probe.last_goal.get(r) == GoalStatus.STATUS_ABORTED
-                   for r in ROBOTS), probe.last_goal
         assert not probe.moving(), probe.state
 
         # One report before the silence and the new FMS would call it a comm loss instead.

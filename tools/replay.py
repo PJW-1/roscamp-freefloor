@@ -17,9 +17,9 @@ followed by what it caused. `inside` is what the two cores said to each other an
 to ROS. The clock is `t`: a core reads one time for the whole of one call, live as well.
 
 `"recorded": true` in the first line says the core itself wrote this, so what it caused is in the
-file and has to match. A record of inputs alone, as a converted bag would be, leaves that out: it
-just runs and reports what came out. Such a file needs its own `tick` lines, 10 a second by default
-on the real node, and its first line.
+file and has to match. A record of inputs alone, as a converted bag would be, leaves that out and
+has no `inside` or `out` lines: it just runs and reports what came out. Such a file needs its own
+`tick` lines, 10 a second by default on the real node, and its first line.
 
 A record may end anywhere, even in the middle of a line, as one does when the process is killed.
 What it has is compared. Lines after the end can only be what its last input caused, and the
@@ -87,8 +87,15 @@ def _read(path) -> tuple[list[str], list[dict], bool]:
 
 
 def start_core(head: dict, clock) -> FmsCore:
+    missing = {"robots", "params", "map"} - set(head)
+    if missing:
+        raise ValueError(f"the first line has no {sorted(missing)}")
+    try:
+        params = FleetParams(**head["params"])
+    except TypeError as error:
+        raise ValueError(f"these parameters do not fit this code: {error}") from error
     site = SiteMap(yaml.safe_load(head["map"]), head["map"], head.get("bundle_two_way"))
-    return FmsCore(site, FleetParams(**head["params"]), head["robots"], clock)
+    return FmsCore(site, params, head["robots"], clock)
 
 
 def replay(path) -> Result:
@@ -107,7 +114,7 @@ def replay(path) -> Result:
             now[0] = entry["t"]
             getattr(core, entry["in"])(*_arguments(entry))
     counts = tuple(_count(produced, key) for key in ("in", "inside", "out"))
-    if not head.get("recorded"):
+    if not head.get("recorded") and not any("inside" in e or "out" in e for e in rest):
         return Result(*counts, False, True, cut_line=cut_line)
     for number, (old, new) in enumerate(zip(lines, produced, strict=False), start=1):
         if old != new:
@@ -123,7 +130,7 @@ def main() -> int:
     parser.add_argument("record", help="the JSONL file fms_node wrote with --record")
     try:
         result = replay(parser.parse_args().record)
-    except ValueError as error:
+    except (ValueError, OSError) as error:
         print(f"cannot play this back: {error}")
         return 2
     print(f"{result.inputs} inputs, {result.inside} inside calls, {result.commands} commands")
@@ -134,6 +141,8 @@ def main() -> int:
     elif result.same and result.uncompared:
         print(f"same as recorded, as far as it goes: {result.uncompared} lines past its end "
               "were not compared")
+    elif result.same and result.cut_line:
+        print("same as recorded, as far as it goes")
     elif result.same:
         print("same as recorded")
     else:

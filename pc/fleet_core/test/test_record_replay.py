@@ -171,7 +171,9 @@ def test_half_a_line_at_the_end_is_left_out(run, tmp_path):
     copy.write_text(text[:-5], encoding="utf-8")
     result = replay.replay(copy)
     assert result.same and result.cut_line
-    assert "the last line was cut off" in run_tool(copy).stdout
+    out = run_tool(copy).stdout
+    assert "the last line was cut off" in out
+    assert "as far as it goes" in out
 
 
 def test_a_last_line_with_no_line_end_still_counts(run, tmp_path):
@@ -219,6 +221,50 @@ def test_a_record_that_lost_its_commands_does_not_pass_as_inputs_alone(run, tmp_
     copy.write_text("\n".join(only) + "\n", encoding="utf-8")
     result = replay.replay(copy)
     assert result.compared and not result.same
+
+
+def test_commands_in_the_file_are_compared_whatever_the_first_line_says(run, tmp_path):
+    lines = run[0].read_text(encoding="utf-8").splitlines()
+    head = json.loads(lines[0])
+    del head["recorded"]
+    lines[0] = json.dumps(head)
+    position = next(n for n, line in enumerate(lines) if '"out": "MoveCmd"' in line)
+    entry = json.loads(lines[position])
+    entry["x"] += 1.0
+    lines[position] = json.dumps(entry)
+    copy = tmp_path / "old.jsonl"
+    copy.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = replay.replay(copy)
+    assert result.compared and not result.same
+
+
+def test_a_file_that_is_not_there_is_refused(tmp_path):
+    done = run_tool(tmp_path / "gone.jsonl")
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "Traceback" not in done.stderr
+
+
+@pytest.mark.parametrize("head", [{}, {"robots": ["pinky1"], "map": "x"}])
+def test_a_first_line_that_lacks_something_is_refused(tmp_path, head):
+    copy = tmp_path / "head.jsonl"
+    copy.write_text(json.dumps(head) + '\n{"t": 0.0, "in": "tick", "args": []}\n', encoding="utf-8")
+    done = run_tool(copy)
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "first line" in done.stdout
+    assert "Traceback" not in done.stderr
+
+
+def test_parameters_this_code_does_not_know_are_refused(run, tmp_path):
+    lines = run[0].read_text(encoding="utf-8").splitlines()
+    head = json.loads(lines[0])
+    head["params"]["from_another_version"] = 1
+    lines[0] = json.dumps(head)
+    copy = tmp_path / "version.jsonl"
+    copy.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    done = run_tool(copy)
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "parameters" in done.stdout
+    assert "Traceback" not in done.stderr
 
 
 def test_a_record_has_to_start_before_the_first_input():
