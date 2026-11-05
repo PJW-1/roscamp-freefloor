@@ -1,0 +1,40 @@
+# arm1 fails on three fill attempts in a row, which uses up the retry limit: pinky1 goes to ERROR
+# at the workspace dock with its order bound. At 60 s the operator lifts it off the course and
+# confirm_clear puts the order back at the front.
+# pinky2 takes that order and at 68 s, in the middle of its fill, the operator lifts it off too.
+# The workcell needs cancel_seconds to stop and is busy until then, and pinky3 reaches the dock
+# about 3 s after the clear. The fleet manager must hold pinky3's goal until the canceled goal
+# has its result. A goal sent earlier would be rejected and show up as a third FILL_RETRY.
+# pinky3 then finishes everything.
+seed: 23
+speed_factor: 5.0
+timeout_s: 900
+stock: {arm1: {A: 6, B: 6}, arm2: {C: 6, D: 6}}
+orders:
+  - {at_s: 0, id: O-001, items: {A: 2, C: 2}}
+  - {at_s: 0, id: O-002, items: {B: 1, D: 1}}
+  - {at_s: 10, id: O-003, items: {A: 2}}
+  - {at_s: 20, id: O-004, items: {C: 1, D: 1}}
+robots:
+  pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0, cancel_seconds: 4.0}
+dock: {duration_s: 1.0, error_cm: 1.0}
+faults:
+  - {at_s: 0, arm: arm1, type: arm_fail, count: 3}
+  - {at_s: 60, robot: pinky1, type: operator_remove}
+  - {at_s: 68, robot: pinky2, type: operator_remove}
+expect:
+  all_orders_finished: true
+  orders_shipped: 4
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  events_include: [FILL_RETRY, FILL_FAILED, ZONES_CLEARED, ORDER_REQUEUED]
+  event_counts: {FILL_RETRY: 2, FILL_FAILED: 1, ZONES_CLEARED: 2, ORDER_REQUEUED: 2, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED}

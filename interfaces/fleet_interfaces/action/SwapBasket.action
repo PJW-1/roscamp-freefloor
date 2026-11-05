@@ -1,0 +1,14 @@
+# Take the full basket off the tray and put an empty one on. A retry after a partial swap
+# sets only the step that is still open.
+string order_id
+string robot_id
+string station_id
+bool take_full
+bool put_empty
+---
+bool success
+bool took_full
+bool put_empty_done
+string reason
+---
+string phase

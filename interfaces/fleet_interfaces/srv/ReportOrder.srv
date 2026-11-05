@@ -1,0 +1,12 @@
+string STATUS_SHIPPED="SHIPPED"
+string STATUS_PARTIAL="PARTIAL"
+string STATUS_HELD="HELD"
+
+string order_id
+string robot_id
+string status
+OrderItem[] placed
+OrderItem[] missing
+string detail
+---
+bool accepted

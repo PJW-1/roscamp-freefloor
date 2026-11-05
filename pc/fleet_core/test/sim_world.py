@@ -1,0 +1,551 @@
+"""Deterministic virtual warehouse that drives a FleetCore with a fake clock.
+
+Robots drive straight lines at their speed and report noisy poses. Docks take time, the fill
+server takes seconds per item and draws from a stock, the swap arm takes and puts baskets. A
+central stand-in keeps the order board and drops an order one step after its final report. A
+fault schedule injects comm loss, nav aborts, dock failures, stuck robots, failing and silent
+arms. Every step checks the safety invariants, so any test that runs the world tests them.
+"""
+from __future__ import annotations
+
+import itertools
+import math
+import random
+from dataclasses import dataclass, field
+
+from fleet_core.commands import (
+    HELD,
+    CancelCmd,
+    DockCmd,
+    EventOut,
+    FillCmd,
+    MoveCmd,
+    OrderRecord,
+    ReportOrderCmd,
+    SwapCmd,
+)
+from fleet_core.fleet import FleetCore
+from fleet_core.params import load_params
+from fleet_core.site_map import load_site_map
+
+DT = 0.1
+NAV_ABORT_AFTER_S = 0.5
+NAV_TIMEOUT_AFTER_S = 2.0
+LINE_TOLERANCE_M = 1e-6
+
+DEFAULT_ROBOTS = {
+    "pinky1": {"start": "P-6", "speed_mps": 0.20, "pose_noise_m": 0.03},
+    "pinky2": {"start": "P-5", "speed_mps": 0.18, "pose_noise_m": 0.03},
+    "pinky3": {"start": "P-4", "speed_mps": 0.20, "pose_noise_m": 0.03},
+}
+DEFAULT_STOCK = {"A": 20, "B": 20, "C": 20, "D": 20}
+
+
+def six_orders(at_s=0.0):
+    return [{"at_s": at_s, "id": f"O-{i:03d}", "items": {"AB"[i % 2]: 1, "CD"[i % 2]: 1}}
+            for i in range(1, 7)]
+
+
+@dataclass
+class VirtualRobot:
+    name: str
+    x: float
+    y: float
+    speed: float
+    noise: float
+    goal_id: int | None = None
+    goal_kind: str = ""  # move or dock
+    target: tuple[float, float] | None = None
+    goal_elapsed: float = 0.0
+    dock_left: float = 0.0
+    docked_at: str = ""
+    dock_station: str = ""
+    has_basket: bool = True
+    basket: dict = field(default_factory=dict)  # what is really in it
+    comm_up: bool = True
+    removed: bool = False
+    stuck: bool = False
+    nav_aborts: int = 0
+    dock_fails: int = 0
+
+
+@dataclass
+class ArmJob:
+    cmd: object
+    next_at: float
+    left: list = field(default_factory=list)  # fill: items still to try
+    placed: dict = field(default_factory=dict)
+    missing: dict = field(default_factory=dict)
+    fail_after: int | None = None  # fill: stop with a failure after placing this many
+    steps: list = field(default_factory=list)  # swap: "take", "put" still to do
+    took_full: bool = False
+    put_empty_done: bool = False
+    fail_after_take: bool = False  # swap: the put step fails
+    fail_now: bool = False  # swap: fails before doing anything
+    silent: bool = False  # never reports, and does not hear a cancel
+
+
+@dataclass
+class SimWorld:
+    seed: int = 7
+    orders: list = field(default_factory=six_orders)
+    stock: dict = field(default_factory=lambda: dict(DEFAULT_STOCK))
+    robots: dict = field(default_factory=lambda: dict(DEFAULT_ROBOTS))
+    faults: list = field(default_factory=list)
+    run_mode: str = "RUN"
+    arm_s_per_item: float = 2.0
+    swap_step_s: float = 2.0
+    dock_s: float = 2.0
+    params: object = None
+    gaussian_noise: bool = False  # unbounded noise, as a real localizer and the ROS fake give
+
+    def __post_init__(self):
+        self.t = 0.0
+        self.rng = random.Random(self.seed)
+        self.site = load_site_map()
+        self.params = self.params or load_params()
+        self.total_items = sum(self.stock.values())
+        self.shipped_items: dict[str, int] = {}
+        self.future_orders = sorted(self.orders, key=lambda o: o["at_s"])
+        self.registered: list[OrderRecord] = []
+        self.registration: list[str] = []
+        self.reports: list[ReportOrderCmd] = []
+        self._unprocessed_reports: list[ReportOrderCmd] = []
+        self.jobs: dict[str, ArmJob] = {}
+        self.arm_faults = {"fill_fail": [], "fill_silent": 0, "swap_fail": 0, "swap_partial": 0,
+                           "swap_silent": 0}
+        self.pending_faults = sorted(self.faults, key=lambda f: f["at_s"])
+        self.reported: dict[str, tuple[float, float]] = {}
+        self.virtual = {}
+        for name, spec in self.robots.items():
+            cell = spec.get("cell") or min(self.site.zones[spec["start"]])
+            x, y = self.site.cell_pose(cell)
+            self.virtual[name] = VirtualRobot(name, x, y, spec["speed_mps"], spec["pose_noise_m"])
+        self.core = FleetCore(self.site, self.params, list(self.robots), lambda: self.t)
+        self.events: list[EventOut] = []
+        self.commands: list[tuple[float, object]] = []
+        self.visits: list[tuple[float, str, tuple[int, int], str]] = []
+        self._last_cell: dict[str, tuple[int, int]] = {}
+        self._queued_results: list = []
+        self.min_true_release_distance = float("inf")
+
+    # ---- public helpers for tests -------------------------------------------------------
+
+    def step(self):
+        self.t = round(self.t + DT, 6)
+        self._fire_faults()
+        self._deliver_queued_results()
+        self._move_robots()
+        self._run_arms()
+        self._report_states()
+        self._central()
+        before = self.core.zones.snapshot()
+        out = self.core.tick()
+        self._check_releases(before)
+        for item in out:
+            self._apply(item)
+        self._check_invariants()
+
+    def run(self, seconds):
+        for _ in range(round(seconds / DT)):
+            self.step()
+
+    def run_until(self, predicate, timeout_s=1500.0):
+        """Step until the predicate holds. Returns False on timeout."""
+        for _ in range(round(timeout_s / DT)):
+            self.step()
+            if predicate():
+                return True
+        return False
+
+    def confirm_clear(self, robot, zone_ids, note="operator"):
+        """The operator physically removes the robot and clears its locks."""
+        self.virtual[robot].removed = True
+        return self.core.confirm_clear(robot, zone_ids, note)
+
+    def state(self, robot):
+        return self.core.robot_view(robot)["state"]
+
+    def all_parked(self, robots=None):
+        names = robots or list(self.robots)
+        return all(self.state(r) == "PARKED" for r in names)
+
+    def all_orders_final(self):
+        return not self.future_orders and not self.registered and not self._unprocessed_reports
+
+    def done(self):
+        return self.all_orders_final() and self.all_parked()
+
+    def report_statuses(self):
+        return {r.order_id: r.status for r in self.reports}
+
+    def bound_order(self):
+        """Order ids in ORDER_BOUND order, which every run must keep equal to registration."""
+        return [e.detail for e in self.events if e.code == "ORDER_BOUND"]
+
+    def shipped_order(self):
+        return [r.order_id for r in self.reports if r.status != HELD]
+
+    def event_codes(self, level=None):
+        return [e.code for e in self.events if level is None or e.level == level]
+
+    def commands_of(self, kind):
+        return [c for _, c in self.commands if isinstance(c, kind)]
+
+    # ---- faults -------------------------------------------------------------------------
+
+    def _fire_faults(self):
+        while self.pending_faults and self.pending_faults[0]["at_s"] <= self.t:
+            fault = self.pending_faults.pop(0)
+            kind = fault["type"]
+            robot = self.virtual.get(fault.get("robot", ""))
+            if kind == "comm_loss":
+                robot.comm_up = False
+                self.pending_faults.append({
+                    "at_s": self.t + fault["duration_s"], "type": "comm_back",
+                    "robot": robot.name})
+                self.pending_faults.sort(key=lambda f: f["at_s"])
+            elif kind == "comm_back":
+                robot.comm_up = True
+            elif kind == "nav_abort":
+                robot.nav_aborts = fault["count"]
+            elif kind == "dock_fail":
+                robot.dock_fails = fault["count"]
+            elif kind == "stuck":
+                robot.stuck = True
+            elif kind == "fill_fail":
+                self.arm_faults["fill_fail"] += [fault.get("place", 0)] * fault["count"]
+            elif kind in ("fill_silent", "swap_fail", "swap_partial", "swap_silent"):
+                self.arm_faults[kind] += fault.get("count", 1)
+            elif kind == "run_mode":
+                self.run_mode = fault["mode"]
+            else:
+                raise ValueError(kind)
+
+    # ---- central stand-in ----------------------------------------------------------------
+
+    def _central(self):
+        finals = {r.order_id for r in self._unprocessed_reports}
+        self._unprocessed_reports = []
+        self.registered = [o for o in self.registered if o.order_id not in finals]
+        while self.future_orders and self.future_orders[0]["at_s"] <= self.t:
+            order = self.future_orders.pop(0)
+            self.registered.append(OrderRecord(order["id"], dict(order["items"])))
+            self.registration.append(order["id"])
+        self.core.on_order_board(self.run_mode, list(self.registered))
+
+    # ---- physics ------------------------------------------------------------------------
+
+    def _deliver_queued_results(self):
+        queued, self._queued_results = self._queued_results, []
+        for robot, fn, args in queued:
+            if robot is None or self.virtual[robot].comm_up:  # an arm has its own link
+                fn(*args)
+
+    def _move_robots(self):
+        for r in self.virtual.values():
+            if r.removed or r.goal_id is None:
+                continue
+            r.goal_elapsed += DT
+            if r.goal_kind == "dock":
+                self._drive_dock(r)
+            else:
+                self._drive_move(r)
+
+    def _finish_goal(self, r, callback, *args):
+        goal_id = r.goal_id
+        r.goal_id = None
+        r.goal_kind = ""
+        r.target = None
+        if r.comm_up:
+            callback(r.name, goal_id, *args)
+
+    def _drive_move(self, r):
+        if r.stuck:
+            if r.goal_elapsed >= NAV_TIMEOUT_AFTER_S:
+                self._finish_goal(r, self.core.on_move_result, False, "TIMEOUT")
+            return
+        if r.nav_aborts > 0 and r.goal_elapsed >= NAV_ABORT_AFTER_S:
+            r.nav_aborts -= 1
+            self._finish_goal(r, self.core.on_move_result, False, "NAV_ABORTED")
+            return
+        dx, dy = r.target[0] - r.x, r.target[1] - r.y
+        dist = math.hypot(dx, dy)
+        step = r.speed * DT
+        if dist <= step:
+            r.x, r.y = r.target
+            self._finish_goal(r, self.core.on_move_result, True, "")
+        else:
+            r.x += dx / dist * step
+            r.y += dy / dist * step
+
+    def _drive_dock(self, r):
+        r.dock_left -= DT
+        if r.dock_left > 0:
+            return
+        if r.dock_fails > 0:
+            r.dock_fails -= 1
+            self._finish_goal(r, self.core.on_dock_result, False, 5.0, 5.0, 5.0)
+        else:
+            r.docked_at = r.dock_station
+            self._finish_goal(r, self.core.on_dock_result, True, 0.4, 0.3, 0.5)
+
+    def _run_arms(self):
+        for server, job in list(self.jobs.items()):
+            if self.t >= job.next_at:
+                if isinstance(job.cmd, FillCmd):
+                    self._run_fill(server, job)
+                else:
+                    self._run_swap(server, job)
+
+    def _run_fill(self, server, job):
+        robot = self.virtual[job.cmd.robot]
+        if job.fail_after is not None and sum(job.placed.values()) >= job.fail_after:
+            del self.jobs[server]
+            self.core.on_fill_result(job.cmd.goal_id, False, dict(job.placed), {}, "GRIPPER")
+            return
+        if job.left:
+            kind = job.left.pop(0)
+            if self.stock.get(kind, 0) > 0:
+                self.stock[kind] -= 1
+                robot.basket[kind] = robot.basket.get(kind, 0) + 1
+                job.placed[kind] = job.placed.get(kind, 0) + 1
+            else:
+                job.missing[kind] = job.missing.get(kind, 0) + 1
+            job.next_at = self.t + self.arm_s_per_item
+            return
+        del self.jobs[server]
+        if not job.silent:
+            self.core.on_fill_result(job.cmd.goal_id, True, dict(job.placed), dict(job.missing))
+
+    def _run_swap(self, server, job):
+        robot = self.virtual[job.cmd.robot]
+        if job.fail_now:
+            del self.jobs[server]
+            self.core.on_swap_result(job.cmd.goal_id, False, False, False, "GRIPPER")
+            return
+        if job.steps and job.steps[0] == "take":
+            job.steps.pop(0)
+            for kind, count in robot.basket.items():
+                self.shipped_items[kind] = self.shipped_items.get(kind, 0) + count
+            robot.basket = {}
+            robot.has_basket = False
+            job.took_full = True
+            job.next_at = self.t + self.swap_step_s
+            if job.fail_after_take:
+                del self.jobs[server]
+                self.core.on_swap_result(job.cmd.goal_id, False, True, False, "GRIPPER")
+            return
+        if job.steps:
+            job.steps.pop(0)
+            robot.has_basket = True
+            job.put_empty_done = True
+        del self.jobs[server]
+        if not job.silent:
+            self.core.on_swap_result(job.cmd.goal_id, True, job.took_full, job.put_empty_done)
+
+    def _report_states(self):
+        for r in self.virtual.values():
+            if r.removed or not r.comm_up:
+                continue
+            if self.gaussian_noise:
+                x = r.x + self.rng.gauss(0.0, r.noise)
+                y = r.y + self.rng.gauss(0.0, r.noise)
+            else:
+                x = r.x + self.rng.uniform(-r.noise, r.noise)
+                y = r.y + self.rng.uniform(-r.noise, r.noise)
+            self.reported[r.name] = (x, y)
+            self.core.on_robot_state(r.name, x, y, 0.0, "MOVING" if r.goal_id else "IDLE")
+
+    # ---- commands -----------------------------------------------------------------------
+
+    def _apply(self, item):
+        if isinstance(item, EventOut):
+            self.events.append(item)
+            return
+        self.commands.append((self.t, item))
+        if isinstance(item, ReportOrderCmd):
+            self._take_report(item)
+        elif isinstance(item, FillCmd):
+            self._start_fill(item)
+        elif isinstance(item, SwapCmd):
+            self._start_swap(item)
+        elif isinstance(item, MoveCmd):
+            self._start_move(item)
+        elif isinstance(item, DockCmd):
+            self._start_dock(item)
+        elif isinstance(item, CancelCmd):
+            self._cancel(item)
+        else:
+            raise AssertionError(f"unknown output {item!r}")
+
+    def _preempt(self, r):
+        """A running goal that gets replaced still reports back, as a ROS action would."""
+        if r.goal_id is None:
+            return
+        old = r.goal_id
+        if r.goal_kind == "move":
+            self._queued_results.append((r.name, self.core.on_move_result,
+                                         (r.name, old, False, "CANCELED")))
+        else:
+            self._queued_results.append((r.name, self.core.on_dock_result,
+                                         (r.name, old, False)))
+        r.goal_id = None
+
+    def _start_move(self, cmd):
+        r = self.virtual[cmd.robot]
+        if not r.comm_up or r.removed:
+            return
+        cell = next(c for c in self.site.zone_of if self.site.cell_id(c) == cmd.target_id)
+        zone = self.site.zone_of[cell]
+        assert zone in self.core.zones.held_by(cmd.robot), f"{cmd} targets an ungranted zone"
+        assert (cmd.x, cmd.y) == self.site.cell_pose(cell), f"{cmd} pose is not the cell centre"
+        off_axis = min(abs(cmd.x - r.x), abs(cmd.y - r.y))
+        assert off_axis < LINE_TOLERANCE_M, f"{cmd} from ({r.x}, {r.y}) leaves the lane"
+        self._preempt(r)
+        r.docked_at = ""
+        r.goal_id = cmd.goal_id
+        r.goal_kind = "move"
+        r.target = (cmd.x, cmd.y)
+        r.goal_elapsed = 0.0
+
+    def _start_dock(self, cmd):
+        r = self.virtual[cmd.robot]
+        if not r.comm_up or r.removed:
+            return
+        station = self.site.stations[cmd.dock_id]
+        assert self.site.nearest_cell(r.x, r.y) == station.dock, f"{cmd} away from the dock"
+        self._preempt(r)
+        r.goal_id = cmd.goal_id
+        r.goal_kind = "dock"
+        r.dock_left = self.dock_s
+        r.dock_station = cmd.dock_id
+
+    def _cancel(self, cmd):
+        if cmd.robot not in self.virtual:
+            self._cancel_arm(cmd)
+            return
+        r = self.virtual[cmd.robot]
+        if not r.comm_up or r.removed or r.goal_id != cmd.goal_id:
+            return
+        self._preempt(r)
+
+    def _cancel_arm(self, cmd):
+        job = self.jobs.get(cmd.robot)
+        if job is None or job.cmd.goal_id != cmd.goal_id or job.silent:
+            return
+        del self.jobs[cmd.robot]
+        if isinstance(job.cmd, FillCmd):
+            self._queued_results.append((None, self.core.on_fill_result, (
+                cmd.goal_id, False, dict(job.placed), {}, "CANCELED")))
+        else:
+            self._queued_results.append((None, self.core.on_swap_result, (
+                cmd.goal_id, False, job.took_full, job.put_empty_done, "CANCELED")))
+
+    def _start_fill(self, cmd):
+        station = self.site.stations[cmd.station_id]
+        assert station.action == "fill", f"{cmd} at a {station.action} station"
+        assert station.server not in self.jobs, f"{station.server} is busy"
+        r = self.virtual[cmd.robot]
+        assert r.docked_at == cmd.station_id, f"{cmd} but {cmd.robot} is at {r.docked_at!r}"
+        assert r.has_basket, f"{cmd} with no basket on the tray"
+        assert cmd.items and all(v > 0 for v in cmd.items.values()), f"{cmd} places nothing"
+        wanted = next(o for o in self.registered if o.order_id == cmd.order_id).items
+        still = {k: v - r.basket.get(k, 0) for k, v in wanted.items() if v > r.basket.get(k, 0)}
+        assert cmd.items == still, f"{cmd} but the basket still needs {still}"
+        count = sum(r.basket.values()) + sum(cmd.items.values())
+        assert count <= self.params.basket_capacity, f"{cmd} overfills the basket"
+        job = ArmJob(cmd, self.t + self.arm_s_per_item,
+                     left=[k for k, v in sorted(cmd.items.items()) for _ in range(v)])
+        if self.arm_faults["fill_fail"]:
+            job.fail_after = self.arm_faults["fill_fail"].pop(0)
+        if self.arm_faults["fill_silent"] > 0:
+            self.arm_faults["fill_silent"] -= 1
+            job.silent = True
+        self.jobs[station.server] = job
+
+    def _start_swap(self, cmd):
+        station = self.site.stations[cmd.station_id]
+        assert station.action == "swap", f"{cmd} at a {station.action} station"
+        assert cmd.arm == station.server
+        assert cmd.arm not in self.jobs, f"{cmd.arm} is busy"
+        r = self.virtual[cmd.robot]
+        assert r.docked_at == cmd.station_id, f"{cmd} but {cmd.robot} is at {r.docked_at!r}"
+        assert cmd.take_full == r.has_basket, f"{cmd} but has_basket is {r.has_basket}"
+        assert cmd.put_empty, f"{cmd} leaves the tray without a basket"
+        job = ArmJob(cmd, self.t + self.swap_step_s,
+                     steps=["take", "put"] if cmd.take_full else ["put"])
+        if self.arm_faults["swap_fail"] > 0:
+            self.arm_faults["swap_fail"] -= 1
+            job.fail_now = True
+        elif self.arm_faults["swap_partial"] > 0 and cmd.take_full:
+            self.arm_faults["swap_partial"] -= 1
+            job.fail_after_take = True
+        if self.arm_faults["swap_silent"] > 0:
+            self.arm_faults["swap_silent"] -= 1
+            job.silent = True
+        self.jobs[cmd.arm] = job
+
+    def _take_report(self, cmd):
+        assert cmd.order_id not in {r.order_id for r in self.reports}, f"{cmd} reported twice"
+        assert cmd.order_id in {o.order_id for o in self.registered}, f"{cmd} is not on the board"
+        self.reports.append(cmd)
+        self._unprocessed_reports.append(cmd)
+
+    # ---- invariants ---------------------------------------------------------------------
+
+    def _check_releases(self, before):
+        """A zone only leaves its holder with the reported pose outside it by the margin."""
+        after = self.core.zones.snapshot()
+        margin = self.params.release_margin
+        for zone, old in before.items():
+            holder = old["holder"]
+            if holder and after[zone]["holder"] != holder:
+                x, y = self.reported[holder]
+                dist = self.site.distance_to_zone(x, y, zone)
+                assert dist >= margin, f"{holder} released {zone} at distance {dist:.3f}"
+                true = self.virtual[holder]
+                self.min_true_release_distance = min(
+                    self.min_true_release_distance,
+                    self.site.distance_to_zone(true.x, true.y, zone))
+
+    def _physical_zone(self, r):
+        return self.site.zone_of[self.site.nearest_cell(r.x, r.y)]
+
+    def _check_invariants(self):
+        zones = self.core.zones
+        owners = {}
+        for name in self.robots:
+            held = zones.held_by(name)
+            assert len(held) == len(set(held))
+            for zone in held:
+                assert zone not in owners, f"{zone} has two holders: {owners[zone]} and {name}"
+                assert zones.holder(zone) == name
+                owners[zone] = name
+            assert len(held) <= 2, f"{name} holds {held}"
+        inside = {}
+        for r in self.virtual.values():
+            if r.removed:
+                continue
+            zone = self._physical_zone(r)
+            assert zone not in inside, f"{r.name} and {inside[zone]} are both in {zone} at {self.t}"
+            inside[zone] = r.name
+            assert owners.get(zone) == r.name, (
+                f"{r.name} is in {zone} held by {owners.get(zone)} at {self.t}")
+            cell = self.site.nearest_cell(r.x, r.y)
+            if self._last_cell.get(r.name) != cell:
+                self._last_cell[r.name] = cell
+                self.visits.append((self.t, r.name, cell, self.core.robot_view(r.name)["basket"]))
+        present = [r for r in self.virtual.values() if not r.removed]
+        for a, b in itertools.combinations(present, 2):
+            gap = math.hypot(a.x - b.x, a.y - b.y)
+            assert gap >= 2 * self.params.robot_radius_m, (
+                f"{a.name} and {b.name} touch at {self.t}: {gap:.3f} m")
+        in_baskets = sum(sum(r.basket.values()) for r in self.virtual.values())
+        left = sum(self.stock.values())
+        assert all(v >= 0 for v in self.stock.values())
+        assert left + in_baskets + sum(self.shipped_items.values()) == self.total_items, "item lost"
+        assert not (self.jobs.keys() - {s.server for s in self.site.stations.values()})
+        for r in present:
+            at_outbound = r.goal_kind == "" and r.docked_at == self.core._outbound
+            assert r.has_basket or at_outbound, f"{r.name} left the dock without a basket"

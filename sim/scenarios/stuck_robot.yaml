@@ -1,0 +1,39 @@
+# pinky1 freezes for good and goes silent at 50 s on the return lane (zone Z-R1), after it has
+# shipped O-001. The lane is a single loop, so the others back up behind it. pinky2 is already
+# docked at OUTBOUND and ships O-002, then waits at the dock for Z-R1 with an empty basket. pinky3
+# holds O-003 and waits for Z-OUT, so its full basket never leaves. Nothing else can ship:
+# two orders shipped, one stuck on a robot, three never bound. The fleet manager must warn
+# (COMM_LOST for pinky1, ZONE_WAIT_LONG for the two behind it) and keep the zones held.
+seed: 5
+speed_factor: 5.0
+timeout_s: 400
+stock: {arm1: {A: 6, B: 6}, arm2: {C: 6, D: 6}}
+orders:
+  - {at_s: 0, id: O-001, items: {A: 1, C: 1}}
+  - {at_s: 0, id: O-002, items: {B: 1, D: 1}}
+  - {at_s: 10, id: O-003, items: {A: 2}}
+  - {at_s: 20, id: O-004, items: {C: 1, D: 1, A: 1}}
+  - {at_s: 40, id: O-005, items: {B: 2, C: 2}}
+  - {at_s: 60, id: O-006, items: {D: 1}}
+robots:
+  pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults:
+  - {at_s: 50, robot: pinky1, type: stuck}
+expect:
+  all_orders_finished: false
+  orders_shipped: 2
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  events_include: [COMM_LOST, ZONE_WAIT_LONG]
+  event_counts: {COMM_LOST: 1, ZONE_WAIT_LONG: 2, ROBOT_NOT_REPORTING: 0}
+  timed_out: true
+  order_results: {O-001: SHIPPED, O-002: SHIPPED}

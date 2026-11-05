@@ -1,0 +1,5 @@
+# mode takes one of OrderBoard.MODE_*
+string mode
+---
+bool accepted
+string reason

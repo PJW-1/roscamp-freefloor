@@ -1,0 +1,37 @@
+# Single source of truth for names, types and QoS. Code looks entries up by `key`,
+# so renaming a topic or changing a QoS only needs an edit here. All values are a
+# draft until the team agrees; QoS depths need measuring on the real Wi-Fi.
+version: 0.2-gg-draft
+
+placeholders:
+  pinky: [pinky1, pinky2, pinky3]
+  arm: [arm1, arm2, arm3]
+
+qos_profiles:
+  STATE: {reliability: best_effort, durability: volatile, depth: 5}
+  LATCHED: {reliability: reliable, durability: transient_local, depth: 1}
+  EVENT: {reliability: reliable, durability: volatile, depth: 50}
+
+topics:
+  - {key: robot_state, name: "/{pinky}/state", type: fleet_interfaces/msg/RobotState, qos: STATE}
+  - {key: arm_state, name: "/{arm}/state", type: fleet_interfaces/msg/ArmState, qos: STATE}
+  - {key: vision_items, name: "/{arm}/vision/items", type: fleet_interfaces/msg/ItemArray, qos: LATCHED, instances: {arm: [arm1, arm2]}}
+  - {key: order_board, name: "/central/orders", type: fleet_interfaces/msg/OrderBoard, qos: LATCHED}
+  - {key: assignments, name: "/fleet/assignments", type: fleet_interfaces/msg/AssignmentArray, qos: LATCHED}
+  - {key: zones, name: "/fleet/zones", type: fleet_interfaces/msg/ZoneStateArray, qos: LATCHED}
+  - {key: events, name: "/central/events", type: fleet_interfaces/msg/FleetEvent, qos: EVENT}
+
+actions:
+  - {key: move_to, name: "/{pinky}/move_to", type: fleet_interfaces/action/MoveTo}
+  - {key: dock, name: "/{pinky}/dock", type: fleet_interfaces/action/Dock}
+  # One action for both workspace arms: the arm team decides how they share the basket space.
+  - {key: fill_basket, name: "/workcell/fill_basket", type: fleet_interfaces/action/FillBasket}
+  - {key: swap_basket, name: "/{arm}/swap_basket", type: fleet_interfaces/action/SwapBasket, instances: {arm: [arm3]}}
+  # Only exists on real robots, so the fake-robot check skips it.
+  - {key: navigate_to_pose, name: "/{pinky}/navigate_to_pose", type: nav2_msgs/action/NavigateToPose, real_only: true}
+
+services:
+  - {key: set_run_mode, name: "/central/set_run_mode", type: fleet_interfaces/srv/SetRunMode}
+  - {key: submit_order, name: "/central/submit_order", type: fleet_interfaces/srv/SubmitOrder}
+  - {key: report_order, name: "/central/report_order", type: fleet_interfaces/srv/ReportOrder}
+  - {key: confirm_clear, name: "/fleet/confirm_clear", type: fleet_interfaces/srv/ConfirmClear}

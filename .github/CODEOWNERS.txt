@@ -1,0 +1,13 @@
+# Replace <...> with GitHub accounts when the team agrees on owners.
+# *                          <central>
+# /pc/central/               <central>
+# /pc/fleet_core/            <fleet>
+# /pc/fleet_manager/         <fleet>
+# /sim/                      <fleet>
+# /pinky/pinky_fsm/          <pinky-control>
+# /pinky/pinky_dock/         <pinky-control>
+# /pinky/pinky_nav_config/   <slam-nav2>
+# /arm/arm_control/          <arm-control>   (the /workcell/fill_basket and /arm3/swap_basket servers)
+# /sim/fake_robots/fake_robots/fake_workcell_node.py  <arm-control>
+# /arm/arm_vision/           <arm-vision>
+# /interfaces/               <fleet> <pinky-control> <central>

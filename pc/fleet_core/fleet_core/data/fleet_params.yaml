@@ -1,0 +1,21 @@
+# Policy values. Items marked estimate must be measured on the real course.
+basket_capacity: 4            # estimate: most items one basket holds, depends on the real basket
+ship_partial: true            # a basket with some items still goes out; an empty one stays
+robot_radius_m: 0.08          # estimate: Pinky body only, the tray behind it is not included yet
+release_margin_extra_m: 0.05  # estimate: added to the radius before a zone is released
+release_confirm_samples: 3    # consecutive reports outside the margin before a release
+move_retry_limit: 2           # retries after the first failure, three attempts in total
+startup_wait_s: 10.0          # alert if a robot has not reported by then
+comm_timeout_s: 3.0           # estimate
+recover_check_s: 1.0          # estimate
+arm_cancel_wait_s: 5.0        # estimate
+arm_retry_wait_s: 2.0         # estimate
+fill_timeout_s: 90.0          # estimate: two arms filling one basket
+swap_timeout_s: 60.0          # estimate: arm3 taking the full basket and placing an empty one
+zone_wait_warn_s: 60.0        # warn when a robot has waited this long for one zone
+deadlock_grace_s: 5.0         # wait before the second deadlock step
+score_same_call: -4.0         # a robot already called keeps the call unless another is clearly closer
+score_distance_weight: 0.3    # per cell along the one-way lanes
+priority_at_station: 200
+priority_has_cargo: 100
+commit_zone: Q-WORK-2         # a robot heading to the workspace keeps going once it holds this zone

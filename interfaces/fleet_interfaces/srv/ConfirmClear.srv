@@ -1,0 +1,6 @@
+string robot_id
+string[] zone_ids
+string note
+---
+bool accepted
+string[] released_zones

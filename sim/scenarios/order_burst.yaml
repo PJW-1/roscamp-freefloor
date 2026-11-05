@@ -1,0 +1,43 @@
+# Eight orders at once and two more while they are being worked on. With orders queued a robot
+# leaving the outbound zone has to go straight back to the workspace, not through the waiting
+# loop: direct_returns_min counts those laps and parked_while_backlog counts the opposite.
+# The first three orders are taken by robots coming from the waiting cells. Orders stay queued
+# until the last two are bound, so each of the other seven must come from a direct lap.
+seed: 11
+speed_factor: 5.0
+timeout_s: 1200
+stock: {arm1: {A: 12, B: 12}, arm2: {C: 12, D: 12}}
+orders:
+  - {at_s: 0, id: O-001, items: {A: 1, C: 1}}
+  - {at_s: 0, id: O-002, items: {B: 1, D: 1}}
+  - {at_s: 0, id: O-003, items: {A: 2}}
+  - {at_s: 0, id: O-004, items: {C: 2}}
+  - {at_s: 0, id: O-005, items: {A: 1, B: 1, C: 1, D: 1}}
+  - {at_s: 0, id: O-006, items: {D: 1}}
+  - {at_s: 0, id: O-007, items: {B: 2, D: 1}}
+  - {at_s: 0, id: O-008, items: {A: 1}}
+  - {at_s: 120, id: O-009, items: {C: 1, B: 1}}
+  - {at_s: 120, id: O-010, items: {D: 2}}
+robots:
+  pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 10
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  direct_returns_min: 7
+  parked_while_backlog: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED]
+  event_counts: {ORDER_BOUND: 10, COMM_LOST: 0, GOAL_RETRY: 0, ZONE_WAIT_LONG: 0, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED,
+                  O-006: SHIPPED, O-007: SHIPPED, O-008: SHIPPED, O-009: SHIPPED, O-010: SHIPPED}

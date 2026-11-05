@@ -1,0 +1,17 @@
+# Put these items into the basket on this robot's tray. On a retry `items` holds only what is
+# still missing. How arm1 and arm2 share the basket space is up to the server.
+string order_id
+string robot_id
+string station_id
+OrderItem[] items
+---
+# success=true means the server finished trying, even if `missing` is not empty.
+# success=false means the arms failed; `placed` is what is really in the basket so far.
+bool success
+OrderItem[] placed
+OrderItem[] missing
+string reason
+---
+string arm_id
+string phase
+int32 placed_total

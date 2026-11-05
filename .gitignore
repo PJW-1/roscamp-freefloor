@@ -1,0 +1,13 @@
+build/
+install/
+log/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.claude/
+*.bag
+*.db3
+*.mcap
+*.pt
+*.onnx

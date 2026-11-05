@@ -1,0 +1,53 @@
+# GG course map: waiting zone -> workspace (two arms) -> outbound (one arm) -> workspace or waiting.
+# The workspace position is not decided, so this layout is a draft. Replace cell_size, origin
+# and cell_overrides after SLAM and measuring. The model test checks whatever is written here.
+grid: {cols: 12, rows: 7}
+cell_size_m: 0.33          # estimate: about 4 m wide course / 12 cells
+origin_m: [0.0, 0.0]       # map coordinate of the corner of cell (0, 0)
+cell_overrides: {}         # "8,2": [x_m, y_m] replaces a computed cell centre
+zone_polygons: {}          # "Z-O": [[x, y], ...] replaces the union of the zone's cells
+
+obstacles: [[3,1],[7,1],[7,3],[7,4],[6,6],[7,6]]
+# Keep-out cells around each arm base. A base must sit next to its dock: usable reach is
+# only about 20-25 cm, so the exact spot inside these cells has to be measured.
+arm_cells: [[4,1],[5,1],[4,2],[5,2],[4,4],[5,4],[4,5],[5,5],[10,3],[11,3],[10,4],[11,4]]
+
+# `server` is who answers the station's action. arm1 and arm2 work behind one fill action,
+# so how they share the basket space stays with the arm team.
+stations:
+  WORK:     {dock: [5,3], queue: [[4,3],[3,3]], server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: [9,3], queue: [[9,4],[9,5]], server: arm3, arms: [arm3], action: swap}
+
+# A flow is a one-way lane. A robot keeps its flow between docks, as in the model check.
+routes:
+  to_outbound: {flow: out, cells: [[5,3],[6,3],[6,4],[6,5],[7,5],[8,5],[9,5],[9,4],[9,3]]}
+  to_work: {flow: ret, cells: [[9,3],[9,2],[9,1],[9,0],[8,0],[7,0],[6,0],[5,0],[4,0],[3,0],[2,0],[2,1],[2,2],[2,3],[3,3],[4,3],[5,3]]}
+  waiting_loop: {flow: wait, cells: [[2,4],[2,5],[2,6],[3,6],[3,5],[3,4]]}
+
+# Flow changes that are allowed: leave the return lane into the waiting zone, and leave the
+# waiting zone onto the last stretch to the workspace. Nothing crosses, these only merge.
+links:
+  - {from: [2,3], from_flow: ret, to: [2,4], to_flow: wait}
+  - {from: [3,4], from_flow: wait, to: [3,3], to_flow: ret}
+
+# Waiting cells in driving order. A waiting robot goes to the deepest free cell, so the one
+# that arrived first is the first to leave.
+parking: [[2,4],[2,5],[2,6],[3,6],[3,5],[3,4]]
+
+zones:
+  Z-WORK: [[5,3],[6,3]]
+  Z-O: [[6,4],[6,5],[7,5],[8,5]]
+  Q-OUT-2: [[9,5]]
+  Q-OUT-1: [[9,4]]
+  Z-OUT: [[9,3],[9,2]]
+  Z-R1: [[9,1],[9,0],[8,0],[7,0],[6,0]]
+  Z-R2: [[5,0],[4,0],[3,0],[2,0]]
+  Z-R3: [[2,1],[2,2],[2,3]]
+  Q-WORK-2: [[3,3]]
+  Q-WORK-1: [[4,3]]
+  P-1: [[2,4]]
+  P-2: [[2,5]]
+  P-3: [[2,6]]
+  P-4: [[3,6]]
+  P-5: [[3,5]]
+  P-6: [[3,4]]

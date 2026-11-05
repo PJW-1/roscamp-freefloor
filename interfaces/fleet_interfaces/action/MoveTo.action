@@ -1,0 +1,11 @@
+string target_id
+geometry_msgs/Pose2D target_pose
+---
+string REASON_NAV_ABORTED="NAV_ABORTED"
+string REASON_CANCELED="CANCELED"
+string REASON_TIMEOUT="TIMEOUT"
+
+bool success
+string reason
+---
+float32 distance_remaining

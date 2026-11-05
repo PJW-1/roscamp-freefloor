@@ -1,0 +1,5 @@
+repositories:
+  pinky_pro:
+    type: git
+    url: https://github.com/pinklab-art/pinky_pro.git
+    version: 014a09f289e6988894fbffde2624fdb1e257815b

@@ -1,0 +1,5 @@
+OrderItem[] items
+---
+bool accepted
+string order_id
+string reason

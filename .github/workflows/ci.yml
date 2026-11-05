@@ -1,0 +1,32 @@
+name: ci
+on: [pull_request]
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install pytest ruff pyyaml
+      - run: ruff check .
+      - run: PYTHONPATH=pc/fleet_core python -m pytest pc/fleet_core/test -q
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: src/roscamp-repo-2}
+      - uses: ros-tooling/setup-ros@v0.7
+        with: {required-ros-distributions: jazzy}
+      - shell: bash
+        run: |
+          set -e
+          source /opt/ros/jazzy/setup.bash
+          rosdep update
+          rosdep install --from-paths src --ignore-src -r -y \
+            --skip-keys "pinky_bringup pinky_navigation"
+          colcon build
+          source install/setup.bash
+          export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+          export ROS_DOMAIN_ID=44 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+          colcon test
+          colcon test-result --verbose

@@ -1,0 +1,43 @@
+# The record and the shelves disagree. D is out in both, so its orders end in OUT_OF_STOCK.
+# E and F are in the record but not on the shelves, so theirs end in STOCK_MISMATCH.
+#   O-001 all there                     SHIPPED
+#   O-002 A there, D out                PARTIAL  OUT_OF_STOCK
+#   O-003 only D                        HELD     OUT_OF_STOCK
+#   O-004 C there, E not on the shelf   PARTIAL  STOCK_MISMATCH
+#   O-005 only F                        HELD     STOCK_MISMATCH
+#   O-006 all there                     SHIPPED
+#   O-007 more than basket_capacity     HELD     the arms are not called, so nothing is missing
+seed: 17
+speed_factor: 5.0
+timeout_s: 900
+stock: {arm1: {A: 6, B: 6}, arm2: {C: 6}}
+inventory: {A: 6, B: 6, C: 6, D: 0, E: 3, F: 2}
+orders:
+  - {at_s: 0, id: O-001, items: {A: 1, C: 1}}
+  - {at_s: 0, id: O-002, items: {A: 1, D: 1}}
+  - {at_s: 0, id: O-003, items: {D: 2}}
+  - {at_s: 10, id: O-004, items: {C: 1, E: 1}}
+  - {at_s: 20, id: O-005, items: {F: 1}}
+  - {at_s: 30, id: O-006, items: {B: 2}}
+  - {at_s: 40, id: O-007, items: {A: 5}}
+robots:
+  pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 2
+  orders_partial: 2
+  orders_held: 3
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  events_include: [ORDER_PARTIAL, ORDER_HELD, OUT_OF_STOCK, STOCK_MISMATCH]
+  event_counts: {OUT_OF_STOCK: 2, STOCK_MISMATCH: 2, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: PARTIAL, O-003: HELD, O-004: PARTIAL, O-005: HELD,
+                  O-006: SHIPPED, O-007: HELD}
