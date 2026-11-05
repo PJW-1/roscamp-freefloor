@@ -15,6 +15,7 @@
 | `pc/fleet_manager` | `fleet_core`를 ROS에 연결하는 노드 | 동작 |
 | `sim/fake_robots`, `sim/scenarios` | 가짜 핑키, 작업공간 서버, 출고 팔, 비전, 중앙, 시계, 심판 노드와 시나리오 | 동작 |
 | `sim/maps` | 비교용 일방통행 지도 2개. 기본 지도는 `pc/fleet_core/fleet_core/data/site_map.yaml` | 동작 |
+| `tools` | 전수 검사(`model_check.py`), 격자 지도 변환(`convert_grid_map.py`) | 동작 |
 | `bringup/iponic_bringup` | `pc.launch.py` | 동작 |
 | `scripts/check_interfaces.py` | 실행 중인 시스템을 `contract.yaml`과 비교 | 동작 |
 | `pc/central`, `pinky/*`, `arm/*` | 담당자가 채울 빈 패키지 | 비어 있음 |
