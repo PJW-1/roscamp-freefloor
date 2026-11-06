@@ -88,6 +88,10 @@ def robot_report(msg) -> tuple[float, float, float, str, float]:
     return msg.pose.x, msg.pose.y, msg.pose.theta, msg.state, msg.battery
 
 
+def robot_report_id(msg) -> str:
+    return msg.robot_id
+
+
 def goal_result(response):
     """끝난 goal의 결과. 서버가 상태만으로 종료 사유를 알릴 수 있다."""
     result = response.result
@@ -117,9 +121,10 @@ def confirm_clear_args(request) -> tuple[str, list[str], str]:
     return request.robot_id, list(request.zone_ids), request.note
 
 
-def confirm_clear_response(response, released: list[str] | None):
+def confirm_clear_response(response, released: list[str] | None, reason: str = ""):
     response.accepted = released is not None
     response.released_zones = list(released or [])
+    response.reason = "" if released is not None else str(reason)  # 제안(팀 합의 전)
     return response
 
 
@@ -127,8 +132,17 @@ def order_board_mode(msg: OrderBoard) -> str:
     return msg.run_mode
 
 
+def _board_items(items) -> dict[str, int]:
+    """종류별로 합친다. 0 이하 개수가 하나라도 있으면 그 값을 남겨 검사가 보게 한다."""
+    counts = from_order_items(items)
+    for item in items:
+        if int(item.count) <= 0:
+            counts[item.kind] = min(int(item.count), counts[item.kind])
+    return counts
+
+
 def order_board_orders(msg: OrderBoard) -> list[OrderRecord]:
-    return [OrderRecord(o.order_id, from_order_items(o.items)) for o in msg.orders]
+    return [OrderRecord(o.order_id, _board_items(o.items)) for o in msg.orders]
 
 
 def move_goal(cmd) -> MoveTo.Goal:

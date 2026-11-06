@@ -207,6 +207,12 @@ class LaneMap:
     def waypoint_pose(self, waypoint) -> tuple[float, float]:
         return self._pose[waypoint]
 
+    def bounds(self) -> tuple[float, float, float, float]:
+        """모든 웨이포인트의 min_x, min_y, max_x, max_y."""
+        xs = [x for x, _ in self._pose.values()]
+        ys = [y for _, y in self._pose.values()]
+        return min(xs), min(ys), max(xs), max(ys)
+
     def waypoint_id(self, waypoint) -> str:
         return f"c{waypoint[0]}_{waypoint[1]}" if isinstance(waypoint, tuple) else waypoint
 

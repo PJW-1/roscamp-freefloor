@@ -314,6 +314,32 @@ def test_a_zone_that_does_not_exist_is_refused_and_the_node_lives_on(graph):
     assert fms.core.traffic.robot_view("pinky1")["fault"] == ""
 
 
+def test_a_bad_clear_gives_a_reason_and_input_rejected_and_the_ticks_go_on(graph):
+    """11-06 1번: 응답에 거부 이유, 이벤트 한 번, 그 뒤에도 타이머와 주문이 돈다."""
+    fms = graph.fms
+    client = graph.create_client(ConfirmClear, fms.contract.name("confirm_clear"))
+    assert client.wait_for_service(timeout_sec=10.0)
+    assert wait_for(lambda: fms.core.traffic.robot_view("pinky1")["on_map"]), "never on the map"
+    graph.events.clear()
+    future = client.call_async(ConfirmClear.Request(
+        robot_id="pinky1", zone_ids=["NOPE"], note="typo"))
+    assert wait_for(future.done, 10.0), "no reply: the callback raised"
+    result = future.result()
+    assert not result.accepted and "NOPE" in result.reason
+    assert wait_for(lambda: any(e.code == "INPUT_REJECTED" for e in graph.events), 10.0)
+    rejected = [e for e in graph.events if e.code == "INPUT_REJECTED"]
+    assert len(rejected) == 1 and rejected[0].level == "WARN"
+    assert not any(e.code == "CLEAR_REFUSED" for e in graph.events)
+    # 노드가 살아 있다: /fleet/robots가 계속 나오고, 두 번째 호출에도 답하고, 주문이 끝난다
+    graph.status.clear()
+    assert wait_for(lambda: len(graph.status) >= 2, 10.0), "no /fleet/robots after the call"
+    second = client.call_async(ConfirmClear.Request(robot_id="pinky9", zone_ids=[], note="x"))
+    assert wait_for(second.done, 10.0)
+    assert not second.result().accepted and "pinky9" in second.result().reason
+    publish(graph, "RUN", {"A": 1, "C": 2})
+    assert wait_for(lambda: graph.reports), "the node stopped working orders"
+
+
 def test_an_event_is_logged_at_its_own_level(graph, monkeypatch):
     """rclpy는 한 호출 위치의 두 번째 심각도를 거부하므로 실제 로거를 먼저 부른다."""
     fms = graph.fms

@@ -225,3 +225,27 @@ def test_the_arm_actions_name_the_same_cancel_reason_the_core_looks_for():
     assert FillBasket.Result.REASON_CANCELED == CANCELED
     assert SwapBasket.Result.REASON_CANCELED == CANCELED
     assert MoveTo.Result.REASON_CANCELED == CANCELED
+
+
+# ---- 잘못된 입력(11-06 1번) ----
+
+
+def test_robot_report_id_is_read_separately():
+    assert adapters.robot_report_id(RobotState(robot_id="pinky2")) == "pinky2"
+
+
+def test_a_count_of_zero_or_less_is_not_hidden_by_adding_up():
+    """합치면 A: 2와 A: -1이 1이 되어 검사를 빠져나간다."""
+    board = OrderBoard(run_mode=OrderBoard.MODE_RUN, orders=[
+        Order(order_id="O-1", items=[OrderItem(kind="A", count=2), OrderItem(kind="A", count=-1)]),
+        Order(order_id="O-2", items=[OrderItem(kind="B", count=0)]),
+    ])
+    assert adapters.order_board_orders(board) == [
+        OrderRecord("O-1", {"A": -1}), OrderRecord("O-2", {"B": 0})]
+
+
+def test_a_refused_clear_carries_its_reason():
+    response = adapters.confirm_clear_response(ConfirmClear.Response(), None, "no such zone")
+    assert response.accepted is False and response.reason == "no such zone"
+    accepted = adapters.confirm_clear_response(ConfirmClear.Response(), ["P-6"], "")
+    assert accepted.accepted is True and accepted.reason == ""

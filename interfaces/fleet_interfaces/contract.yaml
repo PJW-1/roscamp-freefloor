@@ -38,4 +38,5 @@ services:
   - {key: set_run_mode, name: "/central/set_run_mode", type: fleet_interfaces/srv/SetRunMode}
   - {key: submit_order, name: "/central/submit_order", type: fleet_interfaces/srv/SubmitOrder}
   - {key: report_order, name: "/central/report_order", type: fleet_interfaces/srv/ReportOrder}
+  # 제안(팀 합의 전): 응답에 string reason(거부 이유)을 더했다. 이름과 기존 필드는 그대로다.
   - {key: confirm_clear, name: "/fleet/confirm_clear", type: fleet_interfaces/srv/ConfirmClear}

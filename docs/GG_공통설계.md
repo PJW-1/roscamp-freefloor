@@ -83,7 +83,8 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `COMM_RESTORED` | INFO | traffic | 보고가 돌아왔다. 위치를 확인하고 이어 간다 |
 | `ZONE_WAIT_LONG` | WARN | traffic | 구역 하나를 `zone_wait_warn_s` 넘게 기다린다 |
 | `ZONES_CLEARED` | INFO | traffic | `confirm_clear`로 잠금을 풀었다 |
-| `CLEAR_REFUSED` | WARN | traffic | `confirm_clear`를 거부했고 아무것도 바꾸지 않았다. 서비스 응답에는 이유를 담는 필드가 없으므로 이유를 여기에 적는다 |
+| `CLEAR_REFUSED` | WARN | traffic | 이름은 모두 맞는데 `confirm_clear`를 거부했고 아무것도 바꾸지 않았다(구역을 쥔 로봇인데 목록이 빔). 이유는 detail과 응답의 `reason`(제안, 4절)에 적는다 |
+| `INPUT_REJECTED` | WARN | FMS(`FleetManager`, confirm_clear는 traffic) | 바깥 입력을 거부하거나 버렸다. detail에 무엇을 왜. 대상: 모르는 로봇이나 구역의 `confirm_clear`(응답 `accepted=false`, `reason`), 모르는 로봇의 goal 결과, `/{pinky}/state`의 robot_id 불일치·유한하지 않은 pose·지도 밖(`input_pose_margin_m`) 보고, `/central/orders`의 틀린 run_mode(메시지를 버림)나 틀린 주문(run_mode는 적용, 주문은 이전 것 유지). 서비스는 호출마다 한 번, 토픽은 출처마다 한 번 내고 정상 메시지가 오면 다시 낸다. 늦게 온 결과의 모르는 goal ID는 정상이라 내지 않는다 |
 | `ZONES_STILL_HELD` | WARN | traffic | `confirm_clear` 뒤에도 그 로봇이 쥐고 있는 구역이 남았다. 다시 호출해야 풀린다 |
 | `LANE_ERROR` | WARN | traffic | 이동 목표 중에 레인에서 `lane_error_warn_m` 넘게 벗어난 보고가 `release_confirm_samples`번 이어졌다. 목표당 한 번 낸다. 해제를 막지는 않는다 |
 | `DEADLOCK_DETECTED` | ERROR | traffic | 대기 고리를 찾았다 |
@@ -139,6 +140,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `score_same_call` | -4 | 이미 호출된 로봇의 점수 보정. 다른 로봇이 뚜렷이 가깝지 않으면 호출을 유지한다 |
 | `score_distance_weight` | 0.91 | 레인을 따른 거리 1 m당 점수 |
 | `priority_at_station`, `priority_has_cargo` | 200, 100 | 교착 때 포기 대상을 고르는 우선순위. 스테이션에 서 있는지, 이름 지정 요청을 받았는지 |
+| `input_pose_margin_m` | 1.0 | 보고 위치가 웨이포인트들의 범위(최소·최대 x, y)에서 이보다 멀면 그 보고를 버리고 `INPUT_REJECTED`. 지시서의 "음수 좌표"를 지도 밖으로 넓혔다. 실제 지도 좌표는 음수일 수 있다 |
 
 지도 파일의 값: `half_width_m`(0.05, 레인에서 이만큼까지 레인 위로 친다. 추정), `lane_entry_m`(0.25), `bundle_two_way`(true, 양방향 구간을 잠금 하나로 묶는다).
 
@@ -195,7 +197,7 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `/central/events` FleetEvent 토픽: FMS와 central이 발행하고 source로 구분한다
 - `/fleet/assignments` AssignmentArray 토픽(항목마다 robot_id, order_id, station_id, task_type: TO_WORK/FILL/TO_OUTBOUND/SWAP/WAIT): FMS → central
 - `/fleet/zones` ZoneStateArray 토픽: FMS → central
-- `/fleet/confirm_clear` ConfirmClear 서비스: central(관리자) → FMS
+- `/fleet/confirm_clear` ConfirmClear 서비스: central(관리자) → FMS. 응답의 `string reason`은 11-06에 더한 제안(팀 합의 전, 0.3-draft)이다. 거부하면 이유, 받아들이면 빈 값. `accepted`, `released_zones`는 그대로다
 - `/{pinky}/state` 토픽, `/{pinky}/move_to`·`/{pinky}/dock` 액션: FMS ↔ 핑키. `move_to`는 레인 끝까지의 짧은 목표다(5절)
 - `/workcell/fill_basket` FillBasket 액션(items → placed, missing, success, reason): FMS → workcell. 팔 2대 배분과 조율은 workcell 내부 책임
 - `/arm3/swap_basket` SwapBasket 액션(take_full, put_empty → took_full, put_empty_done): FMS → arm3
@@ -246,7 +248,7 @@ orchestrator로 옮긴 것(5-1절): 주문 묶기, FILLING/SWAPPING, 팔 재시�
 
 STOP: 이동 목표를 취소한다. 열린 dispatch는 그대로 두고 RUN이면 이어서 간다. PAUSE: 진행 중인 이동은 끝내고 새 이동을 내지 않는다.
 
-confirm_clear 거부(`accepted=false`, `CLEAR_REFUSED`, 아무것도 바꾸지 않음): 없는 로봇, 목록에 없는 구역 이름이 하나라도 있을 때, 구역을 쥔 로봇인데 목록이 비었을 때. 구역을 쥐지 않은 로봇의 빈 목록은 정상이다. 쥔 구역의 일부만 보내면 관리자의 의도로 보고 받아들이되 `ZONES_STILL_HELD`로 알리고, 다시 호출하면 나머지가 풀린다. OUT_OF_SERVICE 로봇의 구역은 위치로 풀리지 않기 때문이다.
+confirm_clear 거부(`accepted=false`, `reason`에 이유, 아무것도 바꾸지 않음): 없는 로봇이나 목록에 없는 구역 이름이 하나라도 있으면 `INPUT_REJECTED`, 구역을 쥔 로봇인데 목록이 비었으면 `CLEAR_REFUSED`. 구역을 쥐지 않은 로봇의 빈 목록은 정상이다. 쥔 구역의 일부만 보내면 관리자의 의도로 보고 받아들이되 `ZONES_STILL_HELD`로 알리고, 다시 호출하면 나머지가 풀린다. OUT_OF_SERVICE 로봇의 구역은 위치로 풀리지 않기 때문이다.
 
 confirm_clear(관리자가 로봇을 치웠다): 구역 해제, OUT_OF_SERVICE, 이동 목표 취소. 그 로봇을 지정한 dispatch가 진행 중이면 실패(reason=ROBOT_REMOVED)로 돌려준다. 주문을 되돌리는 것은 orchestrator가 한다(`FleetManager`가 `on_robot_removed`를 부른다).
 
@@ -256,7 +258,7 @@ confirm_clear(관리자가 로봇을 치웠다): 구역 해제, OUT_OF_SERVICE, 
 
 도착 판정: 이동의 성공 결과가 와도 마지막 보고 위치가 목표 지점에서 `arrival_tolerance_m`보다 멀면 바로 도착으로 치지 않는다. 위치 보고는 결과보다 늦게 올 수 있으므로 `arrival_settle_s` 동안 새 목표를 내지 않고 기다린다. 그 안에 허용치 안의 위치가 보고되면 도착이고, 기한이 지나도 보고된 위치가 멀면 실패한 시도(`NOT_AT_TARGET`)로 친다. 처리는 실패한 이동과 같다. 로봇의 통신 상태가 `COMM_LOST`나 `RECOVERING`이면 위치가 오래된 것이고 복구가 위치를 다시 판단하므로 보지 않는다. 도킹 결과는 위치를 보지 않는다. 정지 오차가 이 값을 자주 넘는 로봇은 재시도를 다 써서 ERROR가 될 수 있으므로, 이 값은 실측한 정지 오차, ε, τ와 함께 정한다. 성공 뒤에 위치 보고가 하나도 오지 않았으면 기한이 지나도 판정하지 않고 기다린다. 그 위치는 성공 전의 것이라 아무것도 말해 주지 않기 때문이다. 보고가 끊긴 로봇은 `COMM_LOST`가 먼저 나고 복구가 위치를 판단한다. 기다리는 동안 새 이동 목표는 내지 않는다(2026-11-06 검토에서 추가). 정지 오차를 넣은 압박 시험은 작업 기록(11-05) 7번에 있고 이 판정을 넣기 전 결과다. 판정을 넣은 뒤의 `basic_orders` 결과는 `docs/worklog_2026-11-06.md`의 압박 시험 표에 있다.
 
-이벤트 코드(traffic, 뜻은 0절): `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_NOT_SENT`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `ZONES_STILL_HELD`, `LANE_ERROR`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
+이벤트 코드(traffic, 뜻은 0절): `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_NOT_SENT`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ZONES_STILL_HELD`, `LANE_ERROR`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
 
 `TrafficController` 공개 API:
 ```python

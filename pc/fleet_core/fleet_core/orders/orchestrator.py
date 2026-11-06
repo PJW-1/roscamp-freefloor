@@ -142,11 +142,13 @@ class OrderOrchestrator:
     def on_dispatch_result(self, goal_id, success, robot_id, reason="") -> None:
         if goal_id in self._open_calls:
             self._open_calls.remove(goal_id)
-            if success:
+            if success and robot_id in self._robots:
                 self._start_filling(self._robots[robot_id])
             self._sync_calls()
             return
-        r = self._robots[robot_id]
+        r = self._robots.get(robot_id)
+        if r is None:
+            return
         if r.outbound_goal == goal_id:
             r.outbound_goal = None
             if success:
@@ -185,7 +187,9 @@ class OrderOrchestrator:
 
     def on_robot_removed(self, robot) -> None:
         """운영자가 로봇을 뺐다. 주문은 등록 순서 자리로 돌아간다."""
-        r = self._robots[robot]
+        r = self._robots.get(robot)
+        if r is None:
+            return
         if r.arm:
             # 해제된 로봇에 팔이 한 일은 운영자가 센다. 늦은 결과가 뭔가 했으면 알린다.
             # 서버가 아직 멈추는 중이어도 다음 로봇 탓으로 치지 않는다.
@@ -227,7 +231,9 @@ class OrderOrchestrator:
 
     def step(self, robot) -> None:
         """교통이 넘겨준 로봇의 다음 일을 한다."""
-        r = self._robots[robot]
+        r = self._robots.get(robot)
+        if r is None:
+            return
         if r.stage == FILLING:
             self._step_filling(r)
         elif r.stage == SWAPPING:
@@ -238,11 +244,14 @@ class OrderOrchestrator:
         return out
 
     def order_of(self, robot) -> str:
-        order = self._robots[robot].order
-        return order.order_id if order else ""
+        r = self._robots.get(robot)
+        return r.order.order_id if r and r.order else ""
 
     def robot_view(self, robot) -> dict:
-        r = self._robots[robot]
+        """모르는 로봇이면 빈 dict."""
+        r = self._robots.get(robot)
+        if r is None:
+            return {}
         return {
             "stage": r.stage,
             "basket": r.basket,

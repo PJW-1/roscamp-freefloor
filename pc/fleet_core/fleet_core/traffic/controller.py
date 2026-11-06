@@ -89,11 +89,16 @@ class TrafficController(TrafficRecovery):
         self._startup_since: float | None = None
         self._missing_reported = False
         self._no_robot_warned = False
+        self.clear_reason = ""  # 마지막 confirm_clear 거부 이유, 받아들이면 빈 값
 
     # ---- inputs -------------------------------------------------------------------------
 
+    # 공개 메서드는 모르는 로봇 이름을 무시한다. INPUT_REJECTED는 FleetManager가 낸다.
+
     def on_robot_state(self, robot, x, y, yaw, state, battery=0.0) -> None:
-        m = self._missions[robot]
+        m = self._missions.get(robot)
+        if m is None:
+            return
         m.x, m.y, m.yaw, m.robot_state, m.battery = x, y, yaw, state, battery
         m.last_seen = self._clock()
         if m.arrival_by is not None:
@@ -121,7 +126,10 @@ class TrafficController(TrafficRecovery):
                 raise ValueError(f"only the fill station takes open calls, not {station_id}")
             self._open_calls.append(goal_id)
             return
-        m = self._missions[robot_id]
+        m = self._missions.get(robot_id)
+        if m is None:
+            self._out.append(DispatchResult(goal_id, False, robot_id, "NO_SUCH_ROBOT"))
+            return
         if not m.available:
             self._out.append(DispatchResult(goal_id, False, robot_id, "NOT_AVAILABLE"))
             return
@@ -151,16 +159,20 @@ class TrafficController(TrafficRecovery):
                 return
 
     def on_release(self, robot) -> None:
-        m = self._missions[robot]
+        m = self._missions.get(robot)
+        if m is None:
+            return
         m.hold = False
         m.await_pick = True
 
     def on_robot_fault(self, robot, reason="") -> None:
-        self._fail(self._missions[robot], reason)
+        m = self._missions.get(robot)
+        if m is not None:
+            self._fail(m, reason)
 
     def on_move_result(self, robot, goal_id, success, reason) -> None:
-        m = self._missions[robot]
-        goal = m.goal
+        m = self._missions.get(robot)
+        goal = m.goal if m else None
         if goal is None or goal.id != goal_id or goal.kind != MOVE:
             return
         m.goal = None
@@ -177,8 +189,8 @@ class TrafficController(TrafficRecovery):
             self._goal_failed(m, reason)
 
     def on_goal_rejected(self, robot, goal_id) -> None:
-        m = self._missions[robot]
-        goal = m.goal
+        m = self._missions.get(robot)
+        goal = m.goal if m else None
         if goal is None or goal.id != goal_id:
             return
         m.goal = None
@@ -189,8 +201,8 @@ class TrafficController(TrafficRecovery):
 
     def on_goal_not_sent(self, robot, goal_id) -> None:
         """액션 서버가 없어 goal이 나가지 않았다. 시도 횟수로 치지 않는다."""
-        m = self._missions[robot]
-        goal = m.goal
+        m = self._missions.get(robot)
+        goal = m.goal if m else None
         if goal is None or goal.id != goal_id:
             return
         m.goal = None
@@ -203,8 +215,8 @@ class TrafficController(TrafficRecovery):
 
     def on_dock_result(self, robot, goal_id, success, error_x_cm=0.0, error_y_cm=0.0,
                        error_yaw_deg=0.0) -> None:
-        m = self._missions[robot]
-        goal = m.goal
+        m = self._missions.get(robot)
+        goal = m.goal if m else None
         if goal is None or goal.id != goal_id or goal.kind != DOCK:
             return
         m.goal = None
@@ -235,7 +247,8 @@ class TrafficController(TrafficRecovery):
         return self._run_mode == RUN
 
     def available(self, robot) -> bool:
-        return self._missions[robot].available
+        m = self._missions.get(robot)
+        return m.available if m else False
 
     def tick(self) -> list:
         """한 주기 전체. 단계 사이에 할 일이 없는 호출자용."""
@@ -283,7 +296,9 @@ class TrafficController(TrafficRecovery):
 
     def step(self, robot) -> None:
         """현재 단계를 처리하고, 이어지는 단계도 바로 처리한다."""
-        m = self._missions[robot]
+        m = self._missions.get(robot)
+        if m is None:
+            return
         phase = None
         while m.phase != phase:
             phase = m.phase
@@ -300,7 +315,10 @@ class TrafficController(TrafficRecovery):
         ]
 
     def robot_view(self, robot) -> dict:
-        m = self._missions[robot]
+        """모르는 로봇이면 빈 dict."""
+        m = self._missions.get(robot)
+        if m is None:
+            return {}
         return {
             "state": m.state,
             "phase": m.phase,
@@ -318,7 +336,9 @@ class TrafficController(TrafficRecovery):
 
     def status_view(self, robot) -> dict:
         """/fleet/robots에 나가는 값 중 교통만 아는 것."""
-        m = self._missions[robot]
+        m = self._missions.get(robot)
+        if m is None:
+            return {}
         wait_zone = self.zones.waiting_for(robot) or ""
         in_the_way = self.zones.blockers(robot, wait_zone) if wait_zone else ()
         return {

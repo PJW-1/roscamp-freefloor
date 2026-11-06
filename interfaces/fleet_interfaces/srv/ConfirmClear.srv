@@ -4,3 +4,5 @@ string note
 ---
 bool accepted
 string[] released_zones
+# 제안(팀 합의 전, 0.3-draft): 거부 이유. 받아들이면 빈 값.
+string reason

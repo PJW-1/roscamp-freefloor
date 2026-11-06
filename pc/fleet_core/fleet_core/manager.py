@@ -3,6 +3,10 @@
 배차 API 밖으로 넘기는 것은 둘: run mode(STOP은 주문 없이 달리는 로봇도 세움)와 운영자의 로봇 제거.
 외부 호출은 모두 _input을 거친다. 호출 동안 시각을 하나로 고정하고, 기록 중이면 남겨
 ROS 없이 재생할 수 있다(형식은 tools/replay.py).
+
+밖에서 온 잘못된 입력은 기록한 뒤, 코어에 닿기 전에 여기서 거른다(common/validate.py).
+서비스는 거부, 토픽은 버리고 INPUT_REJECTED(WARN)를 낸다. 서비스는 호출마다 한 번,
+토픽은 출처마다 한 번 내고 정상 메시지가 오면 다시 무장한다.
 """
 from __future__ import annotations
 
@@ -15,12 +19,20 @@ from fleet_core.common.commands import (
     DispatchCmd,
     DispatchFeedback,
     DispatchResult,
+    EventOut,
     ReleaseCmd,
     RobotFaultCmd,
     RobotStatusView,
     ZoneView,
 )
+from fleet_core.common.validate import (
+    pose_problem,
+    reported_id_problem,
+    robot_problem,
+    run_mode_problem,
+)
 from fleet_core.orders.orchestrator import FILL, FILLING, SWAP, SWAPPING, OrderOrchestrator
+from fleet_core.orders.validate import orders_problem
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.mission import (
     AT_STATION,
@@ -46,6 +58,10 @@ class FleetManager:
         self._work = next(s.id for s in site.stations.values() if s.action == FILL)
         self._outbound = next(s.id for s in site.stations.values() if s.action == SWAP)
         self._out: list = []
+        self._bounds = site.bounds()
+        self._board: list = []  # 검사를 통과한 마지막 주문 목록
+        self._rejecting: set = set()  # 거부를 이미 알린 토픽 출처
+        self.last_clear_reason = ""
 
     @property
     def zones(self):
@@ -71,38 +87,63 @@ class FleetManager:
 
     # ---- inputs -------------------------------------------------------------------------
 
-    def on_robot_state(self, robot, x, y, yaw, state, battery=0.0) -> None:
-        self._input("on_robot_state", robot, x, y, yaw, state, battery)
+    def on_robot_state(self, robot, x, y, yaw, state, battery=0.0, robot_id="") -> None:
+        """robot은 토픽의 로봇, robot_id는 메시지에 적힌 이름(빈 값 가능)."""
+        # 받은 그대로 기록한다. robot_id가 없던 기록도 똑같이 읽힌다.
+        self._input("on_robot_state", robot, x, y, yaw, state, battery,
+                    *([robot_id] if robot_id else []))
+        problem = (robot_problem(robot, self.traffic.robots)
+                   or reported_id_problem(robot, robot_id)
+                   or pose_problem(x, y, yaw, self._bounds, self.params.input_pose_margin_m))
+        if self._topic_rejected(("robot_state", str(robot)), problem, "robot state dropped",
+                                robot):
+            return
         self.traffic.on_robot_state(robot, x, y, yaw, state, battery)
         self._pump()
 
     def on_order_board(self, run_mode, orders) -> None:
+        """run_mode가 틀리면 통째로 버린다. 주문이 틀리면 모드는 적용하고 주문은 전 것을 둔다.
+
+        틀린 주문 하나가 STOP을 막으면 안 되고, 하나만 빼면 철회로 보이기 때문이다.
+        """
         self._input("on_order_board", run_mode, orders)
+        mode_problem = run_mode_problem(run_mode)
+        if mode_problem:
+            self._topic_rejected(("order_board",), mode_problem, "order board dropped")
+            return
+        if not self._topic_rejected(("order_board",), orders_problem(orders),
+                                    f"run_mode {run_mode} taken, orders kept as they were"):
+            self._board = list(orders)
         self.traffic.on_run_mode(run_mode)
-        self.orchestrator.on_order_board(run_mode, orders)
+        self.orchestrator.on_order_board(run_mode, self._board)
         self._pump()
 
     def on_move_result(self, robot, goal_id, success, reason) -> None:
         self._input("on_move_result", robot, goal_id, success, reason)
-        self.traffic.on_move_result(robot, goal_id, success, reason)
-        self._pump()
+        if not self._robot_refused("move result", robot):
+            self.traffic.on_move_result(robot, goal_id, success, reason)
+            self._pump()
 
     def on_goal_rejected(self, robot, goal_id) -> None:
         self._input("on_goal_rejected", robot, goal_id)
-        self.traffic.on_goal_rejected(robot, goal_id)
-        self._pump()
+        if not self._robot_refused("goal rejection", robot):
+            self.traffic.on_goal_rejected(robot, goal_id)
+            self._pump()
 
     def on_goal_not_sent(self, robot, goal_id) -> None:
         self._input("on_goal_not_sent", robot, goal_id)
-        self.traffic.on_goal_not_sent(robot, goal_id)
-        self._pump()
+        if not self._robot_refused("goal not sent", robot):
+            self.traffic.on_goal_not_sent(robot, goal_id)
+            self._pump()
 
     def on_dock_result(self, robot, goal_id, success, error_x_cm=0.0, error_y_cm=0.0,
                        error_yaw_deg=0.0) -> None:
         self._input("on_dock_result", robot, goal_id, success, error_x_cm, error_y_cm,
                     error_yaw_deg)
-        self.traffic.on_dock_result(robot, goal_id, success, error_x_cm, error_y_cm, error_yaw_deg)
-        self._pump()
+        if not self._robot_refused("dock result", robot):
+            self.traffic.on_dock_result(robot, goal_id, success, error_x_cm, error_y_cm,
+                                        error_yaw_deg)
+            self._pump()
 
     def on_fill_result(self, goal_id, success, placed, missing, reason="") -> None:
         self._input("on_fill_result", goal_id, success, placed, missing, reason)
@@ -115,8 +156,13 @@ class FleetManager:
         self._pump()
 
     def confirm_clear(self, robot, zone_ids, note="") -> list[str] | None:
+        """놓은 구역, 거부면 None. 거부 이유는 last_clear_reason(받아들이면 빈 값).
+
+        모르는 로봇·구역은 INPUT_REJECTED, 이름이 맞는 거부는 CLEAR_REFUSED. 판단은 traffic이 한다.
+        """
         self._input("confirm_clear", robot, zone_ids, note)
         released = self.traffic.confirm_clear(robot, zone_ids, note)
+        self.last_clear_reason = self.traffic.clear_reason
         if released is not None:
             self.orchestrator.on_robot_removed(robot)
         self._pump()
@@ -182,8 +228,11 @@ class FleetManager:
         return views
 
     def robot_view(self, robot) -> dict:
+        """모르는 로봇이면 빈 dict."""
         t = self.traffic.robot_view(robot)
         o = self.orchestrator.robot_view(robot)
+        if not t or not o:
+            return {}
         phase = t["phase"]
         if phase == AT_STATION:
             phase = FILLING if t["destination"] == self._work else SWAPPING
@@ -212,6 +261,27 @@ class FleetManager:
         self._time = self._clock()
         if self._write:
             self._write(json.dumps({"t": self._time, "in": method, "args": args}, default=asdict))
+
+    def _reject(self, detail, robot="") -> None:
+        known = robot if isinstance(robot, str) and robot in self.traffic.robots else ""
+        self._out.append(EventOut("WARN", "INPUT_REJECTED", detail, known))
+
+    def _topic_rejected(self, source, problem, what, robot="") -> bool:
+        """problem이 있으면 True. 출처마다 한 번 알리고, 정상 메시지가 오면 다시 무장한다."""
+        if not problem:
+            self._rejecting.discard(source)
+            return False
+        if source not in self._rejecting:
+            self._rejecting.add(source)
+            self._reject(f"{what}: {problem}", robot)
+        return True
+
+    def _robot_refused(self, what, robot) -> bool:
+        """모르는 로봇의 goal 응답. 잘못 부른 경우에만 생긴다."""
+        problem = robot_problem(robot, self.traffic.robots)
+        if problem:
+            self._reject(f"{what} refused: {problem}")
+        return bool(problem)
 
     def _note(self, kind, item) -> None:
         if self._write:

@@ -134,7 +134,8 @@ class FleetManagerNode(Node):
     # ------------------------------------------------------------------ inputs
     def _on_robot_state(self, robot, msg: RobotState) -> None:
         if not self.silent() and self._reachable(robot):
-            self.core.on_robot_state(robot, *adapters.robot_report(msg))
+            self.core.on_robot_state(robot, *adapters.robot_report(msg),
+                                     adapters.robot_report_id(msg))
 
     def _reachable(self, robot) -> bool:
         """goal이 닿을 수 있어야 로봇으로 친다. 새 FMS는 액션 서버를 찾기 전에 보고를 먼저
@@ -149,7 +150,7 @@ class FleetManagerNode(Node):
 
     def _on_confirm_clear(self, request, response):
         released = self.core.confirm_clear(*adapters.confirm_clear_args(request))
-        return adapters.confirm_clear_response(response, released)
+        return adapters.confirm_clear_response(response, released, self.core.last_clear_reason)
 
     # ------------------------------------------------------------------ output loop
     def _on_tick(self) -> None:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from fleet_core.common.commands import DispatchResult
+from fleet_core.common.validate import clear_problem
 from fleet_core.traffic.deadlock import choose_retreat, find_cycle, priority, wait_graph
 from fleet_core.traffic.mission import (
     AT_STATION,
@@ -26,8 +27,18 @@ class TrafficRecovery:
 
         놓은 구역을 돌려주고, 거절하면 아무것도 안 바꾸고 None. 맵에 오른 적 없는 로봇은
         빈 목록이 맞다. 일부 구역만 주면 의도로 보고 경고하며, 나머지는 다시 불러 푼다.
+        거부 이유는 clear_reason에 남는다(받아들이면 빈 값).
         """
+        problem = clear_problem(robot, zone_ids, self._missions, self.zones.exists)
+        if problem:
+            # 없는 이름은 잘못된 입력이다. 이 로봇에 대한 판단이 아니다.
+            self.clear_reason = problem
+            known = robot if isinstance(robot, str) and robot in self._missions else ""
+            self._event("WARN", "INPUT_REJECTED", f"confirm_clear refused: {problem}: {note}",
+                        known)
+            return None
         refusal = self._clear_refusal(robot, zone_ids)
+        self.clear_reason = refusal
         if refusal:
             self._event("WARN", "CLEAR_REFUSED", f"{refusal}: {note}", robot)
             return None
@@ -53,11 +64,7 @@ class TrafficRecovery:
         return released
 
     def _clear_refusal(self, robot, zone_ids) -> str:
-        if robot not in self._missions:
-            return "no such robot"
-        unknown = [z for z in zone_ids if not self.zones.exists(z)]
-        if unknown:
-            return f"no such zone {unknown}"
+        """이름은 모두 있는데 해제할 수 없는 이유."""
         if not zone_ids and self.zones.held_by(robot):
             return f"no zones listed while it holds {self.zones.held_by(robot)}"
         return ""

@@ -1338,7 +1338,7 @@ def test_confirm_clear_for_an_unknown_robot_changes_nothing():
     place(core, "r1", (9, 5))
     assert core.confirm_clear("pinky9", ["Q-OUT-2"], note="typo") is None
     assert core.zones.holder("Q-OUT-2") == "r1"
-    assert "CLEAR_REFUSED" in codes(core.tick()), "the service has no field to say why"
+    assert "INPUT_REJECTED" in codes(core.tick()), "모르는 이름은 잘못된 입력이다"
 
 
 def test_confirm_clear_with_a_zone_that_does_not_exist_changes_nothing():
@@ -1350,7 +1350,7 @@ def test_confirm_clear_with_a_zone_that_does_not_exist_changes_nothing():
     assert core.zones.held_by("r1") == held
     assert view(core, "r1")["state"] != "OUT_OF_SERVICE"
     out = core.tick()
-    assert "CLEAR_REFUSED" in codes(out)
+    assert "INPUT_REJECTED" in codes(out)
     assert "ZONES_CLEARED" not in codes(out)
 
 
