@@ -56,8 +56,11 @@ class TrafficOffLane:
         return m.path[found], m.path[found + 1]
 
     def _count_back_on_lane(self, m: _Mission) -> None:
-        _, e = self.site.lane_progress(*m.off_lane_at, m.x, m.y)
-        m.back_on_lane = m.back_on_lane + 1 if e <= self.site.half_width else 0
+        s, e = self.site.lane_progress(*m.off_lane_at, m.x, m.y)
+        half = self.site.half_width
+        span = self.site.lane(*m.off_lane_at).span
+        on = e <= half and -half <= s <= span + half  # 직선이 아니라 구간 위
+        m.back_on_lane = m.back_on_lane + 1 if on else 0
 
     def _stop_off_lane(self, m: _Mission, lane: tuple) -> None:
         """목표를 취소하고 구역은 쥔다. 기다리던 요청은 뒤 로봇을 막지 않게 거둔다."""
@@ -79,23 +82,22 @@ class TrafficOffLane:
         if m.fault:  # 다른 고장이나 운영자 해제가 덮었다
             self._end_off_lane(m)
             return
+        lane = m.off_lane_at
+        if now - m.off_lane_since >= self.params.off_lane_timeout_s:
+            self._end_off_lane(m)  # 늦게 들어온 복귀 보고보다 시간 초과가 먼저다
+            self._fail(m, OFF_LANE)
+            self._event("ERROR", OFF_LANE,
+                        f"not back on {lane[0]} to {lane[1]} in "
+                        f"{self.params.off_lane_timeout_s:.0f} s", m.name)
+            return
         if m.back_on_lane >= self.params.release_confirm_samples:
             if m.comm:
                 return  # 통신 복구가 끝난 뒤 재개한다
-            lane = m.off_lane_at
             self._end_off_lane(m)
             self._event("INFO", "BACK_ON_LANE", f"back on {lane[0]} to {lane[1]}, resuming",
                         m.name)
             if m.phase == TO_OUTBOUND and m.dispatch is None:
                 self._start_park_leg(m)  # 서 있는 동안 배차가 취소됐다
-            return
-        if now - m.off_lane_since >= self.params.off_lane_timeout_s:
-            lane = m.off_lane_at
-            self._end_off_lane(m)
-            self._fail(m, OFF_LANE)
-            self._event("ERROR", OFF_LANE,
-                        f"not back on {lane[0]} to {lane[1]} in "
-                        f"{self.params.off_lane_timeout_s:.0f} s", m.name)
 
     def _end_off_lane(self, m: _Mission) -> None:
         m.off_lane_since = None

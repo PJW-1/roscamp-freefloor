@@ -116,6 +116,30 @@ def test_reports_back_on_the_lane_must_follow_each_other():
     assert cmds(core.tick(), "MoveCmd")
 
 
+def test_on_the_line_of_the_lane_but_past_its_end_is_not_back():
+    """레인 직선 위라도 구간 밖이면 돌아온 것이 아니다(Codex 리뷰)."""
+    core, _, _, _ = stopped()
+    half = core.site.half_width
+    span = core.site.lane("W", "A").span
+    beside(core, "W", "A", span + 3 * half, 0.0)
+    beside(core, "W", "A", -3 * half, 0.0, 1)
+    out = core.tick()
+    assert not cmds(out, "MoveCmd")
+    assert status(core) == ("RECOVERING", "OFF_LANE")
+    beside(core, "W", "A", span, 0.0)  # 끝 지점까지는 레인이다
+    assert cmds(core.tick(), "MoveCmd")
+
+
+def test_coming_back_after_the_timeout_is_still_an_error():
+    """시간을 넘긴 뒤 들어온 복귀 보고는 시간 초과를 덮지 않는다(Codex 리뷰)."""
+    core, now, _, _ = stopped()
+    now[0] += PARAMS.off_lane_timeout_s
+    beside(core, "W", "A", 0.1, 0.0)
+    out = core.tick()
+    assert not cmds(out, "MoveCmd")
+    assert status(core) == ("ERROR", "OFF_LANE")
+
+
 def test_a_robot_that_does_not_come_back_ends_in_error_and_keeps_its_zones():
     core, now, _, _ = stopped()
     held = core.robot_view("r1")["held"]
