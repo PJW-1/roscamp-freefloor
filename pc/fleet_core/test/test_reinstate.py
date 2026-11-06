@@ -426,5 +426,51 @@ def test_a_clear_and_a_placed_robot_before_the_result_send_the_goal_only_after_i
     assert resent and resent[0].target_id == "N" and resent[0].goal_id != goal
 
 
+def test_a_holder_with_no_block_keeps_no_cancel_to_wait_for():
+    """막힘이 없는 주인의 취소는 파트 4 전처럼 기다리지 않는다."""
+    core, now = cleared()
+    core.on_order_board("RUN", [O1])
+    for _ in range(20):
+        now[0] += 0.5
+        core.tick()
+        if core.traffic._missions["pinky1"].goal is not None:
+            break
+    m = core.traffic._missions["pinky1"]
+    assert m.goal is not None and m.block is None
+    core.reinstate("pinky2", "EMPTY", "back")
+    report(core, "pinky2", m.path[m.idx])
+    out = core.tick()
+    assert any(c.robot == "pinky1" for c in cmds(out, "CancelCmd"))
+    assert m.block_cancel is None
+
+
+def test_a_result_of_another_goal_does_not_end_the_wait():
+    pilot, goal = blocked_holder_held_by_a_reinstate()
+    m = pilot.mission()
+    pilot.core.on_move_result("pinky1", goal + 1000, False, "CANCELED")
+    assert m.block_cancel == goal
+
+
+def test_a_rejected_canceled_goal_ends_the_wait():
+    pilot, goal = blocked_holder_held_by_a_reinstate()
+    pilot.core.on_goal_rejected("pinky1", goal)
+    assert pilot.mission().block_cancel is None
+
+
+def test_a_canceled_goal_that_was_never_sent_ends_the_wait():
+    pilot, goal = blocked_holder_held_by_a_reinstate()
+    pilot.core.on_goal_not_sent("pinky1", goal)
+    assert pilot.mission().block_cancel is None
+
+
+def test_a_clear_while_waiting_for_the_result_drops_the_wait():
+    pilot, goal = blocked_holder_held_by_a_reinstate()
+    core = pilot.core
+    assert core.confirm_clear("pinky1", core.zones.held_by("pinky1"), "lifted") is not None
+    m = pilot.mission()
+    assert m.block_cancel is None and m.block is None
+    assert core.traffic.blocked_lanes() == []
+
+
 def core_params():
     return load_params()

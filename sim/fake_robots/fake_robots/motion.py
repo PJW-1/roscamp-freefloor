@@ -101,8 +101,13 @@ class FaultSchedule:
                    for f in self._own)
 
     def obstacle(self, t: float) -> bool:
-        """경로 앞에 물체가 있다(blocked 고장). 보고와 통신은 정상이다."""
+        """경로 앞에 물체가 있다(blocked 고장). 보고와 통신은 정상이다.
+
+        물체는 그 자리에 있으므로 로봇을 치우면 그 뒤로는 따라오지 않는다.
+        """
         return any(f.type == "blocked" and f.at_s <= t < f.at_s + f.duration_s
+                   and not any(g.type == "operator_remove" and f.at_s < g.at_s <= t
+                               for g in self._own)
                    for f in self._own)
 
     def stuck(self, t: float) -> bool:

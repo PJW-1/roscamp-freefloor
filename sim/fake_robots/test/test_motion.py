@@ -107,6 +107,18 @@ def test_an_obstacle_is_there_for_its_window_and_only_for_its_robot():
     assert not other.obstacle(10.0)
 
 
+def test_an_obstacle_stays_where_the_robot_was_taken_off_the_course():
+    """치운 뒤에는 앞 물체가 따라오지 않는다(수정 리뷰)."""
+    block = Fault(at_s=8, robot="pinky1", type="blocked", duration_s=15)
+    removed = FaultSchedule([block, Fault(at_s=10, robot="pinky1", type="operator_remove")],
+                            "pinky1")
+    assert [removed.obstacle(t) for t in (9.0, 10.0, 12.0)] == [True, False, False]
+    assert FaultSchedule([block], "pinky1").obstacle(12.0)
+    later = FaultSchedule([Fault(at_s=5, robot="pinky1", type="operator_remove"), block],
+                          "pinky1")
+    assert later.obstacle(12.0), "a block after the removal still counts"
+
+
 def test_operator_remove_is_per_robot_and_lasts():
     s = FaultSchedule([Fault(at_s=60, robot="pinky1", type="operator_remove")], "pinky1")
     assert not s.removed(59.9) and s.removed(60.0) and s.removed(1e6)

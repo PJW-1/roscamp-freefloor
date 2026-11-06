@@ -395,6 +395,12 @@ def test_a_robot_put_back_does_not_keep_saying_blocked(harness, tmp_path):
     mark = time.monotonic()
     time.sleep(1.0)
     assert set(states_since(p, mark - 0.3)) == {RobotState.STATE_IDLE}
+    # 물체는 들어낸 자리에 남았다. 다시 달려도 막히지 않는다(물체 구간은 9초까지)
+    assert p.goal("P-3").accepted
+    mark = time.monotonic()
+    time.sleep(2.0)
+    seen = set(states_since(p, mark))
+    assert RobotState.STATE_MOVING in seen and RobotState.STATE_BLOCKED not in seen
 
 
 def test_a_robot_says_localizing_until_it_has_a_pose(harness, tmp_path):
