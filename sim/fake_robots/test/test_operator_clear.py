@@ -111,8 +111,8 @@ def test_no_reinstate_until_a_late_still_held_event_has_had_time_to_come():
     op.on_event("pinky2", "ZONES_STILL_HELD", "['AVENUE'] stay locked")
     assert op.next_clear("pinky2", []) == ["AVENUE"]
     op.on_cleared("pinky2", True, ["AVENUE"], t=40.3)
-    assert not op.ready("pinky2", [], t=40.3 + op.settle_s - 0.01)
-    assert op.ready("pinky2", [], t=40.3 + op.settle_s)
+    assert not op.ready("pinky2", [], t=40.3 + op.answer_wait_s - 0.01)
+    assert op.ready("pinky2", [], t=40.3 + op.answer_wait_s)
 
 
 def test_a_zone_sent_in_an_accepted_clear_but_already_free_is_not_sent_again():
@@ -129,3 +129,49 @@ def test_a_second_removal_while_a_clear_is_in_flight_keeps_waiting_for_it():
     assert op.next_clear("pinky2", ["W"]) is None, "the first clear is still in flight"
     op.on_cleared("pinky2", True, ["W"])
     assert op.ready("pinky2", [])
+
+
+# ---- 첫 치우기 대기: 치운 직후의 배정 한 번을 기다려 스냅샷을 완전하게 ----------------
+
+
+def first_clear_until(op, held_at, until, step=0.05, t0=40.0):
+    """t0부터 step마다 next_clear를 부른다. held_at(t)는 그때 심판 보유. (보낸 시각, 구역)."""
+    for k in range(int(round((until - t0) / step)) + 1):
+        t = round(t0 + k * step, 2)
+        zones = op.next_clear("pinky2", held_at(t), t=t)
+        if zones is not None:
+            return t, zones
+    return None
+
+
+def test_a_zone_granted_just_after_the_removal_goes_in_the_first_clear():
+    """40.0초에 치웠고 40.05초에 배정으로 AVENUE가 붙었다(p6w b_path, c_path)."""
+    op = OperatorClear()
+    op.start("pinky2", t=40.0)
+    sent = first_clear_until(op, lambda t: ["W"] if t < 40.05 else ["AVENUE", "W"], 43.0)
+    assert sent is not None and sent[1] == ["AVENUE", "W"]
+    assert sent[0] >= 40.0 + op.settle_s
+    op.on_cleared("pinky2", True, ["AVENUE", "W"], t=sent[0])
+    assert op.next_clear("pinky2", [], t=sent[0] + 0.1) is None, "no second clear"
+
+
+def test_the_first_clear_waits_for_the_holdings_to_stay_still():
+    op = OperatorClear()
+    op.start("pinky2", t=40.0)
+    sent = first_clear_until(op, lambda t: ["W"] if t < 40.4 else ["AVENUE", "W"], 43.0)
+    assert sent == (round(40.4 + op.quiet_s, 2), ["AVENUE", "W"])
+
+
+def test_holdings_that_keep_changing_are_sent_at_the_deadline():
+    op = OperatorClear()
+    op.start("pinky2", t=40.0)
+    flip = lambda t: ["W"] if int(round(t * 10)) % 2 else ["AVENUE", "W"]  # noqa: E731
+    sent = first_clear_until(op, flip, 43.0)
+    assert sent is not None and sent[0] == round(40.0 + op.act_by_s, 2)
+    assert op.act_by_s < 3.0, "before COMM_LOST (comm_timeout_s 3.0)"
+
+
+def test_still_holdings_are_sent_once_the_settle_time_is_over():
+    op = OperatorClear()
+    op.start("pinky2", t=40.0)
+    assert first_clear_until(op, lambda t: ["W"], 43.0) == (round(40.0 + op.settle_s, 2), ["W"])

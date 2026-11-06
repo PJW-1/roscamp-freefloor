@@ -154,11 +154,11 @@ class ScenarioMonitorNode(Node):
             if not self.judge.off_course(robot) or not self._confirm.service_is_ready():
                 break
             self._removals.pop(0)
-            self._operator.start(robot)
+            self._operator.start(robot, t)
         if not self._confirm.service_is_ready():
             return
         for robot in sorted(self._sc_robots):
-            zones = self._operator.next_clear(robot, self.judge.held_by(robot))
+            zones = self._operator.next_clear(robot, self.judge.held_by(robot), t)
             if self._operator.gave_up(robot):
                 self.judge.note(t, robot, "OPERATOR_GAVE_UP",
                                 f"zones left after {self._operator.max_clears} clears")
