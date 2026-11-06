@@ -78,6 +78,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `DOCKED` | INFO | traffic | 도킹 끝. detail에 오차 |
 | `GOAL_RETRY` | WARN | traffic | 이동이나 도킹 목표가 실패해 다시 보낸다 |
 | `GOAL_FAILED` | ERROR | traffic | 재시도를 다 썼다 |
+| `GOAL_STALLED` | WARN | traffic | 목표가 열린 채 `stall_s`(도킹은 `dock_stall_s`) 동안 제자리라 취소하고 같은 목표를 다시 보낸다. 시도 한 번으로 센다(11-06, 2번) |
 | `GOAL_NOT_SENT` | WARN | traffic | 액션 서버가 없어 이동이나 도킹 목표를 보내지 못했다. 시도 횟수에 넣지 않고 다시 보낸다. 목표가 서버에 닿을 때까지 한 번만 낸다 |
 | `COMM_LOST` | WARN | traffic | 보고가 `comm_timeout_s` 동안 없다 |
 | `COMM_RESTORED` | INFO | traffic | 보고가 돌아왔다. 위치를 확인하고 이어 간다 |
@@ -121,6 +122,10 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `lane_error_warn_m` | 0.15 | `LANE_ERROR`를 내는 이탈 e |
 | `move_retry_limit` | 2 | 첫 실패 뒤 재시도 수. 이동, 도킹, 팔 작업이 같이 쓴다 |
 | `move_retry_wait_s` | 2 | 이동이나 도킹 실패 뒤 다시 보내기까지. 추정. 세 번 시도하는 시간이 `comm_timeout_s`보다 길어 통신 두절이면 `COMM_LOST`가 먼저 난다 |
+| `stall_s` | 6 | 이동 목표가 열린 채 이만큼 제자리면 멈춤. pinky_multi_sim(Gazebo 정리 4.3)과 같은 값. `comm_timeout_s`보다 길어 말 없는 로봇은 `COMM_LOST`가 먼저 난다 |
+| `stall_move_m` | 0.05 | 매끄럽게 한 위치가 이보다 덜 움직이면 제자리. 지시서와 pinky_multi_sim은 0.02였지만, 위치 잡음 σ 0.01 m부터 감시가 걸리지 않아 올렸다(작업 기록 11-06 파트 2). 0.01 m/s보다 느린 로봇은 멈춤으로 본다 |
+| `stall_smooth_s` | 1 | 멈춤 감시가 보는 위치의 지수 평균 시간 상수. 잡음 하나로 시계가 다시 시작되지 않게 한다 |
+| `dock_stall_s` | 15 | 도킹 목표의 멈춤 시간. 도킹은 천천히 맞추므로 더 길다. 추정 |
 | `arrival_tolerance_m` | 0.15 | 이동의 성공 결과를 도착으로 치는 목표 지점까지의 거리. 추정. 가장 짧은 레인에서 `release_distance_m`을 뺀 값(기본 지도 0.2 m)보다 작아야 한다(7절) |
 | `arrival_settle_s` | 1 | 성공 결과가 위치 보고보다 먼저 왔을 때 보고를 기다리는 시간. 추정. 보고 지연 τ보다 길어야 한다 |
 | `startup_wait_s` | 10 | `ROBOT_NOT_REPORTING`을 내기까지 |
@@ -254,11 +259,13 @@ confirm_clear(관리자가 로봇을 치웠다): 구역 해제, OUT_OF_SERVICE, 
 
 이동과 도킹의 재시도: 목표가 실패하면(거절과 현재 목표의 `CANCELED` 결과도 실패다) 시도 횟수를 하나 늘리고, `move_retry_wait_s`가 지날 때까지 그 로봇에 새 이동이나 도킹 목표를 보내지 않는다. 달리고 있는 목표를 연장하는 것은 막지 않는다. 기다리는 동안 구역은 쥐고 있다. 세 번째 시도까지 실패하면 ERROR(`GOAL_FAILED`)다.
 
+멈춤 감시(11-06 개선 지시서 2번): 이동이나 도킹 목표가 열려 있는데 보고 위치가 `stall_s`(도킹은 `dock_stall_s`) 동안 `stall_move_m` 미만으로만 움직이면 `GOAL_STALLED`(WARN)를 내고 그 목표를 취소한다. 실패한 시도 하나로 세므로 `move_retry_wait_s` 뒤 같은 지점으로 다시 보내고, 세 번째 시도까지 멈추면 `GOAL_FAILED`(ERROR, `fault_reason=STALLED`)다. `GOAL_RETRY`는 따로 내지 않는다. 위치는 보고 그대로가 아니라 `stall_smooth_s` 시간 상수의 지수 평균으로 본다. 재는 시작점은 목표가 보인 첫 tick의 평균 위치이고, 평균이 그 점에서 `stall_move_m` 이상 움직이면 그 자리에서 다시 잰다. 시드 200개 시험에서 σ 0.03 m 잡음의 제자리 로봇은 모두 ERROR까지 갔고 0.2 m/s 주행은 한 번도 멈춤으로 잡히지 않았다. σ 0.05 m에서는 200개 중 20개가 30초 안에 ERROR까지 가지 못했다. 목표를 연장해도 시계는 그대로다. 목표가 없을 때(구역을 기다리며 서 있음, 스테이션에서 대기), RUN이 아닐 때(PAUSE, STOP), 통신이 끊기거나 복구 중이거나 고장일 때는 재지 않고 처음부터 다시 잰다. 취소한 목표의 결과는 목표 번호가 달라 무시된다. 전수 검사는 시계가 멈춰 있어 이 감시가 끼어들지 않는다.
+
 액션 서버가 없을 때: `_send`에서 `server_is_ready()`가 false인 이동과 도킹 목표는 실패한 시도가 아니다. `on_goal_not_sent`가 목표를 지우고, 거절과 같이 `settle_idx`를 남기고, 같은 시간을 기다리게 하지만 시도 횟수는 늘리지 않는다. `GOAL_NOT_SENT`는 목표가 서버에 닿을 때까지 한 번만 낸다. 보내지 못한 목표는 그 tick 안에 돌아오므로, 다음 tick에 목표가 남아 있거나 그 결과가 오면 닿은 것으로 친다. 팔 목표는 이 길을 타지 않고 지금처럼 `REJECTED`로 시도 횟수에 들어간다.
 
 도착 판정: 이동의 성공 결과가 와도 마지막 보고 위치가 목표 지점에서 `arrival_tolerance_m`보다 멀면 바로 도착으로 치지 않는다. 위치 보고는 결과보다 늦게 올 수 있으므로 `arrival_settle_s` 동안 새 목표를 내지 않고 기다린다. 그 안에 허용치 안의 위치가 보고되면 도착이고, 기한이 지나도 보고된 위치가 멀면 실패한 시도(`NOT_AT_TARGET`)로 친다. 처리는 실패한 이동과 같다. 로봇의 통신 상태가 `COMM_LOST`나 `RECOVERING`이면 위치가 오래된 것이고 복구가 위치를 다시 판단하므로 보지 않는다. 도킹 결과는 위치를 보지 않는다. 정지 오차가 이 값을 자주 넘는 로봇은 재시도를 다 써서 ERROR가 될 수 있으므로, 이 값은 실측한 정지 오차, ε, τ와 함께 정한다. 성공 뒤에 위치 보고가 하나도 오지 않았으면 기한이 지나도 판정하지 않고 기다린다. 그 위치는 성공 전의 것이라 아무것도 말해 주지 않기 때문이다. 보고가 끊긴 로봇은 `COMM_LOST`가 먼저 나고 복구가 위치를 판단한다. 기다리는 동안 새 이동 목표는 내지 않는다(2026-11-06 검토에서 추가). 정지 오차를 넣은 압박 시험은 작업 기록(11-05) 7번에 있고 이 판정을 넣기 전 결과다. 판정을 넣은 뒤의 `basic_orders` 결과는 `docs/worklog_2026-11-06.md`의 압박 시험 표에 있다.
 
-이벤트 코드(traffic, 뜻은 0절): `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_NOT_SENT`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ZONES_STILL_HELD`, `LANE_ERROR`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
+이벤트 코드(traffic, 뜻은 0절): `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_STALLED`, `GOAL_NOT_SENT`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ZONES_STILL_HELD`, `LANE_ERROR`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
 
 `TrafficController` 공개 API:
 ```python
@@ -356,7 +363,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 - 교착 포기 대상 로봇의 위치 보고가 끊기면 해제에 필요한 보고가 모자라 `_finish_retreat`가 재확인을 반복한다. `comm_timeout_s`가 지나 `COMM_LOST`가 되면 그 로봇의 대기 요청이 모두 취소되어 원래 대기 고리가 끊어지고, 고리가 하나도 남지 않으면 `_check_deadlock`이 재확인 상태를 지운다. 다른 고리가 남아 있으면 재확인이 이어질 수 있고, 그동안 새 호출과 새 이동 단계도 나가지 않는다. 옛 입출고 코드에는 이 재확인을 끝내는 수정이 있지만 GG 코드에는 들어오지 않았다.
 - FMS가 멈추면 주문 진행, 구역 잠금, 교착 처리가 함께 멈춘다. 화면에 로봇 상태가 오지 않고 `confirm_clear`와 STOP/PAUSE도 전달되지 않는다. 중앙이 직접 내는 이벤트는 계속 나온다. 한 프로세스로 합친 대가다. 핑키는 `/fleet/heartbeat`가 끊기면 스스로 선다(제안, 4절). 팔의 목표는 이 대상이 아니라 담기 중에 FMS가 죽으면 팔은 하던 일을 계속한다. 비상 정지는 FMS에 기대지 않도록 따로 정해야 한다(SR-36, 13절).
 - `use_fake:=false`에서 `/central/orders` 발행자가 없으면 경고 없이 아무것도 움직이지 않는다.
-- 이동/도킹 목표에 관제 쪽 시간 제한이 없어 결과가 안 오면 조용히 멈춘다(FSM 책임).
+- ~~이동/도킹 목표에 관제 쪽 시간 제한이 없어 결과가 안 오면 조용히 멈춘다(FSM 책임).~~ 닫힘(11-06, 2번): 목표가 열린 채 제자리면 멈춤 감시가 취소하고 다시 보내며, 세 번이면 ERROR다(5절). 남은 것: 계속 움직이지만 끝내지 않는 로봇(한 점에서 `stall_move_m` 넘게 오가는 경우)과 0.01 m/s 넘게 기어가며 끝내지 않는 로봇은 잡지 못한다. 위치 잡음이 σ 0.05 m 이상이면 잡는 데 더 오래 걸릴 수 있다.
 - 위치 잡음으로 조기 해제가 가능하다(필터 없음). 시험 무위반이 정지 상태 안전을 증명하지는 않는다. 어느 잡음까지 0인지는 작업 기록 7번의 표에 있다.
 - `robot_radius_m` 0.08은 트레이를 뺀 값이다. 트레이를 포함한 길이를 재서 d와 충돌쌍을 다시 계산해야 한다. r이 커지면 충돌쌍이 늘어난다.
 - FMS를 재시작하면 진행 중이던 주문과 할당, 바구니를 기억하지 못한다. 전원 보고부터 다시 시작하고, 같은 바구니를 다시 채울 수 있다. 실물에서 어떻게 할지는 정하지 않았다.

@@ -42,6 +42,10 @@ class FleetParams:
     priority_has_cargo: int
     # 기본값: 이 값이 없던 기록도 재생된다.
     input_pose_margin_m: float = 1.0
+    stall_s: float = 6.0
+    stall_move_m: float = 0.05
+    stall_smooth_s: float = 1.0
+    dock_stall_s: float = 15.0
 
 
 def load_params(path=None) -> FleetParams:

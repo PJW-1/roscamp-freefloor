@@ -43,6 +43,7 @@ from fleet_core.traffic.mission import (
     PARKED,
     PLACEMENT_CONFLICT,
     RUN,
+    STALLED,
     STOP,
     SWAP,
     TO_OUTBOUND,
@@ -279,6 +280,9 @@ class TrafficController(TrafficRecovery):
                 self._judge_arrival(m, now)
                 self._track_progress(m)
                 self._release_passed_zones(m)
+                self._watch_stall(m, now)
+            else:
+                m.stall_from = m.stall_mean = None
         return self._check_deadlock(now)
 
     def tick_pick(self) -> None:
@@ -466,15 +470,48 @@ class TrafficController(TrafficRecovery):
             m.arrival_by = None
             self._goal_failed(m, NOT_AT_TARGET)
 
-    def _goal_failed(self, m: _Mission, reason: str) -> None:
+    def _goal_failed(self, m: _Mission, reason: str, announce: bool = True) -> None:
         m.attempts += 1
         m.retry_at = self._clock() + self.params.move_retry_wait_s
         if m.attempts > self.params.move_retry_limit:
             self._fail(m, reason)
             self._event("ERROR", "GOAL_FAILED",
                         f"gave up after {m.attempts} attempts: {reason}", m.name)
-        else:
+        elif announce:
             self._event("WARN", "GOAL_RETRY", f"attempt {m.attempts} failed: {reason}", m.name)
+
+    def _watch_stall(self, m: _Mission, now: float) -> None:
+        """목표가 열린 채 제자리면 취소하고 같은 목표를 다시 낸다. 시도 한 번으로 센다.
+
+        목표 없이 구역을 기다리는 것과 RUN이 아닐 때는 재지 않는다. 목표를 바꿔도 시계는 그대로다.
+        """
+        here = self._smoothed(m, now)
+        if m.goal is None or self._run_mode != RUN:
+            m.stall_from = None
+            return
+        if m.stall_from is None or math.dist(here, m.stall_from) >= self.params.stall_move_m:
+            m.stall_from, m.stall_since = here, now
+            return
+        limit = self.params.dock_stall_s if m.goal.kind == DOCK else self.params.stall_s
+        if now - m.stall_since < limit:
+            return
+        kind = m.goal.kind
+        m.stall_from = None
+        self._cancel_goal(m)
+        self._event("WARN", "GOAL_STALLED",
+                    f"no progress for {limit:.0f} s on a {kind}, attempt {m.attempts + 1}", m.name)
+        self._goal_failed(m, STALLED, announce=False)
+
+    def _smoothed(self, m: _Mission, now: float) -> tuple[float, float]:
+        """보고 위치의 지수 평균. 잡음 하나로 멈춤 시계가 다시 시작되지 않게 한다."""
+        if m.stall_mean is None:
+            m.stall_mean = (m.x, m.y)
+        else:
+            a = 1.0 - math.exp(-(now - m.stall_seen) / self.params.stall_smooth_s)
+            mx, my = m.stall_mean
+            m.stall_mean = (mx + a * (m.x - mx), my + a * (m.y - my))
+        m.stall_seen = now
+        return m.stall_mean
 
     # ---- progress and zone release ------------------------------------------------------
 

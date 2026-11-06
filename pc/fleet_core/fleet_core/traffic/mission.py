@@ -23,6 +23,7 @@ PLACEMENT_CONFLICT = "PLACEMENT_CONFLICT"
 NO_FAULT = "NONE"  # 이상 없을 때 /fleet/robots에 나가는 값
 ON_A_GOAL = ("MOVING", "DOCKING")  # 로봇 상태 보고에 오는 값
 _COMM_REASON = {COMM_LOST: "NO_STATE", RECOVERING: "CHECKING_POSE"}
+STALLED = "STALLED"  # 목표가 열린 채 제자리
 NOT_AT_TARGET = "NOT_AT_TARGET"  # 이동은 성공이라는데 자세는 아니라고 할 때
 
 RUN = "RUN"
@@ -85,6 +86,10 @@ class _Mission:
     wait_zone: str | None = None  # wait_since부터 기다리는 구역
     wait_since: float = 0.0
     wait_warned: bool = False
+    stall_from: tuple[float, float] | None = None  # 멈춤을 재기 시작한 위치
+    stall_since: float = 0.0
+    stall_mean: tuple[float, float] | None = None  # 매끄럽게 한 보고 위치
+    stall_seen: float = 0.0
 
     @property
     def live(self) -> bool:
