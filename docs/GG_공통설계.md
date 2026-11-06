@@ -215,7 +215,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 - **구역(잠금 단위):** 지점마다 구역 하나다. 레인은 끝 지점의 구역에 속한다. 그래서 한 지점으로 들어오는 레인들은 잠금 하나와 FIFO 하나를 함께 쓴다. 들어오는 레인이 하나면 레인 하나가 잠금 하나다.
 - **양방향 구간:** `two_way`로 적은 한 쌍(a→b, b→a)은 두 끝 지점의 구역을 하나로 합친다(`bundle_two_way`, 전수 검사에서 끌 수 있다). 같은 쌍을 레인 두 줄로 적으면 지도를 거부한다.
 - **충돌쌍:** 두 구역의 레인이 2r보다 가까이 지나면 동시 점유 금지 쌍으로 자동 계산한다. 지점을 공유하는 레인은 그 지점을 떠나는 쪽의 처음 d를 빼고 잰다. 앞 로봇은 d를 지나야 뒤 구역을 놓으므로 그 구간은 겹칠 수 없기 때문이다. 양방향 쌍 자신은 뺀다. 기본 지도의 충돌쌍은 `{AVENUE, S}` 하나다.
-- 비교용 지도는 `sim/fake_robots/maps/`에 있다. `oneway_loop`는 이전 지도를 변환한 일방통행, `oneway_shortcut`은 거기에 양방향 지름길을 하나 넣은 것이다. 격자 지도는 시험 자료(`pc/fleet_core/test/data/grid_cells.yaml`)로만 남았다.
+- 비교용 지도는 `sim/fake_robots/maps/`에 있다. `oneway_loop`는 이전 지도를 변환한 일방통행, `oneway_shortcut`은 거기에 양방향 지름길을 하나 넣은 것이다. `feature_map`은 11-06 결정 6의 특징 지도(넓은 길 2줄, 좁은 양방향 통로 `TUN`과 돌아가는 길, 지점 없는 교차 하나, 구역 14개)이고 우회 규칙을 검사한다. `two_lane_avenue`, `two_lane_segments`는 11-06 변형 지도로 레인 간격이 0.2 m라 안전한 배치가 아니고, 비교용으로만 둔다. 격자 지도는 시험 자료(`pc/fleet_core/test/data/grid_cells.yaml`)로만 남았다.
 - 전수 검사(`tools/model_check.py`, 실제 `TrafficController`를 호출 순서마다 돌림)의 결과는 11절에 있다.
 - 약점: 대로 전체가 잠금 하나이므로 대로에서 멈춘 로봇 1대는 그 이동을 모두 막는다.
 
@@ -483,7 +483,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 - 관제 PC 행은 이 문서의 배정이다. v18은 서버 구역에 central, DB, FMS, Vision 서버를 그리고, PC 6대의 역할 배정이 정해지면 다시 그린다고 적었다. FMS 안은 core, pinky, arm 세 모듈이고 arm은 `fill_basket`·`swap_basket` 클라이언트다(0절의 대응). workcell은 FMS에 합치지 않는다.
 
 ## 11. 코드의 현재 상태 (저장소 `PJW-1/roscamp-repo-2`, 브랜치 `fms-work-order`, 2026-11-06)
-**FMS는 코드에서도 두 모듈로 나뉘었다.** 11-05에 `FleetCore`와 `fleet_manager_node`를 `orchestrator_core`, `traffic_core`, `FmsCore`, `fms_node`로 나눴고, 11-06 개선 지시서 0.5번에서 이름과 폴더를 역할에 맞췄다. 지금은 `pc/fleet_core/fleet_core/` 안에 `manager.py`(`FleetManager`), `orders/orchestrator.py`(`OrderOrchestrator`), `traffic/`(`controller.py`의 `TrafficController`와 `mission.py`, `recovery.py`, `zones.py`, `selector.py`, `deadlock.py`, `lane_map.py`), `common/`(`commands.py`, `params.py`, `contract.py`, `contract_check.py`), `data/`가 있고, 노드는 `pc/fleet_manager/fleet_manager/fleet_manager_node.py`(노드 이름 `fleet_manager`)다. 바꾼 이름의 전체 표는 `docs/worklog_2026-11-06.md`에 있다. 지도 파일의 키 이름(`nodes:` → `waypoints:`, 옛 키는 로더가 거절한다)과 heartbeat의 이름 말고 동작은 바꾸지 않았다. 전체 시험은 경계 시험 2건이 늘어 875건이 모두 통과했고, 로봇 2대 전수 검사 다섯 경우의 숫자가 0.5 전과 같다. 옛 호출 방식을 쓰는 시험을 그대로 돌리려고 시험 폴더에 얇은 `legacy_core.py`만 남겼다. 경계는 `test_fms_boundary.py`가 import 그래프로 검사한다: `traffic` 패키지의 어느 모듈도 `orders`나 `manager`에 닿지 않는다.
+**FMS는 코드에서도 두 모듈로 나뉘었다.** 11-05에 `FleetCore`와 `fleet_manager_node`를 `orchestrator_core`, `traffic_core`, `FmsCore`, `fms_node`로 나눴고, 11-06 개선 지시서 0.5번에서 이름과 폴더를 역할에 맞췄다. 지금은 `pc/fleet_core/fleet_core/` 안에 `manager.py`(`FleetManager`), `orders/orchestrator.py`(`OrderOrchestrator`), `orders/validate.py`, `traffic/`(`controller.py`의 `TrafficController`와 `mission.py`, `recovery.py`, `zones.py`, `selector.py`, `deadlock.py`, `lane_map.py`, 11-06에 더한 믹스인 `blocking.py`(파트 4), `detour.py`(파트 5), `isolation.py`(파트 5.5)), `common/`(`commands.py`, `params.py`, `contract.py`, `contract_check.py`, 입력 검사 `validate.py`(파트 1)), `data/`가 있고, 노드는 `pc/fleet_manager/fleet_manager/fleet_manager_node.py`(노드 이름 `fleet_manager`)다. 바꾼 이름의 전체 표는 `docs/worklog_2026-11-06.md`에 있다. 지도 파일의 키 이름(`nodes:` → `waypoints:`, 옛 키는 로더가 거절한다)과 heartbeat의 이름 말고 0.5에서 동작은 바꾸지 않았다(그때 전체 시험 875건 통과, 로봇 2대 전수 검사 다섯 경우의 숫자가 0.5 전과 같음). 그 뒤 파트 1, 2, 4, 5, 5.5가 동작을 더했다(아래 표). 옛 호출 방식을 쓰는 시험을 그대로 돌리려고 시험 폴더에 얇은 `legacy_core.py`만 남겼다. 경계는 `test_fms_boundary.py`가 import 그래프로 검사한다: `traffic` 패키지의 어느 모듈도 `orders`나 `manager`에 닿지 않는다.
 
 | 항목 | 코드 |
 |---|---|
@@ -493,14 +493,16 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 | 담기, 교환 | `orders`가 `FillCmd`, `SwapCmd`를 내고 노드가 `/workcell/fill_basket`, `/arm3/swap_basket`을 호출한다. `traffic`은 팔을 모른다 |
 | 팔 재시도, 시간 초과, 바구니 상태 | `orders` |
 | 최종 보고 | `orders`의 `ReportOrderCmd`를 노드가 `/central/report_order`로 보낸다 |
-| 고장 로봇의 주문 | `FleetManager.confirm_clear`가 받아들이면 `on_robot_removed`를 불러 `ORDER_REQUEUED`를 낸다 |
+| 고장 로봇의 주문 | 지도에 오른 로봇이 ERROR가 되면 `traffic/isolation.py`가 격리하고 `RobotIsolated`로 `orders`에 알려 주문을 바로 되돌린다(`ORDER_REQUEUED`, 파트 5.5). 격리 없이 치운 로봇은 `FleetManager.confirm_clear`가 `on_robot_removed`를 부른다 |
+| 잘못된 입력 | `FleetManager`와 `common/validate.py`, `orders/validate.py`가 거부하고 `INPUT_REJECTED`를 낸다(파트 1) |
+| 멈춤 감시, 막힘, 우회 | `controller.py` `_watch_stall`(파트 2), `traffic/blocking.py`(파트 4), `traffic/detour.py`(파트 5). 규칙은 5절 |
 | 교통 모델 | 레인 지도(3절). 잠금은 구역, 해제는 레인 투영(5절), 충돌쌍과 양방향 묶음은 지도에서 계산한다 |
 | 로봇별 상태 | `/fleet/robots` 1 Hz. `/fleet/assignments`, `/fleet/zones`는 그대로 |
 | 자체 정지 | `/fleet/heartbeat` 2 Hz(11-06에 `/fms/heartbeat`에서 이름만 바꿈, 제안). `FakePinky`에 구현했고 실물은 FSM 담당 몫이다 |
 | 기록과 재생 | `fleet_manager_node --record`, `tools/replay.py` |
 | 중앙과 FMS 사이 | `fleet_manager` 노드가 `/fleet/*`, `/central/events`를 발행하고 `/fleet/confirm_clear`를 제공한다. 가짜 중앙은 `/fleet/*`를 구독하지 않고, 심판 `scenario_monitor`가 구독하며 관리자 역할로 confirm_clear를 부른다 |
 | 중앙과 팔 사이 | `contract.yaml`에 `/{arm}/state`, `/{arm}/vision/items`가 있다. FMS는 이 토픽을 판단에 쓰지 않는다. `scenario_monitor`가 심판으로 `/{arm}/state`를 구독한다 |
-| 인터페이스 | `contract.yaml` 0.3-draft. 11-05에 더한 것은 `/fleet/robots`, `/fms/heartbeat`(11-06에 `/fleet/heartbeat`로 이름 변경) 둘이다. 토픽, 서비스, 액션의 이름과 필드, QoS는 heartbeat 이름 말고 그대로다 |
+| 인터페이스 | `contract.yaml` 0.3-draft. 11-05에 더한 것은 `/fleet/robots`, `/fms/heartbeat`(11-06에 `/fleet/heartbeat`로 이름 변경) 둘이다. 11-06에 상수 `RobotState.STATE_BLOCKED`, `STATE_LOCALIZING`, `MoveTo` `REASON_HEARTBEAT_LOST`(파트 4)와 `ConfirmClear` 응답의 `reason`(파트 1)을 더했다. 그 밖의 이름, 필드, QoS는 그대로다 |
 | 양팔 규칙 | `README.md`, `fake_workcell_node`, 심판 `dual_arm_overlaps`는 아직 동시 PLACING을 위반으로 본다. 지시서가 심판을 고치지 말라고 했으므로 그대로 뒀고 2026-11-04 결정(6절)과 다르다 |
 | 중앙, 핑키, 팔 | `pc/central`, `pinky/*`, `arm/*`는 빈 패키지이고 가짜 노드만 동작한다 |
 | GitHub | 개인 저장소 브랜치에만 올렸다. 팀 저장소 `addinedu-roscamp-16th/roscamp-repo-2`에는 올리지 않았다 |
@@ -511,12 +513,14 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 
 | 검증 | 결과 |
 |---|---|
-| 단위·통합 시험 | 11-06 0.5 정리 뒤의 트리. 875건, 실패 0, 오류 0, 건너뜀 0(`fleet_core` 537, `fake_robots` 262, `fleet_manager` 76, `colcon test` 717 s). 0.5 전(`86b1fe1`)은 873건이고, 늘어난 2건은 경계 시험이다 |
-| 시나리오 6개(기본 지도, 실제 launch) | 0.5 정리 뒤의 트리(위 시험 안에서 실행). 전부 심판 통과(시나리오 파일의 기대값과 같음), 조기 해제 0, near 0. 출고는 `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6, `operator_recovery` 4/4 |
-| 전수 검사, 로봇 2대 (상태, 교착, 기아) | `fa94eb6`. 11-06에 `86b1fe1`과 0.5 정리 뒤의 트리에서 다시 돌려 같은 값을 얻었다. `oneway_loop` (34407, 0, 0). `oneway_shortcut` 묶음 끔 (69497, 36, 30), 켬 (62615, 0, 0). 기본 지도 끔 (36573, 432, 396), 켬 (37078, 0, 0). 충돌쌍을 넘는 FIFO에서도 켬은 0이다 |
+| 단위·통합 시험 | `33f01d7`(파트 5.5 + 파트 5 최종, 공용 잠금의 `full_test_src.sh`): 1199건, 실패 0(`fleet_core` 819, `fake_robots` 293, `fleet_manager` 87), 시험 914 s. 그 뒤 `b84f4d0`까지는 문서만 바뀌어 다시 돌리지 않았다. 이전: 0.5 뒤 875건, 파트 1·2 뒤 `533d351` 1036건, 파트 4 `a5a4745` 1100건, 파트 5 `df2a02b` 1163건(작업 기록) |
+| 시나리오 8개(기본 지도, 실제 launch, 통합 시험 목록) | 위 전체 시험 안에서 8개(`basic_orders`, `order_burst`, `shared_lane_failure`, `stock_shortage`, `stuck_robot`, `operator_recovery`, `blocked_lane`, `auto_isolation`) 모두 통과. 출고 숫자는 따로 돌린 실행에서 적었다. `df2a02b`(`run_scenarios.sh`): `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6(시간 초과, 기대값), `operator_recovery` 4/4, `blocked_lane` 6/6(`LANE_BLOCKED` 1, `LANE_CLEARED` 1), 모두 심판 통과, 최소 해제 거리 0.165~0.187 m. `auto_isolation`은 파트 5.5 트리(`5ebd821` 반영분)에서 4/4, `shipped_before_operator` 1 |
+| 시나리오 3개(특징 지도, 통합 시험 목록 밖) | `df2a02b`: `feature_basic_orders` 6/6, `feature_blocked_lane` 6/6(`DETOUR` 1, `LANE_BLOCKED` 1, `LANE_CLEARED` 1). `feature_auto_isolation`은 파트 5 최종과 합친 5.5 트리(`3acc65a` 뒤, 정확한 커밋은 작업 기록에 없다)에서 통과: 102.7초 격리, `DETOUR` 3(`detours_around_isolated` 3), `shipped_before_operator` 4, 6건 모두 194.6초까지 출고, 400.2초 `ZONES_CLEARED` |
+| 전수 검사, 로봇 2대 (상태, 교착, 기아) | `fa94eb6`. 11-06에 `86b1fe1`, 0.5 정리 뒤의 트리, `533d351`, `eb50ef2`, `bc784a9`, `df2a02b`(우회 켬, 파일 값)에서 다시 돌려 같은 값을 얻었다. `oneway_loop` (34407, 0, 0). `oneway_shortcut` 묶음 끔 (69497, 36, 30), 켬 (62615, 0, 0). 기본 지도 끔 (36573, 432, 396), 켬 (37078, 0, 0). 충돌쌍을 넘는 FIFO에서도 켬은 0이다 |
 | 전수 검사, 로봇 3대 | `oneway_loop`은 `c9f46ab` 전의 복사본, 나머지는 `c9f46ab`이고, 기본 지도 묶음 켬만 `fc133b1`(코드는 `b6d75d9`와 같다)에서 다시 돌려 같은 값을 얻었다. `oneway_loop` (6295143, 0, 0), 끝까지. 기본 지도 묶음 켬 (5074536, 0, 0), 끝까지. `oneway_shortcut` 묶음 켬 (15871223, 0, 0), 끝까지. `oneway_shortcut`과 기본 지도의 묶음 끔은 교착이 나오는 것까지 확인했다(첫 교착에서 멈춤). 표는 작업 기록 3번 |
+| 전수 검사, 특징 지도(구역 14개, 지점 15개) | 우회 전 코드(`4f7cdde` 무렵, 작업 기록 "특징 지도"): 로봇 2대 bundle on (48282, 0, 0), off (47378, 42, 37), 둘 다 끝까지. 로봇 3대 bundle on은 20만 상태 상한 탐색(201140 상태, 교착 0). **결정 8의 "특징 지도 3대 끝까지"는 아직 못 했다**(아래 우회 줄의 3대도 30만 상한) |
 | 우회(파트 5, 특징 지도, `df2a02b`) | 로봇 2대 bundle on, 끝까지. (상태, 교착, 기아, 서 있는 보유자 뒤에서 기다린 (상태, 로봇) 쌍, 그중 돌 길이 있던 쌍) 우회 끔 (48282, 0, 0, 316, 76), 켬 (53720, 0, 0, 276, 16). 막힘 사건(`--blocks`) 끔 (356132, 0, 0, 12458, 4444), 켬 (1198886, 0, 0, 25236, 7434). 켬은 경로와 왕복 금지 목록이 상태에 들어가 상태가 늘어서, 막힘 사건이 있으면 쌍의 절대 수가 늘고 상태 하나당 쌍은 준다(0.035→0.021, 0.0125→0.0062). 한 상태에서 여러 로봇이 기다리면 여러 번 센다(3대). 로봇 3대 막힘 사건은 30만 상태 상한 탐색이다(끔 324889 상태, 교착 0, 36756, 586. 켬 330583 상태, 교착 0, 36515, 202. 기아는 끝까지 돌아야 잰다). 기본 지도와 oneway 지도 다섯 경우는 우회 켬(파일 값)에서도 위 숫자와 같다. **한계**: 모형은 시계가 0이고 상태를 되살릴 때 `wait_zone`을 지운다. 그래서 구역을 기다리는 보유자의 벌점은 늘 0이고, "기다린 시간이 늘어 우회하는" 경우는 탐색하지 않는다. 우회는 스테이션·대기 칸에 선 보유자(추정 30초), 막힌 레인, 무한 보유자 때만 일어난다. 막힘 표시와 취소 결과는 한 사건이고 줄 서기 `BLOCKED`는 없다. 기아 0은 로봇마다, 그 로봇이 갈 곳이 남은 어느 상태에서든 cancel이 아닌 사건 순서로 그 로봇이 다시 움직이는 상태에 닿을 수 있다는 뜻이다. 모든 로봇이 함께 끝내는 사건 순서 하나가 있는지는 보지 않고, 모든 일정이 그 길을 간다는 뜻도 아니다. 교착·기아 없음의 보장으로 읽지 않는다. 시나리오와 표는 작업 기록 파트 5 |
-| 기록 재생 | 0.5 정리 뒤의 트리(위 시험 안에서 실행). 시나리오 6개 모두 기록과 같은 명령 |
+| 기록 재생 | 전체 시험 안의 통합 시나리오는 모두 기록과 같은 명령이다(`33f01d7`). `df2a02b`: 9개 기록과 옛 기록 6개(`scen_latest2`) 모두 같다. 파트 5.5 뒤에는 옛 `operator_recovery` 기록만 1137번째 줄에서 다르다. 격리로 새 내부 명령 `RobotIsolated`가 나오기 때문이고 예상한 차이다 |
 | FMS 재시작 | 죽인 뒤 세 대 모두 1.5 s 안에 정지(벽시계, 5회 측정, 최대 1.49 s. 3회는 5번 리뷰를 반영한 코드로 `fa94eb6`에 커밋, 2회는 6번 리뷰를 반영한 코드로 `1f56911`에 커밋). 새 FMS는 전원 보고부터 다시 시작. `b6d75d9`의 전체 시험에서도 통과했지만 이 시험의 판정선은 1.5 s에 여유 1 s를 더한 값이고 그 실행의 초는 적어 두지 않았다 |
 | 압박 시험 | 커밋 전 작업 트리. d 0.2 표는 `fa94eb6`에, 나머지 표는 `1f56911`에 7번 변경을 얹은 코드다(`78011a2`에 커밋). 그 뒤 다시 돌리지 않았다. d 0.2에서 τ 0.5, ε 0.05까지 전 조합 조기 해제 0, near 0, 교착 0(조합마다 시드 1개). d 0.17, ε 0.05에서 심판 기준 위반 1회. d ≤ 2r은 시작 거부. 표는 작업 기록 7번 |
 
@@ -529,6 +533,8 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 2. 실물 핑키로 ε, τ를 재서 d를 정한다.
 3. 레인 준수 방식, 이동 성공의 도착 허용치, heartbeat 계약을 FSM 담당과 정한다.
 4. 가짜 workcell과 심판을 양팔 동시 계획 기준으로 고칠지 팔 담당과 정한다(`arm_planner`, SR-22).
+5. 지시서 파트 3(레인 이탈), 7(FollowPath), 6(재투입)과 특징 지도 로봇 3대 끝까지 탐색.
+6. 특징 지도 시나리오 3개를 통합 시험 목록에 넣을지(지금은 전체 시험 시간 때문에 따로 돌린다).
 
 ## 12. Confluence SR과 다른 점 (819201 v2와 2026-11-04 대조)
 기준 문서는 Confluence이고, 이 작업에서 Confluence는 고치지 않는다. 아래 항목은 어느 쪽으로 맞출지 정한 뒤 이 표에서 지운다.
