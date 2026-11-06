@@ -8,10 +8,13 @@ pytest.importorskip("fleet_interfaces.msg")
 
 from conftest import CONTRACT, wait_until, write_scenario  # noqa: E402
 from fleet_core.common.contract import load_contract, to_ros_qos  # noqa: E402
-from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
+from fleet_core.traffic.lane_map import (
+    _point_segment,  # noqa: E402
+    load_lane_map,  # noqa: E402
+)
 from fleet_interfaces.action import Dock, MoveTo  # noqa: E402
 from fleet_interfaces.msg import RobotState  # noqa: E402
-from geometry_msgs.msg import Pose2D  # noqa: E402
+from geometry_msgs.msg import Point, Pose, Pose2D  # noqa: E402
 from rclpy.action import ActionClient  # noqa: E402
 
 CONTRACT_OBJ = load_contract(CONTRACT)
@@ -72,6 +75,24 @@ def test_move_to_publishes_state_feedback_and_succeeds(harness, tmp_path):
     assert p.feedback
 
 
+def test_a_path_goal_follows_the_lanes_round_the_corner(harness, tmp_path):
+    """path 모드(지시서 7번): 꺾인 선을 그대로 따르고 끝에서 성공한다."""
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.5, "pose_noise_m": 0.0}})
+    assert wait_until(lambda: p.states, 5.0)
+    points = [SITE.waypoint_pose(w) for w in ("P-6", "N", "S")]
+    msg = MoveTo.Goal(target_id="S", target_pose=Pose2D(x=points[-1][0], y=points[-1][1]))
+    msg.path = [Pose(position=Point(x=x, y=y)) for x, y in points]
+    fut = p.move.send_goal_async(msg)
+    assert wait_until(fut.done, 5.0) and fut.result().accepted
+    assert result_of(fut.result()).result.success is True
+    seen = [(s.pose.x, s.pose.y) for _, s in p.states]
+    off = max(min(_point_segment(x, y, *a, *b) for a, b in zip(points, points[1:], strict=False))
+              for x, y in seen)
+    assert off < 0.01, "it cut the corner"
+    assert seen[-1] == pytest.approx(points[-1], abs=1e-3)
+
+
 def test_new_goal_supersedes_the_active_one(harness, tmp_path):
     p = start(harness, tmp_path, robots={
         "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}})
@@ -100,6 +121,32 @@ def test_nav_abort_hits_the_next_goals_only(harness, tmp_path):
     res = result_of(p.goal("QO")).result
     assert res.success is False and res.reason == MoveTo.Result.REASON_NAV_ABORTED
     assert result_of(p.goal("QO")).result.success is True
+
+
+def test_a_nav_abort_comes_before_the_robot_reaches_the_release_distance(harness, tmp_path):
+    """관제는 해제 거리(0.2 m)를 지나야 선을 늘린다. 그 전에 중단해야 늘림과 겹치지 않는다."""
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}}, faults=[
+        {"at_s": 0, "robot": "pinky1", "type": "nav_abort", "count": 1}])
+    assert wait_until(lambda: p.states, 5.0)
+    x0, y0 = p.states[-1][1].pose.x, p.states[-1][1].pose.y
+    res = result_of(p.goal("S")).result
+    assert res.reason == MoveTo.Result.REASON_NAV_ABORTED
+    last = p.states[-1][1].pose
+    assert ((last.x - x0) ** 2 + (last.y - y0) ** 2) ** 0.5 < 0.1
+
+
+def test_a_nav_abort_is_not_lost_on_a_goal_superseded_before_it_fires(harness, tmp_path):
+    """FMS가 선을 늘려 목표를 바꿔도 중단 횟수만큼 NAV_ABORTED가 난다."""
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}}, faults=[
+        {"at_s": 0, "robot": "pinky1", "type": "nav_abort", "count": 1}])
+    time.sleep(0.3)
+    first = p.goal("S")
+    second = p.goal("S")
+    assert result_of(first).result.reason == MoveTo.Result.REASON_CANCELED
+    res = result_of(second).result
+    assert res.success is False and res.reason == MoveTo.Result.REASON_NAV_ABORTED
 
 
 def test_comm_loss_silences_state_rejects_goals_and_recovers(harness, tmp_path):

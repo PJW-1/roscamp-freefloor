@@ -4,9 +4,14 @@ from dataclasses import replace
 import pytest
 from core_helpers import cmds, codes
 from fleet_core.common.commands import EventOut
-from fleet_core.common.params import load_params
+from fleet_core.common.params import load_params as _load_params
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.lane_map import load_lane_map
+
+
+def load_params():
+    """이 파일은 point 모드(같은 방향 레인만 묶음)를 본다. path 모드는 test_lane_path.py."""
+    return replace(_load_params(), lane_goal_mode="point")
 
 
 def make(where):

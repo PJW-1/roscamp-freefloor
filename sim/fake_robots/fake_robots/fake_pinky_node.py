@@ -35,7 +35,7 @@ from fake_robots.motion import (
     noisy_pose,
 )
 
-NAV_ABORT_DELAY_S = 1.0
+NAV_ABORT_DELAY_S = 0.2  # 해제 거리(0.2 m)를 지나기 전, 관제가 선을 늘리기 전에 중단한다
 BLOCK_REPORT_S = 1.0  # 물체 앞에서 이만큼 서 있으면 BLOCKED(계약 4절)
 BLOCK_CLEAR_S = 1.0  # 물체가 이만큼 안 보이면 BLOCKED를 끄고 이어 간다
 OFF_COURSE_M = 1.0  # 운영자가 치운 로봇이 가는 곳(지도 모서리 밖)
@@ -162,6 +162,9 @@ class FakePinkyNode(Node):
         return CancelResponse.REJECT if self._unreachable() else CancelResponse.ACCEPT
 
     def _end(self, goal: _Goal, success: bool, reason: str = "") -> None:
+        if (goal.abort_at is not None and not goal.done.is_set()
+                and reason != MoveTo.Result.REASON_NAV_ABORTED):
+            self._faults.give_back_nav_abort(goal.target_id)  # 대체·취소되면 다음 목표로
         goal.finish(success, reason)
         if self._active is goal:
             self._rest = (RobotState.STATE_DOCKED if goal.kind == "dock" and success
@@ -180,8 +183,10 @@ class FakePinkyNode(Node):
             if kind == "move":
                 pose = handle.request.target_pose
                 goal.target_id = handle.request.target_id
+                # path: 첫 점은 로봇 자리라 건너뛰고, 끝 점은 target_pose다
+                via = [(p.position.x, p.position.y) for p in handle.request.path[1:-1]]
                 self._motion.set_target(*noisy_pose(pose.x, pose.y, self._cfg.stop_error_m,
-                                                    self._rng))
+                                                    self._rng), via=via)
                 if self._faults.take_nav_abort(t, goal.target_id):
                     eta = self._motion.remaining() / self._cfg.speed_mps
                     goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단

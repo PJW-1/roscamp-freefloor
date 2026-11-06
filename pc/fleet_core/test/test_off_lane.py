@@ -223,6 +223,42 @@ def test_comm_loss_while_off_the_lane_keeps_the_zones_and_waits_for_the_lane():
     assert core.robot_view("r1")["held"] == held
 
 
+def test_back_before_the_deadline_is_not_an_error_while_the_comm_check_runs_past_it():
+    """마감 전에 돌아왔으면 통신 복구 확인이 마감을 넘겨도 격리하지 않는다(Codex 리뷰)."""
+    core, now, _, _ = stopped()
+    since = now[0]
+    now[0] += PARAMS.comm_timeout_s + 0.5
+    assert "COMM_LOST" in codes(core.tick())
+    now[0] = since + PARAMS.off_lane_timeout_s - 0.5
+    beside(core, "W", "A", 0.1, 0.0)
+    out = core.tick()
+    assert "COMM_RESTORED" in codes(out)
+    for _ in range(round(3 * PARAMS.recover_check_s / 0.1)):
+        now[0] = round(now[0] + 0.1, 6)
+        beside(core, "W", "A", 0.1, 0.0, 1)
+        out += core.tick()
+    assert not events(out, "OFF_LANE") and "ROBOT_ISOLATED" not in codes(out)
+    assert "BACK_ON_LANE" in codes(out)
+    assert cmds(out, "MoveCmd")
+    assert status(core) == ("NONE", "")
+
+
+def test_off_again_after_coming_back_brings_the_deadline_back():
+    """돌아온 뒤 다시 벗어나 횟수가 0이 되면 마감이 다시 걸린다."""
+    core, now, _, _ = stopped()
+    since = now[0]
+    now[0] += PARAMS.comm_timeout_s + 0.5
+    assert "COMM_LOST" in codes(core.tick())
+    now[0] = since + PARAMS.off_lane_timeout_s - 0.5
+    beside(core, "W", "A", 0.1, 0.0)
+    core.tick()
+    beside(core, "W", "A", 0.1, OFF, 1)
+    now[0] = since + PARAMS.off_lane_timeout_s
+    out = core.tick()
+    assert [e.level for e in events(out, "OFF_LANE")] == ["ERROR"]
+    assert status(core) == ("ERROR", "OFF_LANE")
+
+
 # ---- 레인 막힘(파트 4)과 함께 ---------------------------------------------------------------
 
 
@@ -381,7 +417,9 @@ def test_a_robot_on_a_detour_is_watched_and_resumed_on_its_new_lane():
     stop_off_lane_on(core, "r2", ["F1", "F2", "W"])
     core.on_dispatch(1, "WORK", "r1")
     first = [c for c in core.tick() if type(c).__name__ == "MoveCmd" and c.robot == "r1"]
-    assert [c.target_id for c in first] == ["T2"]
+    # path 모드(파트 7)는 꺾여도 쥔 데까지 묶어 T2를 지나 T1까지 간다
+    target = "T1" if core.params.lane_goal_mode == "path" else "T2"
+    assert [c.target_id for c in first] == [target]
     beside_on(core, "r1", "F0", "T2", 0.05, OFF)
     out = core.tick()
     (warned,) = [e for e in events(out, "LANE_ERROR") if e.robot == "r1"]
@@ -389,7 +427,7 @@ def test_a_robot_on_a_detour_is_watched_and_resumed_on_its_new_lane():
     beside_on(core, "r1", "F0", "T2", 0.05, 0.0)
     out = core.tick()
     again = [c for c in cmds(out, "MoveCmd") if c.robot == "r1"]
-    assert [c.target_id for c in again] == ["T2"]
+    assert [c.target_id for c in again] == [target]
     assert [e.robot for e in events(out, "BACK_ON_LANE")] == ["r1"]
 
 

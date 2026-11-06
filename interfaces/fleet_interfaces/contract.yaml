@@ -28,6 +28,7 @@ topics:
 
 actions:
   # 결과 reason에 HEARTBEAT_LOST(heartbeat가 끊겨 스스로 섬)를 더했다.
+  # goal에 path(레인 폴리라인, geometry_msgs/Pose[])를 더했다(11-06 지시서 7번). 비면 점 목표다.
   - {key: move_to, name: "/{pinky}/move_to", type: fleet_interfaces/action/MoveTo}
   - {key: dock, name: "/{pinky}/dock", type: fleet_interfaces/action/Dock}
   # 작업 팔 두 대가 액션 하나를 쓴다. 바구니 공간 분담은 팔 팀이 정한다.

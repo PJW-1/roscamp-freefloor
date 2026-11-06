@@ -5,6 +5,7 @@ OUT_OF_SERVICE를 풀고 맵 밖에 둔다. 다음 위치 보고로 시작 때�
 """
 import json
 
+import pytest
 from core_helpers import cmds, codes
 from fleet_core.common.commands import OrderRecord
 from fleet_core.common.params import load_params
@@ -541,3 +542,66 @@ def test_a_holder_stopped_for_a_placement_is_a_standing_robot_with_no_end():
     assert core.traffic._standing_wait_s(m) == math.inf
     report(core, "pinky2", "P-3")  # 빈 자리로 옮겨 올렸다
     assert core.traffic._standing_wait_s(m) != math.inf
+
+
+# ---- path 목표와 함께(파트 7 병합) ----------------------------------------------------------
+
+
+def test_a_robot_put_back_short_of_a_waypoint_is_not_stopped_off_lane_in_path_mode():
+    """레인 중간(N 앞 0.14 m)에 다시 놓인 로봇. 첫 지점에 닿기 전에는 이탈을 재지 않는다."""
+    from test_lane_path import make as make_path
+    from test_lane_path import moves
+
+    core, now = make_path({"r1": "P-6", "r2": "P-5"})
+    assert core.confirm_clear("r2", core.robot_view("r2")["held"], "lifted") is not None
+    core.tick()
+    assert core.reinstate("r2")
+    lane, (nx, ny) = core.site.lane("P-6", "N"), core.site.waypoint_pose("N")
+    x, y = nx - lane.ux * 0.14, ny - lane.uy * 0.14
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("r2", x, y, 0.0, "IDLE")
+    out = core.tick()  # 대기 칸이 아니므로 오르자마자 주차하러 간다(N부터의 path)
+    assert core.robot_view("r2")["on_map"]
+    for _ in range(5):
+        for _ in range(core.params.release_confirm_samples):
+            core.on_robot_state("r2", x, y, 0.0, "MOVING")
+        out += core.tick()
+    sent = moves(out, "r2")
+    assert sent and sent[0].path[0][:2] == pytest.approx((x, y))
+    assert "LANE_ERROR" not in codes(out)
+    assert core.status_view("r2")["fault_reason"] != "OFF_LANE"
+
+
+def test_a_holder_freed_from_a_placement_hold_gets_a_path_from_where_it_stands():
+    """재투입 충돌로 세운 주인에게 다시 보내는 path는 서 있는 자리에서 시작한다."""
+    from test_lane_path import make as make_path
+    from test_lane_path import moves
+
+    core, now = make_path({"r1": "W", "r2": "P-6"})
+    assert core.confirm_clear("r2", core.robot_view("r2")["held"], "lifted") is not None
+    core.on_dispatch(1, "OUTBOUND", "r1")
+    first = moves(core.tick())[0]
+    lane = core.site.lane("W", "A")
+    wx, wy = core.site.waypoint_pose("W")
+    x, y = wx + lane.ux * 0.1, wy + lane.uy * 0.1
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("r1", x, y, 0.0, "MOVING")
+    core.tick()
+    assert core.reinstate("r2")
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("r2", wx, wy, 0.0, "IDLE")  # r1이 쥔 W에 놓았다
+    out = core.tick()
+    assert [c.goal_id for c in cmds(out, "CancelCmd")] == [first.goal_id]
+    core.on_move_result("r1", first.goal_id, False, "CANCELED")
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("r1", x, y, 0.0, "IDLE")
+    now[0] += core.params.move_retry_wait_s + 0.1
+    assert not moves(core.tick()), "held for the placement"
+    px, py = core.site.waypoint_pose("P-3")  # r2를 빈 자리로 옮겼다
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("r2", px, py, 0.0, "IDLE")
+        core.on_robot_state("r1", x, y, 0.0, "IDLE")
+    again = moves(core.tick())
+    assert again and again[0].target_id == first.target_id
+    assert again[0].path[0][:2] == pytest.approx((x, y))
+    assert again[0].path[-1][:2] == pytest.approx(first.path[-1][:2])

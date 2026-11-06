@@ -45,6 +45,44 @@ def test_yaw_follows_heading():
     assert m.yaw == pytest.approx(1.5707963, abs=1e-6)
 
 
+def test_a_path_is_followed_segment_by_segment():
+    """path 모드: 모서리를 가로지르지 않고 선분을 차례로 간다."""
+    m = Motion(0.0, 0.0)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    assert m.remaining() == pytest.approx(2.0)
+    m.step(1.0, 0.5)
+    assert (m.x, m.y) == pytest.approx((0.5, 0.0))
+    m.step(1.0, 1.0)  # 모서리를 돌아 0.5 m 더 간다
+    assert (m.x, m.y) == pytest.approx((1.0, 0.5))
+    assert m.yaw == pytest.approx(1.5707963, abs=1e-6)
+    assert m.remaining() == pytest.approx(0.5)
+    m.step(5.0, 1.0)
+    assert (m.x, m.y) == (1.0, 1.0) and not m.moving
+
+
+def test_a_point_just_behind_is_skipped_not_driven_back_to():
+    m = Motion(1.0, 0.1)  # 모서리 (1, 0)을 지나 위로 0.1 m
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    m.step(0.1, 1.0)
+    assert (m.x, m.y) == pytest.approx((1.0, 0.2))
+
+
+def test_a_corner_ahead_on_the_lane_in_is_kept():
+    m = Motion(0.9, 0.0)  # 모서리 (1, 0) 앞 0.1 m
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    m.step(0.1, 1.0)
+    assert (m.x, m.y) == pytest.approx((1.0, 0.0))
+
+
+def test_clearing_the_target_drops_the_path():
+    m = Motion(0.0, 0.0)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    m.clear_target()
+    m.set_target(0.0, 1.0)
+    m.step(10.0, 1.0)
+    assert (m.x, m.y) == (0.0, 1.0)
+
+
 def test_noise_is_seeded_and_zero_sigma_is_exact():
     a = noisy_pose(1.0, 2.0, 0.03, random.Random(5))
     b = noisy_pose(1.0, 2.0, 0.03, random.Random(5))
@@ -93,6 +131,14 @@ def test_nav_abort_consumes_count_after_start_time():
     s = FaultSchedule(faults(), "pinky2")
     assert s.take_nav_abort(74.0) is False
     assert [s.take_nav_abort(80.0) for _ in range(3)] == [True, True, False]
+
+
+def test_a_nav_abort_given_back_is_taken_by_the_next_goal():
+    """중단 전에 대체되거나 취소된 목표는 고장 횟수를 돌려준다."""
+    s = FaultSchedule(faults(), "pinky2")
+    assert [s.take_nav_abort(80.0) for _ in range(2)] == [True, True]
+    s.give_back_nav_abort()
+    assert [s.take_nav_abort(81.0) for _ in range(2)] == [True, False]
 
 
 def test_nav_abort_with_a_target_hits_only_goals_to_that_waypoint():

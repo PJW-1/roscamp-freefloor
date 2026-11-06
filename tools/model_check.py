@@ -542,6 +542,8 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=1, help="processes working on the states")
     parser.add_argument("--confirm", type=int, default=1,
                         help="reports past a zone that free it. The real core takes 3")
+    parser.add_argument("--goal-mode", choices=("file", "point", "path"), default="file",
+                        help="lane_goal_mode: as fleet_params.yaml says, or forced")
     parser.add_argument("--blocks", action="store_true",
                         help="add the events block X and unblock X")
     parser.add_argument("--detour", choices=("file", "on", "off"), default="file",
@@ -552,11 +554,13 @@ def main() -> int:
     bundle = {"file": None, "on": True, "off": False}[args.bundle]
     site = load_lane_map(args.map, bundle_two_way=bundle)
     start = args.start.split(",") if args.start else None
+    params = load_params()
+    if args.goal_mode != "file":
+        params = replace(params, lane_goal_mode=args.goal_mode)
 
     def show(known, frontier, dead):
         print(f"  {known} known, {frontier} to do, {dead} deadlocks", file=sys.stderr, flush=True)
 
-    params = load_params()
     if args.detour != "file":
         params = replace(params, detour_enabled=args.detour == "on")
     result = check(site, args.robots, start, params=params, max_states=args.max_states,
