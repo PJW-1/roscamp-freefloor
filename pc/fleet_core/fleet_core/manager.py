@@ -35,7 +35,7 @@ from fleet_core.common.validate import (
     text,
 )
 from fleet_core.orders.orchestrator import FILL, FILLING, SWAP, SWAPPING, OrderOrchestrator
-from fleet_core.orders.validate import orders_problem
+from fleet_core.orders.validate import orders_problem, reinstate_problem
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.mission import (
     AT_STATION,
@@ -81,6 +81,7 @@ class FleetManager:
         self._board: list = []  # 검사를 통과한 마지막 주문 목록
         self._rejecting: set = set()  # 거부를 이미 알린 토픽 출처
         self.last_clear_reason = ""
+        self.last_reinstate_reason = ""
 
     @property
     def zones(self):
@@ -189,6 +190,28 @@ class FleetManager:
             self.orchestrator.on_robot_removed(robot)
         self._pump()
         return released
+
+    def reinstate(self, robot, basket, note="") -> bool:
+        """치운 로봇을 다시 넣는다. 거부면 False, 이유는 last_reinstate_reason(받아들이면 빈 값).
+
+        모르는 로봇, OUT_OF_SERVICE가 아닌 로봇, 틀린 basket은 INPUT_REJECTED.
+        맵에는 다음 위치 보고로 오른다. 그 전에는 일을 받지 않고 다른 로봇도 멈추지 않는다.
+        """
+        self._input("reinstate", robot, basket, note)
+        problem = checked(lambda: reinstate_problem(robot, basket, self.traffic.robots)
+                          or self.traffic.reinstate_refusal(text(robot)))
+        self.last_reinstate_reason = problem
+        if problem:
+            self._reject(f"reinstate refused: {problem}: {text(note)}", robot)
+            return False
+        name, basket = text(robot), text(basket)
+        self.traffic.reinstate(name)
+        self.orchestrator.on_robot_reinstated(name, basket)
+        self._out.append(EventOut("INFO", "ROBOT_REINSTATED",
+                                  f"basket {basket}, on the map at its next report: {text(note)}",
+                                  name))
+        self._pump()
+        return True
 
     # ---- outputs ------------------------------------------------------------------------
 

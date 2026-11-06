@@ -104,7 +104,20 @@ class FaultSchedule:
         return any(f.type == "stuck" and t >= f.at_s for f in self._own)
 
     def removed(self, t: float) -> bool:
-        return any(f.type == "operator_remove" and t >= f.at_s for f in self._own)
+        """치웠고 그 뒤 다시 투입하지 않았다."""
+        last = self._last(t)
+        return last is not None and last.type == "operator_remove"
+
+    def put_back(self, t: float):
+        """지금 다시 투입된 상태면 놓인 지점, 아니면 None."""
+        last = self._last(t)
+        return last.start if last is not None and last.type == "operator_reinstate" else None
+
+    def _last(self, t: float):
+        """t까지 일어난 마지막 치우기나 다시 투입. 같은 시각이면 파일 뒤쪽."""
+        done = [f for f in self._own
+                if f.type in ("operator_remove", "operator_reinstate") and f.at_s <= t]
+        return sorted(done, key=lambda f: f.at_s)[-1] if done else None
 
     def take_nav_abort(self, t: float) -> bool:
         """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다."""

@@ -135,6 +135,77 @@ def test_traffic_alone_refuses_an_unknown_robot_or_zone_without_raising():
     assert [e.code for e in cmds(out, "EventOut")] == ["INPUT_REJECTED", "INPUT_REJECTED"]
 
 
+# ---- reinstate --------------------------------------------------------------------------------
+
+
+def _cleared_pinky2():
+    core, now = make()
+    core.confirm_clear("pinky2", core.zones.held_by("pinky2"), "lifted")
+    core.tick()
+    return core
+
+
+def test_reinstate_of_an_unknown_robot_is_refused_with_a_reason_and_input_rejected():
+    core = _cleared_pinky2()
+    assert core.reinstate("pinky9", "EMPTY", "typo") is False
+    assert "pinky9" in core.last_reinstate_reason
+    out = core.tick()
+    assert len(rejected(out)) == 1
+    assert "ROBOT_REINSTATED" not in codes(out)
+
+
+def test_reinstate_of_a_robot_that_is_not_out_of_service_is_refused():
+    core = _cleared_pinky2()
+    held = core.zones.held_by("pinky1")
+    assert core.reinstate("pinky1", "EMPTY", "wrong robot") is False
+    assert "OUT_OF_SERVICE" in core.last_reinstate_reason
+    assert core.zones.held_by("pinky1") == held
+    assert core.traffic.robot_view("pinky1")["on_map"]
+    events = rejected(core.tick())
+    assert len(events) == 1 and events[0].robot == "pinky1"
+
+
+@pytest.mark.parametrize("basket", ["FULL", "empty", "", None, 3, ["EMPTY"]])
+def test_reinstate_with_a_wrong_basket_is_refused_and_changes_nothing(basket):
+    core = _cleared_pinky2()
+    assert core.reinstate("pinky2", basket, "bad") is False
+    assert "basket" in core.last_reinstate_reason
+    assert core.traffic.robot_view("pinky2")["fault"] == "OUT_OF_SERVICE"
+    out = core.tick()
+    assert len(rejected(out)) == 1
+    assert "ROBOT_REINSTATED" not in codes(out)
+
+
+def test_reinstate_while_the_robot_still_holds_a_zone_is_refused():
+    """위치로 풀리지 않는 구역이 남았다. confirm_clear로 먼저 풀어야 한다."""
+    core, _ = make()
+    core.confirm_clear("pinky2", [], "kept its zone")  # 쥔 구역이 있어 CLEAR_REFUSED
+    core.confirm_clear("pinky2", ["P-3"], "a zone it does not hold")
+    assert core.robot_view("pinky2")["state"] == "OUT_OF_SERVICE"
+    assert core.zones.held_by("pinky2")
+    assert core.reinstate("pinky2", "EMPTY", "too early") is False
+    assert "holds" in core.last_reinstate_reason
+    assert len(rejected(core.tick())) == 1
+    core.confirm_clear("pinky2", core.zones.held_by("pinky2"), "now all")
+    assert core.reinstate("pinky2", "EMPTY", "back") is True
+
+
+def test_every_refused_reinstate_call_says_so_once():
+    core = _cleared_pinky2()
+    core.reinstate("pinky2", "FULL", "one")
+    core.reinstate("pinky2", "FULL", "two")
+    assert len(rejected(core.tick())) == 2
+
+
+def test_an_accepted_reinstate_has_no_reason():
+    core = _cleared_pinky2()
+    core.reinstate("pinky2", "FULL", "typo")
+    core.tick()
+    assert core.reinstate("pinky2", "EMPTY", "back") is True
+    assert core.last_reinstate_reason == ""
+    assert not rejected(core.tick())
+
+
 # ---- robot state ------------------------------------------------------------------------------
 
 
@@ -530,6 +601,10 @@ ODD_CALLS = {
     "a zone": lambda c: c.confirm_clear("pinky1", [_Unprintable()], "lifted"),
     "a robot to clear": lambda c: c.confirm_clear(_Spiteful("pinky1"), ["P-6"], "lifted"),
     "a note": lambda c: c.confirm_clear("pinky1", ["NO-SUCH-ZONE"], _Unprintable()),
+    "a robot to reinstate": lambda c: c.reinstate(_Spiteful("pinky1"), "EMPTY", "back"),
+    "a basket": lambda c: c.reinstate("pinky1", _Spiteful("EMPTY"), "back"),
+    "a basket that cannot be printed": lambda c: c.reinstate("pinky1", _Unprintable(), "back"),
+    "a reinstate note": lambda c: c.reinstate("pinky1", "FULL", _Unprintable()),
 }
 
 

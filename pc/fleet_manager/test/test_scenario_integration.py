@@ -17,7 +17,7 @@ from ament_index_python.packages import (  # noqa: E402
 )
 
 SCENARIOS = ["basic_orders", "order_burst", "shared_lane_failure", "stock_shortage",
-             "stuck_robot", "operator_recovery"]
+             "stuck_robot", "operator_recovery", "reinstate"]
 WALL_TIMEOUT_S = 420
 FIRST_DOMAIN = 50  # 시나리오마다 도메인 하나, 로봇 네트워크와 겹치지 않는 범위
 CHECKER = Path(__file__).parents[3] / "scripts" / "check_interfaces.py"

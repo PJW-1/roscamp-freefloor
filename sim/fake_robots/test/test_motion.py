@@ -106,6 +106,19 @@ def test_operator_remove_is_per_robot_and_lasts():
     assert not other.removed(1e6)
 
 
+def test_operator_reinstate_ends_a_removal_until_the_next_one():
+    own = [Fault(at_s=60, robot="pinky1", type="operator_remove"),
+           Fault(at_s=100, robot="pinky1", type="operator_reinstate", start=(3, 4)),
+           Fault(at_s=200, robot="pinky1", type="operator_remove")]
+    s = FaultSchedule(own, "pinky1")
+    assert s.removed(60.0) and s.removed(99.9)
+    assert not s.removed(100.0) and not s.removed(199.9)
+    assert s.removed(200.0) and s.removed(1e6)
+    assert s.put_back(99.9) is None and s.put_back(100.0) == (3, 4)
+    assert s.put_back(150.0) == (3, 4) and s.put_back(200.0) is None
+    assert FaultSchedule(own, "pinky2").put_back(150.0) is None
+
+
 def test_arm_fail_counts_down_per_arm_after_its_start_time():
     f = ArmFaults([Fault(at_s=5, type="arm_fail", arm="arm1", count=2)])
     assert f.take_arm_fail("arm1", 4.9, 1) is None

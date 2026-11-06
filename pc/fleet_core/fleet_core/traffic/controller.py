@@ -54,11 +54,12 @@ from fleet_core.traffic.mission import (
     _Mission,
 )
 from fleet_core.traffic.recovery import TrafficRecovery
+from fleet_core.traffic.reinstate import TrafficReinstate
 from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
-class TrafficController(TrafficRecovery):
+class TrafficController(TrafficRecovery, TrafficReinstate):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -91,6 +92,7 @@ class TrafficController(TrafficRecovery):
         self._missing_reported = False
         self._no_robot_warned = False
         self.clear_reason = ""  # 마지막 confirm_clear 거부 이유, 받아들이면 빈 값
+        self._joining: set[str] = set()  # 다시 투입했고 아직 맵에 안 오른 로봇(reinstate.py)
 
     # ---- inputs -------------------------------------------------------------------------
 
@@ -234,7 +236,7 @@ class TrafficController(TrafficRecovery):
                     f"{m.dest} error x={error_x_cm} y={error_y_cm} yaw={error_yaw_deg}", robot)
         self._finish_dispatch(m, error_x_cm, error_y_cm, error_yaw_deg)
 
-    # 운영자 입력 confirm_clear는 recovery.py에 있다.
+    # 운영자 입력 confirm_clear는 recovery.py, reinstate는 reinstate.py에 있다.
 
     # ---- outputs ------------------------------------------------------------------------
 
@@ -367,8 +369,9 @@ class TrafficController(TrafficRecovery):
         return self._goal_seq
 
     def _not_placed(self) -> list[_Mission]:
+        """시작 때 기다리는 로봇. 다시 투입한 로봇은 기다리지 않는다."""
         return [m for m in self._missions.values()
-                if not m.placed and m.fault != OUT_OF_SERVICE]
+                if not m.placed and m.fault != OUT_OF_SERVICE and m.name not in self._joining]
 
     def _everyone_reported(self, now: float) -> bool:
         missing = self._not_placed()
@@ -409,6 +412,7 @@ class TrafficController(TrafficRecovery):
                             f"{m.name} cannot take {zone}, held: {in_the_way}", m.name)
             return
         m.placed = True
+        self._joined(m)
         m.path = [waypoint]
         m.idx = 0
         m.phase = PARKED if waypoint in self.site.parking else IDLE

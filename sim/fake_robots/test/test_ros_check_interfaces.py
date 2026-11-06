@@ -11,7 +11,7 @@ from conftest import CONTRACT, REPO, write_scenario  # noqa: E402
 
 SCRIPT = REPO / "scripts" / "check_interfaces.py"
 # 가짜가 아닌 제공자: 플릿 매니저 몫이다.
-SKIP = "assignments,zones,robots,heartbeat,confirm_clear"
+SKIP = "assignments,zones,robots,heartbeat,confirm_clear,reinstate"
 
 
 def start_all(harness, tmp_path):

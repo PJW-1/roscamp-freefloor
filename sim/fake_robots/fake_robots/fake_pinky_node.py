@@ -78,6 +78,7 @@ class FakePinkyNode(Node):
         self._motion = Motion(x, y)
         self._reports = DelayLine(cfg.report_delay_s)
         self._off_course = (site.origin[0] - OFF_COURSE_M, site.origin[1] - OFF_COURSE_M)
+        self._site = site
         self._removed = False
         self._sc = ScenarioClock(self)
         self._lock = threading.RLock()
@@ -239,6 +240,8 @@ class FakePinkyNode(Node):
             if self._faults.removed(t):
                 self._remove(goal)
                 return
+            if self._removed:
+                self._put_back(self._faults.put_back(t))
             if dt <= 0 or goal is None or goal.done.is_set() or self._faults.stuck(t):
                 return
             if self._heartbeat_lost():
@@ -266,6 +269,14 @@ class FakePinkyNode(Node):
             self._end(goal, False, MoveTo.Result.REASON_NAV_ABORTED)
         self._motion.clear_target()
         self._motion.x, self._motion.y = self._off_course
+
+    def _put_back(self, waypoint) -> None:
+        """운영자가 로봇을 이 지점에 다시 놓고 켰다. 바구니는 시나리오가 정한 대로다."""
+        self._removed = False
+        self._motion.clear_target()
+        self._motion.x, self._motion.y = self._site.waypoint_pose(waypoint)
+        self._rest = RobotState.STATE_IDLE
+        self._reports.clear()
 
     def _publish_state(self) -> None:
         with self._lock:

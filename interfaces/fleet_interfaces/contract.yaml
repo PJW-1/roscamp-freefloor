@@ -40,3 +40,5 @@ services:
   - {key: report_order, name: "/central/report_order", type: fleet_interfaces/srv/ReportOrder}
   # 제안(팀 합의 전): 응답에 string reason(거부 이유)을 더했다. 이름과 기존 필드는 그대로다.
   - {key: confirm_clear, name: "/fleet/confirm_clear", type: fleet_interfaces/srv/ConfirmClear}
+  # 제안(팀 합의 전): 치운 로봇을 다시 투입한다. basket은 EMPTY 또는 NONE.
+  - {key: reinstate, name: "/fleet/reinstate", type: fleet_interfaces/srv/Reinstate}

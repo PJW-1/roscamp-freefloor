@@ -215,6 +215,21 @@ def test_operator_remove_takes_the_robot_off_the_course_for_good(harness, tmp_pa
     assert not p.goal("QO").accepted
 
 
+def test_operator_reinstate_puts_the_robot_back_and_it_reports_again(harness, tmp_path):
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}},
+        faults=[{"at_s": 0.5, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-5"}])
+    assert wait_until(lambda: p.states, 5.0)
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] > 0.5, 5.0), "still reporting"
+    x, y = SITE.waypoint_pose(next(iter(SITE.zones["P-5"])))
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] < 0.3
+                      and (p.states[-1][1].pose.x, p.states[-1][1].pose.y)
+                      == pytest.approx((x, y), abs=1e-6), 8.0), "never back on P-5"
+    assert p.states[-1][1].state == RobotState.STATE_IDLE
+    assert p.goal("QO").accepted
+
+
 def test_dock_reports_phase_and_error(harness, tmp_path):
     p = start(harness, tmp_path)
     phases = []

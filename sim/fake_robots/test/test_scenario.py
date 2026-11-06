@@ -9,7 +9,7 @@ from fleet_core.traffic.lane_map import load_lane_map
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 SIX = {"basic_orders", "order_burst", "shared_lane_failure", "stock_shortage", "stuck_robot",
-       "operator_recovery"}
+       "operator_recovery", "reinstate"}
 
 
 @pytest.fixture(scope="module")
@@ -150,6 +150,57 @@ def test_gone_robots_are_the_stuck_and_the_removed(site):
                 {"at_s": 1, "robot": "pinky2", "type": "operator_remove"},
                 {"at_s": 1, "robot": "pinky3", "type": "comm_loss", "duration_s": 1}]), site)
     assert sc.gone_robots == {"pinky1", "pinky2"}
+
+
+def _with_reinstate(*extra, basket=None):
+    back = {"at_s": 20, "robot": "pinky1", "type": "operator_reinstate", "start": "P-6"}
+    if basket is not None:
+        back["basket"] = basket
+    return minimal(expect={"orders_shipped_min": 1}, faults=[
+        {"at_s": 10, "robot": "pinky1", "type": "operator_remove"}, back, *extra])
+
+
+def test_operator_reinstate_puts_a_removed_robot_back_on_a_waypoint(site):
+    sc = parse_scenario(_with_reinstate(), site)
+    back = sc.faults[1]
+    assert back.type == "operator_reinstate" and back.start == (3, 4)
+    assert back.basket == "EMPTY"
+    assert parse_scenario(_with_reinstate(basket="NONE"), site).faults[1].basket == "NONE"
+    assert sc.gone_robots == set(), "a robot put back is not gone"
+
+
+@pytest.mark.parametrize("change", [
+    {"start": None},
+    {"start": "NOPE"},
+    {"basket": "FULL"},
+    {"at_s": 5},  # 치우기 전
+])
+def test_a_wrong_reinstate_is_rejected(site, change):
+    data = _with_reinstate()
+    back = data["faults"][1]
+    for key, value in change.items():
+        if value is None:
+            back.pop(key)
+        else:
+            back[key] = value
+    with pytest.raises(ScenarioError):
+        parse_scenario(data, site)
+
+
+def test_a_robot_removed_again_after_its_reinstate_is_gone(site):
+    data = _with_reinstate({"at_s": 30, "robot": "pinky1", "type": "operator_remove"})
+    assert parse_scenario(data, site).gone_robots == {"pinky1"}
+
+
+def test_the_reinstate_scenario_clears_puts_back_and_expects_work_from_the_robot(site):
+    sc = load_scenario(SCENARIOS / "reinstate.yaml", site)
+    remove = next(f for f in sc.faults if f.type == "operator_remove")
+    back = next(f for f in sc.faults if f.type == "operator_reinstate")
+    assert back.robot == remove.robot and back.at_s > remove.at_s
+    assert sc.expect.orders_shipped == len(sc.orders)
+    assert sc.expect.bound_after_reinstate_min >= 1
+    assert sc.expect.event_counts.get("ROBOT_REINSTATED") == 1
+    assert sc.expect.event_counts.get("ROBOT_NOT_REPORTING") == 0
 
 
 def shipped():

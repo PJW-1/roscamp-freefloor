@@ -723,6 +723,51 @@ def test_finish_does_not_wait_for_a_robot_that_is_gone(kind):
     assert j.finished(2.0)
 
 
+REINSTATED = [{"at_s": 1, "robot": "pinky1", "type": "operator_remove"},
+              {"at_s": 5, "robot": "pinky1", "type": "operator_reinstate", "start": "P-5"}]
+
+
+def test_finish_waits_for_a_robot_that_was_put_back():
+    j = ScenarioJudge(SITE, scenario(faults=REINSTATED, orders_shipped_min=1),
+                      margin_m=0.13, grace_s=1.0)
+    put(j, 1.0, "pinky2", WAITING[1], "IDLE")
+    ship(j, "O-1", "O-2", "O-3")
+    assert not j.finished(2.0)
+    put(j, 2.0, "pinky1", WAITING[0], "IDLE")
+    assert j.finished(2.0)
+
+
+def test_a_robot_put_back_is_not_counted_unheld_before_it_leaves_that_spot():
+    """시작 칸처럼 매니저가 다음 보고를 들어야 잡는다."""
+    j = ScenarioJudge(SITE, scenario(faults=REINSTATED, orders_shipped_min=1),
+                      margin_m=0.13, grace_s=1.0)
+    j.on_true_pose("pinky1", *at(OTHER))  # 출발 칸을 떠났다
+    j.tick(0.0)
+    j.on_zones(0.0, {OTHER_ZONE: "pinky1"})
+    j.on_true_pose("pinky1", *at(WAITING[0]))
+    j.on_zones(1.0, {OTHER_ZONE: ""})
+    j.put_back("pinky1", WAITING[0])
+    for t in (1.0, 3.0, 5.0):
+        j.tick(t)
+    assert check(j, "unheld_zone_pose")["value"] == 0
+    j.on_true_pose("pinky1", *at(LANE))
+    for t in (6.0, 8.0, 10.0):
+        j.tick(t)
+    assert check(j, "unheld_zone_pose")["value"] == 1
+
+
+def test_orders_bound_by_a_robot_after_its_reinstate_are_counted():
+    j = ScenarioJudge(SITE, scenario(faults=REINSTATED, orders_shipped_min=1,
+                                     bound_after_reinstate_min=1), margin_m=0.13, grace_s=1.0)
+    event(j, "ORDER_BOUND", "O-1", t=1.0, source="pinky1")
+    event(j, "ROBOT_REINSTATED", "basket EMPTY", t=2.0, source="pinky2")
+    event(j, "ORDER_BOUND", "O-2", t=3.0, source="pinky1")
+    assert check(j, "bound_after_reinstate_min") == {"value": 0, "minimum": 1, "ok": False}
+    event(j, "ROBOT_REINSTATED", "basket EMPTY", t=4.0, source="pinky1")
+    event(j, "ORDER_BOUND", "O-3", t=5.0, source="pinky1")
+    assert check(j, "bound_after_reinstate_min") == {"value": 1, "minimum": 1, "ok": True}
+
+
 def test_finish_waits_for_a_robot_after_a_comm_loss():
     lost = scenario(faults=[{"at_s": 1, "robot": "pinky1", "type": "comm_loss", "duration_s": 5}],
                     orders_shipped_min=1)

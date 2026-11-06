@@ -64,6 +64,9 @@ class ScenarioJudge:
         self._unheld_counted: set[tuple[str, str]] = set()
         self._over: set[tuple[str, ...]] = set()
         self._left_start: set[str] = set()
+        self._start_cell: dict[str, object] = {}  # 다시 투입한 로봇이 놓인 지점
+        self._reinstated: set[str] = set()
+        self.bound_after_reinstate = 0
         # 주문
         self.registered: list[str] = list(scenario.order_ids)
         self.final: dict[str, str] = {}
@@ -123,7 +126,11 @@ class ScenarioJudge:
         order = order_id_of(detail)
         if code == "ORDER_ACCEPTED" and order not in self.registered:
             self.registered.append(order)  # 시나리오 주문은 처음부터 등록돼 있다
+        elif code == "ROBOT_REINSTATED":
+            self._reinstated.add(source)
         elif code == "ORDER_BOUND":
+            if source in self._reinstated:
+                self.bound_after_reinstate += 1
             self.bound_log.append(order)
             self.order_log.append(("BOUND", order))
             self._bound_now.add(order)
@@ -139,6 +146,11 @@ class ScenarioJudge:
     def note(self, t: float, source: str, code: str, detail: str) -> None:
         """events.csv에 남기되 플릿 이벤트로 세면 안 되는 것을 기록한다."""
         self.event_rows.append((t, "NOTE", source, code, detail))
+
+    def put_back(self, robot: str, waypoint) -> None:
+        """관리자가 로봇을 이 지점에 다시 놓았다. 매니저가 다음 보고로 잡을 때까지 시작 칸과 같다."""
+        self._start_cell[robot] = waypoint
+        self._left_start.discard(robot)
 
     def on_board(self, order_ids: list[str]) -> None:
         self.board = list(order_ids)
@@ -251,7 +263,7 @@ class ScenarioJudge:
         cfg = self.scenario.robots.get(robot)
         if robot in self._left_start or cfg is None:
             return False
-        if self.site.nearest_waypoint(x, y) == cfg.start:
+        if self.site.nearest_waypoint(x, y) == self._start_cell.get(robot, cfg.start):
             return True
         self._left_start.add(robot)
         return False
@@ -393,6 +405,8 @@ class ScenarioJudge:
             "direct_returns_min": at_least(self.direct_returns, ex.direct_returns_min),
             "parked_while_backlog": exact(self.parked_while_backlog, ex.parked_while_backlog),
             "timed_out": exact(timed_out, ex.timed_out),
+            "bound_after_reinstate_min": at_least(self.bound_after_reinstate,
+                                                  ex.bound_after_reinstate_min),
             "unexpected_errors": {"value": len(unexpected), "expected": ex.unexpected_errors,
                                   "codes": unexpected,
                                   "ok": len(unexpected) == ex.unexpected_errors},

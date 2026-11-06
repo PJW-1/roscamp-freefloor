@@ -7,11 +7,12 @@ from pathlib import Path
 import yaml
 
 ORDER_RESULTS = ("SHIPPED", "PARTIAL", "HELD")
-ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove")
+ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "operator_reinstate")
 ARM_FAULTS = ("arm_fail", "swap_partial")
 FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
 # 이 고장이 난 로봇은 돌아오지 않으므로 주차를 기다리지 않는다.
 GONE_FAULTS = ("stuck", "operator_remove")
+REINSTATE_BASKETS = ("EMPTY", "NONE")  # operator_reinstate가 관리자 대신 알리는 바구니
 EXPECT_DEFAULTS = {
     "all_orders_finished": True,
     "orders_shipped": None,  # None은 검사 안 함, 숫자는 정확히 일치해야 함
@@ -27,6 +28,7 @@ EXPECT_DEFAULTS = {
     "parked_while_backlog": 0,
     "timed_out": False,  # 시간 초과가 목적인 시나리오에서만 true
     "unexpected_errors": 0,  # 코드가 events_include나 event_counts에 없는 ERROR 이벤트
+    "bound_after_reinstate_min": 0,  # 다시 투입한 로봇이 그 뒤에 묶은 주문 수
     "order_results": {},  # 주문 id: SHIPPED, PARTIAL, HELD
     "events_include": [],
     "event_counts": {},  # 코드: 정확히 몇 번 나와야 하는지
@@ -78,6 +80,8 @@ class Fault:
     count: int = 1
     arm: str = ""  # arm_fail의 대상
     after_items: int = 0  # arm_fail: 한 목표에서 몇 개를 놓은 뒤 실패하는지
+    start: tuple | None = None  # operator_reinstate: 로봇을 다시 놓는 지점
+    basket: str = "EMPTY"  # operator_reinstate: 관리자가 알리는 바구니
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,7 @@ class Expect:
     parked_while_backlog: int = 0
     timed_out: bool = False
     unexpected_errors: int = 0
+    bound_after_reinstate_min: int = 0
     order_results: dict = field(default_factory=dict)
     events_include: list = field(default_factory=list)
     event_counts: dict = field(default_factory=dict)
@@ -121,7 +126,14 @@ class Scenario:
 
     @property
     def gone_robots(self) -> set[str]:
-        return {f.robot for f in self.faults if f.type in GONE_FAULTS}
+        """끝까지 돌아오지 않는 로봇. 마지막 치우기 뒤에 다시 투입하면 빠진다."""
+        gone = set()
+        for f in sorted(self.faults, key=lambda f: f.at_s):  # 안정 정렬: 같은 시각은 파일 순서
+            if f.type in GONE_FAULTS:
+                gone.add(f.robot)
+            elif f.type == "operator_reinstate":
+                gone.discard(f.robot)
+        return gone
 
 
 def _positive(data: dict, key: str, default=None) -> float:
@@ -215,9 +227,29 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
         raise ScenarioError(f"arm_fail needs a workspace arm in {raw}")
     if "at_s" not in raw:
         raise ScenarioError(f"fault has no at_s: {raw}")
+    start, basket = None, str(raw.get("basket", "EMPTY"))
+    if kind == "operator_reinstate":
+        if "start" not in raw:
+            raise ScenarioError(f"operator_reinstate needs a start: {raw}")
+        start = _resolve_start(raw["start"], lane_map)
+        if basket not in REINSTATE_BASKETS:
+            raise ScenarioError(f"operator_reinstate basket must be one of {REINSTATE_BASKETS}")
     return Fault(float(raw["at_s"]), raw.get("robot", ""), kind,
                  float(raw.get("duration_s", 0.0)), int(raw.get("count", 1)),
-                 raw.get("arm", ""), int(raw.get("after_items", 0)))
+                 raw.get("arm", ""), int(raw.get("after_items", 0)), start, basket)
+
+
+def _check_reinstates(faults: list) -> None:
+    """다시 투입은 그 로봇을 치운 뒤에만 할 수 있다."""
+    removed: set[str] = set()
+    for f in sorted(faults, key=lambda f: f.at_s):
+        if f.type == "operator_remove":
+            removed.add(f.robot)
+        elif f.type == "operator_reinstate":
+            if f.robot not in removed:
+                raise ScenarioError(f"operator_reinstate of {f.robot} at {f.at_s} s comes "
+                                    "before any operator_remove of it")
+            removed.discard(f.robot)
 
 
 def _parse_expect(data: dict, faults: list) -> Expect:
@@ -259,6 +291,7 @@ def parse_scenario(data: dict, lane_map) -> Scenario:
 
     stock = _parse_stock(data, lane_map)
     faults = [_parse_fault(raw, robots, lane_map) for raw in data.get("faults") or []]
+    _check_reinstates(faults)
     arm = data.get("arm") or {}
     dock = data.get("dock") or {}
     return Scenario(

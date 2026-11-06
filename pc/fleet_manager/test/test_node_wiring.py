@@ -31,7 +31,7 @@ from fleet_interfaces.msg import (  # noqa: E402
     RobotStatusArray,
     ZoneStateArray,
 )
-from fleet_interfaces.srv import ConfirmClear, ReportOrder  # noqa: E402
+from fleet_interfaces.srv import ConfirmClear, Reinstate, ReportOrder  # noqa: E402
 from fleet_manager.fleet_manager_node import FleetManagerNode  # noqa: E402
 from fleet_manager.goal_tracker import ReportOutbox  # noqa: E402
 from rclpy.action import ActionServer, CancelResponse  # noqa: E402
@@ -338,6 +338,33 @@ def test_a_bad_clear_gives_a_reason_and_input_rejected_and_the_ticks_go_on(graph
     assert not second.result().accepted and "pinky9" in second.result().reason
     publish(graph, "RUN", {"A": 1, "C": 2})
     assert wait_for(lambda: graph.reports), "the node stopped working orders"
+
+
+def test_reinstate_takes_a_cleared_robot_back_and_refuses_a_bad_call_with_a_reason(graph):
+    """11-06 6번: 거부는 이유와 INPUT_REJECTED, 받아들이면 ROBOT_REINSTATED."""
+    fms = graph.fms
+    clear = graph.create_client(ConfirmClear, fms.contract.name("confirm_clear"))
+    back = graph.create_client(Reinstate, fms.contract.name("reinstate"))
+    assert clear.wait_for_service(timeout_sec=10.0) and back.wait_for_service(timeout_sec=10.0)
+    assert wait_for(lambda: fms.core.traffic.robot_view("pinky1")["on_map"]), "never on the map"
+    graph.events.clear()
+    early = back.call_async(Reinstate.Request(robot_id="pinky1", basket="EMPTY", note="x"))
+    assert wait_for(early.done, 10.0), "no reply: the callback raised"
+    assert not early.result().accepted and "OUT_OF_SERVICE" in early.result().reason
+    cleared = clear.call_async(ConfirmClear.Request(
+        robot_id="pinky1", zone_ids=fms.core.zones.held_by("pinky1"), note="lifted"))
+    assert wait_for(cleared.done, 10.0) and cleared.result().accepted
+    wrong = back.call_async(Reinstate.Request(robot_id="pinky1", basket="FULL", note="x"))
+    assert wait_for(wrong.done, 10.0)
+    assert not wrong.result().accepted and "basket" in wrong.result().reason
+    good = back.call_async(Reinstate.Request(
+        robot_id="pinky1", basket=Reinstate.Request.BASKET_EMPTY, note="back"))
+    assert wait_for(good.done, 10.0)
+    assert good.result().accepted and good.result().reason == ""
+    assert wait_for(lambda: any(e.code == "ROBOT_REINSTATED" for e in graph.events), 10.0)
+    rejected = [e for e in graph.events if e.code == "INPUT_REJECTED"]
+    assert len(rejected) == 2 and all(e.level == "WARN" for e in rejected)
+    assert wait_for(lambda: fms.core.traffic.robot_view("pinky1")["on_map"]), "not back on"
 
 
 def test_an_event_is_logged_at_its_own_level(graph, monkeypatch):
