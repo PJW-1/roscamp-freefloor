@@ -35,6 +35,7 @@ expect:
   released_without_position_check: 0
   unheld_zone_pose: 0
   bound_after_reinstate_min: 1
+  shipped_after_reinstate_min: 1
   events_include: [ZONES_CLEARED, ROBOT_REINSTATED]
   event_counts: {ZONES_CLEARED: 1, ROBOT_REINSTATED: 1, INPUT_REJECTED: 0, PLACEMENT_CONFLICT: 0, ROBOT_NOT_REPORTING: 0}
   order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED, O-007: SHIPPED}

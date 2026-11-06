@@ -2,6 +2,7 @@
 
 운영자 역할도 한다. 로봇이 코스에서 치워지면(고장 operator_remove) 그 로봇이
 아직 쥔 구역으로 confirm_clear를 부른다. 다시 놓이면(operator_reinstate) reinstate를 부른다.
+치우기와 재투입 판단은 operator_clear.py에 있다(남은 구역은 다시 치운다).
 """
 from __future__ import annotations
 
@@ -33,6 +34,7 @@ from fake_robots.common import (
     load_scenario_param,
 )
 from fake_robots.judge import ScenarioJudge
+from fake_robots.operator_clear import OperatorClear
 from fake_robots.safety_meter import SafetyMeter
 
 
@@ -67,13 +69,14 @@ class ScenarioMonitorNode(Node):
         self._seen: dict[str, str] = {}
         self._status_rows: list[list] = []
         self.exit_code: int | None = None
+        self._sc_robots = list(scenario.robots)
         self._removals = sorted((f.at_s, f.robot) for f in scenario.faults
                                 if f.type == "operator_remove")
         self._confirm = self.create_client(ConfirmClear, contract.name("confirm_clear"))
         self._reinstates = sorted(((f.at_s, f.robot, f.start, f.basket) for f in scenario.faults
                                    if f.type == "operator_reinstate"), key=lambda r: r[0])
         self._reinstate = self.create_client(Reinstate, contract.name("reinstate"))
-        self._cleared: dict[str, int] = {}  # 받아들여진 치우기 중 아직 재투입하지 않은 수
+        self._operator = OperatorClear()
 
         def sub(msg_type, key, callback, **names):
             self.create_subscription(
@@ -115,6 +118,7 @@ class ScenarioMonitorNode(Node):
 
     def _on_event(self, msg: FleetEvent) -> None:
         self.judge.on_event(self._sc.now(), msg.level, msg.source, msg.code, msg.detail)
+        self._operator.on_event(msg.source, msg.code, msg.detail)
 
     def _on_assignments(self, msg: AssignmentArray) -> None:
         text = ";".join(f"{a.robot_id}:{a.task_type}:{a.station_id}:{a.order_id}"
@@ -141,13 +145,25 @@ class ScenarioMonitorNode(Node):
             self.judge.note(self._sc.now(), "order_board", "RUN_MODE", msg.run_mode)
 
     def _clear_removed_robots(self, t: float) -> None:
-        """로봇이 실제로 코스에서 빠지고 호출에 답할 쪽이 생길 때까지 기다린다."""
+        """로봇이 실제로 코스에서 빠지고 호출에 답할 쪽이 생길 때까지 기다린다.
+
+        남은 구역이 있으면 같은 NOTE를 한 줄 더 남기고 다시 부른다(상한 뒤 멈춤).
+        """
         while self._removals and self._removals[0][0] <= t:
             robot = self._removals[0][1]
             if not self.judge.off_course(robot) or not self._confirm.service_is_ready():
-                return
+                break
             self._removals.pop(0)
-            zones = self.judge.held_by(robot)
+            self._operator.start(robot)
+        if not self._confirm.service_is_ready():
+            return
+        for robot in sorted(self._sc_robots):
+            zones = self._operator.next_clear(robot, self.judge.held_by(robot))
+            if self._operator.gave_up(robot):
+                self.judge.note(t, robot, "OPERATOR_GAVE_UP",
+                                f"zones left after {self._operator.max_clears} clears")
+            if zones is None:
+                continue
             self.judge.note(t, robot, "OPERATOR_REMOVE", " ".join(zones))
             future = self._confirm.call_async(ConfirmClear.Request(
                 robot_id=robot, zone_ids=zones, note="operator_remove"))
@@ -155,8 +171,8 @@ class ScenarioMonitorNode(Node):
 
     def _on_cleared(self, robot: str, future) -> None:
         response = future.result()
-        if response.accepted:
-            self._cleared[robot] = self._cleared.get(robot, 0) + 1
+        self._operator.on_cleared(robot, response.accepted, list(response.released_zones),
+                                  self._sc.now())
         self.judge.note(self._sc.now(), robot, "CONFIRM_CLEAR",
                         f"accepted={response.accepted} {' '.join(response.released_zones)}")
 
@@ -168,11 +184,12 @@ class ScenarioMonitorNode(Node):
         waiting = []
         for item in self._reinstates:
             at_s, robot, waypoint, basket = item
-            if (at_s > t or not self._cleared.get(robot) or self.judge.off_course(robot)
+            if (at_s > t or not self._operator.ready(robot, self.judge.held_by(robot), t)
+                    or self.judge.off_course(robot)
                     or not self._reinstate.service_is_ready()):
                 waiting.append(item)
                 continue
-            self._cleared[robot] -= 1
+            self._operator.reinstated(robot)
             self.judge.put_back(t, robot, waypoint)
             self.judge.note(t, robot, "OPERATOR_REINSTATE", f"basket={basket}")
             future = self._reinstate.call_async(Reinstate.Request(

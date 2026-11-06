@@ -75,6 +75,9 @@ class ScenarioJudge:
         self._put_back: dict[str, tuple] = {}  # 다시 투입한 로봇 -> (놓인 지점, 면제 끝 시각)
         self._reinstated: set[str] = set()
         self.bound_after_reinstate = 0
+        self._bound_by_reinstated: set[str] = set()  # 재투입 뒤 그 로봇이 묶어 아직 쥔 주문
+        self.shipped_after_reinstate = 0
+        self._back_now: set[str] = set()  # 재투입 뒤 다시 치우지 않은 로봇
         # 주문
         self.registered: list[str] = list(scenario.order_ids)
         self.final: dict[str, str] = {}
@@ -153,20 +156,32 @@ class ScenarioJudge:
             self.registered.append(order)  # 시나리오 주문은 처음부터 등록돼 있다
         elif code == "ROBOT_REINSTATED":
             self._reinstated.add(source)
+            self._back_now.add(source)
+        elif code == "ZONES_CLEARED":
+            self._back_now.discard(source)
         elif code == "ORDER_BOUND":
             if source in self._reinstated:
                 self.bound_after_reinstate += 1
+            if source in self._back_now:
+                self._bound_by_reinstated.add(order)
+            else:
+                self._bound_by_reinstated.discard(order)
             self.bound_log.append(order)
             self.order_log.append(("BOUND", order))
             self._bound_now.add(order)
         elif code == "ORDER_REQUEUED":
             self.order_log.append(("REQUEUED", order))
             self._bound_now.discard(order)
+            self._bound_by_reinstated.discard(order)
         elif code in FINAL_CODES:
             self.final[order] = FINAL_CODES[code]
+            mine = order in self._bound_by_reinstated
+            self._bound_by_reinstated.discard(order)  # 최종 이벤트는 한 번만 센다
             self.final_counts[FINAL_CODES[code]] += 1
             if code != "ORDER_HELD":
                 self.ship_log.append(order)
+                if mine:
+                    self.shipped_after_reinstate += 1
                 if self._isolated and not self._operator_came:
                     self.shipped_before_operator += 1
 
@@ -463,6 +478,8 @@ class ScenarioJudge:
             "timed_out": exact(timed_out, ex.timed_out),
             "bound_after_reinstate_min": at_least(self.bound_after_reinstate,
                                                   ex.bound_after_reinstate_min),
+            "shipped_after_reinstate_min": at_least(self.shipped_after_reinstate,
+                                                    ex.shipped_after_reinstate_min),
             "unexpected_errors": {"value": len(unexpected), "expected": ex.unexpected_errors,
                                   "codes": unexpected,
                                   "ok": len(unexpected) == ex.unexpected_errors},

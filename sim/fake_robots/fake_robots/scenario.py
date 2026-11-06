@@ -30,6 +30,7 @@ EXPECT_DEFAULTS = {
     "timed_out": False,  # 시간 초과가 목적인 시나리오에서만 true
     "unexpected_errors": 0,  # 코드가 events_include나 event_counts에 없는 ERROR 이벤트
     "bound_after_reinstate_min": 0,  # 다시 투입한 로봇이 그 뒤에 묶은 주문 수
+    "shipped_after_reinstate_min": 0,  # 그중 되돌려지지 않고 출고까지 간 주문 수
     "order_results": {},  # 주문 id: SHIPPED, PARTIAL, HELD
     "events_include": [],
     "event_counts": {},  # 코드: 정확히 몇 번 나와야 하는지
@@ -120,6 +121,7 @@ class Expect:
     timed_out: bool = False
     unexpected_errors: int = 0
     bound_after_reinstate_min: int = 0
+    shipped_after_reinstate_min: int = 0
     order_results: dict = field(default_factory=dict)
     events_include: list = field(default_factory=list)
     event_counts: dict = field(default_factory=dict)

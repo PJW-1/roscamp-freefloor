@@ -216,6 +216,7 @@ def test_the_reinstate_scenario_clears_puts_back_and_expects_work_from_the_robot
     assert back.robot == remove.robot and back.at_s > remove.at_s
     assert sc.expect.orders_shipped == len(sc.orders)
     assert sc.expect.bound_after_reinstate_min >= 1
+    assert sc.expect.shipped_after_reinstate_min >= 1
     assert sc.expect.event_counts.get("ROBOT_REINSTATED") == 1
     assert sc.expect.event_counts.get("ROBOT_NOT_REPORTING") == 0
 

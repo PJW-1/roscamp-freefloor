@@ -141,7 +141,7 @@ flowchart TB
 | `fake_arm_node` | arm3만. `/arm3/swap_basket`, `/arm3/state`. 고장 `swap_partial`, `arm.fail_rate` |
 | `fake_vision_node` | `/arm1/vision/items`, `/arm2/vision/items`. 실제 재고를 보여 주고 집어 간 만큼 줄어듭니다 |
 | `fake_central_node` | 재고 기록과 주문 목록, `/central/orders`, `submit_order`, `report_order`, `set_run_mode`, 중앙 이벤트 코드 |
-| `scenario_monitor_node` | 심판. 결과 파일을 쓰고 launch를 끝내며, `operator_remove` 때 관리자 대신 `confirm_clear`를, `operator_reinstate` 때 `reinstate`를 부릅니다 |
+| `scenario_monitor_node` | 심판. 결과 파일을 쓰고 launch를 끝내며, `operator_remove` 때 관리자 대신 `confirm_clear`를, `operator_reinstate` 때 `reinstate`를 부릅니다. 치운 뒤 `ZONES_STILL_HELD`가 오면 남은 구역을 다시 치우고, 남은 구역이 없을 때만 `reinstate`를 부릅니다(`operator_clear.py`). 다시 치우면 `ZONES_CLEARED`가 하나 더 나와 `event_counts`가 실패하므로 드러납니다 |
 
 ## 실행
 
@@ -203,6 +203,7 @@ cat /tmp/run1/summary.json
 | `shipped_before_operator_min` | 첫 `ROBOT_ISOLATED`부터 격리된 로봇의 첫 `ZONES_CLEARED` 전까지 출고(SHIPPED, PARTIAL)한 건수의 최솟값. 로봇 1대가 고장 나도 플릿이 계속 운행하는지 봅니다. 기본 0 |
 | `detours_around_isolated_min` | 격리된 로봇이 치워지기 전에 그 로봇이 쥔 구역을 피한 `DETOUR`(detail의 `held by <로봇>`) 수의 최솟값. detail의 `held by <로봇>`을 모두 보고, 그중 하나라도 치우기 전의 격리 로봇이면 그 이벤트를 한 번 셉니다. 막힌 레인 이유만 있는 `DETOUR`는 세지 않습니다. 기본 0 |
 | `bound_after_reinstate_min` | `ROBOT_REINSTATED`를 받은 로봇이 그 뒤 묶은 주문(`ORDER_BOUND`) 수의 최솟값. 기본 0 |
+| `shipped_after_reinstate_min` | 재투입 뒤 그 로봇이 묶어 되돌려지지(`ORDER_REQUEUED`) 않고 출고(SHIPPED, PARTIAL)까지 간 주문 수의 최솟값. 기본 0 |
 | `zone_holder_max` | 한 구역에 실제로 동시에 있었던 로봇 수의 최댓값 |
 | `released_without_position_check` | 로봇이 아직 구역을 벗어나지 않았는데 해제된 횟수 |
 | `unheld_zone_pose` | 잠그지 않은 구역에 로봇이 있었던 횟수 |
