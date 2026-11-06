@@ -10,7 +10,7 @@ from fleet_core.traffic.lane_map import load_lane_map
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 SIX = {"basic_orders", "order_burst", "shared_lane_failure", "stock_shortage", "stuck_robot",
        "operator_recovery", "blocked_lane", "feature_basic_orders", "feature_blocked_lane",
-       "auto_isolation"}
+       "auto_isolation", "feature_auto_isolation"}
 
 
 @pytest.fixture(scope="module")
@@ -218,6 +218,23 @@ def test_shared_lane_failure_has_both_faults(site):
     assert {f.type for f in sc.faults} == {"comm_loss", "nav_abort"}
 
 
+def test_nav_abort_target_must_be_a_waypoint_and_only_for_nav_abort():
+    site = load_lane_map(SCENARIOS.parent / "maps" / "feature_map.yaml")
+
+    def with_fault(fault):
+        robots = {"pinky1": {"start": "P-3", "speed_mps": 0.2, "pose_noise_m": 0.0}}
+        return minimal(robots=robots, faults=[fault], expect={"orders_shipped": 1})
+    sc = parse_scenario(with_fault({"at_s": 0, "robot": "pinky1", "type": "nav_abort",
+                                    "target": "W"}), site)
+    assert sc.faults[0].target == "W"
+    with pytest.raises(ScenarioError, match="target"):
+        parse_scenario(with_fault({"at_s": 0, "robot": "pinky1", "type": "nav_abort",
+                                   "target": "NOWHERE"}), site)
+    with pytest.raises(ScenarioError, match="target"):
+        parse_scenario(with_fault({"at_s": 0, "robot": "pinky1", "type": "stuck",
+                                   "target": "W"}), site)
+
+
 def fillable(sc, order):
     """다른 주문은 무시하고 선반이 이 주문에 줄 수 있는 것."""
     return {k: min(c, sum(s.get(k, 0) for s in sc.stock.values())) for k, c in order.items.items()}
@@ -277,6 +294,17 @@ def test_auto_isolation_ships_before_the_operator_and_requeues_once(site):
     assert sc.expect.orders_shipped == len(sc.orders)
 
 
+def test_feature_auto_isolation_stops_mid_lane_and_ships_without_the_operator():
+    sc = load_scenario(SCENARIOS / "feature_auto_isolation.yaml")
+    abort = next(f for f in sc.faults if f.type == "nav_abort")
+    remove = next(f for f in sc.faults if f.type == "operator_remove")
+    assert abort.robot == remove.robot and abort.count == 3 and remove.at_s > abort.at_s
+    assert abort.target == "F2", "the abort hits the F1->F2 lane, not a time"
+    assert sc.expect.shipped_before_operator_min >= 4 and sc.expect.orders_shipped == len(sc.orders)
+    assert "DETOUR" in sc.expect.events_include
+    assert sc.expect.event_counts["ROBOT_ISOLATED"] == 1
+
+
 def test_params_file_gives_the_basket_capacity():
     assert load_fleet_params()["basket_capacity"] >= 1
 
@@ -309,7 +337,7 @@ def test_stock_shortage_results_are_tied_to_each_order(site):
 
 def test_only_the_stuck_scenario_may_run_out_of_time(site):
     declared = {path.stem for path in SCENARIOS.glob("*.yaml")
-                if load_scenario(path, site).expect.timed_out}
+                if load_scenario(path, site_of(path, site)).expect.timed_out}
     assert declared == {"stuck_robot"}
 
 

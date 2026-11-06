@@ -92,6 +92,7 @@ class Fault:
     count: int = 1
     arm: str = ""  # arm_fail의 대상
     after_items: int = 0  # arm_fail: 한 목표에서 몇 개를 놓은 뒤 실패하는지
+    target: str = ""  # nav_abort: 이 지점으로 가는 목표만 중단. 비면 모든 목표
 
 
 @dataclass(frozen=True)
@@ -232,9 +233,12 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
         raise ScenarioError(f"fault has no at_s: {raw}")
     if kind == "blocked":
         _positive(raw, "duration_s")  # 물체가 있는 시간
+    target = str(raw.get("target", ""))
+    if target and (kind != "nav_abort" or target not in lane_map.zone_of):
+        raise ScenarioError(f"target needs nav_abort and a waypoint of the map in {raw}")
     return Fault(float(raw["at_s"]), raw.get("robot", ""), kind,
                  float(raw.get("duration_s", 0.0)), int(raw.get("count", 1)),
-                 raw.get("arm", ""), int(raw.get("after_items", 0)))
+                 raw.get("arm", ""), int(raw.get("after_items", 0)), target)
 
 
 def _parse_expect(data: dict, faults: list) -> Expect:

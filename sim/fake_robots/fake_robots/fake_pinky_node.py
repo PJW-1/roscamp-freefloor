@@ -180,7 +180,7 @@ class FakePinkyNode(Node):
                 goal.target_id = handle.request.target_id
                 self._motion.set_target(*noisy_pose(pose.x, pose.y, self._cfg.stop_error_m,
                                                     self._rng))
-                if self._faults.take_nav_abort(t):
+                if self._faults.take_nav_abort(t, goal.target_id):
                     eta = self._motion.remaining() / self._cfg.speed_mps
                     goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
             else:

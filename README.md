@@ -156,7 +156,7 @@ cat /tmp/run1/summary.json
 
 ## 시나리오
 
-`sim/fake_robots/scenarios/*.yaml`에 열 개가 있습니다(기본 지도 8개, 특징 지도 2개). 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
+`sim/fake_robots/scenarios/*.yaml`에 열한 개가 있습니다(기본 지도 8개, 특징 지도 3개). 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
 
 | 이름 | 내용 | 확인하는 것 |
 |---|---|---|
@@ -170,6 +170,7 @@ cat /tmp/run1/summary.json
 | `auto_isolation` | 팔 고장 3회로 둘째 로봇이 작업대에서 ERROR. 플릿이 바로 격리하고 120초에 관리자가 치움 | 사람 없이 주문이 맨 앞으로 돌아가고(`ROBOT_ISOLATED`, `ORDER_REQUEUED` 1회), 앞서 간 로봇은 관리자 전에 출고(`shipped_before_operator` 1 이상). 치운 뒤 되돌린 주문부터 전부 끝냄 |
 | `feature_basic_orders` | `basic_orders`와 같고 특징 지도(`feature_map`)와 출발 칸만 다름 | 특징 지도에서 전부 출고(파트 5) |
 | `feature_blocked_lane` | `blocked_lane`과 같고 특징 지도, 출발 칸, 물체 시각(46초부터 30초)이 다름 | 막힌 레인을 다른 로봇이 돌아감(`DETOUR`), 전부 출고(파트 5) |
+| `feature_auto_isolation` | 특징 지도. 느린 pinky1(0.04 m/s)의 F2로 가는 이동이 3회 중단(`nav_abort`의 `target: F2`)돼 F1, F2를 쥔 채 레인 위에서 ERROR. 400초에 관리자가 치움 | 격리된 로봇의 구역(무한 벌점)을 좁은 통로로 돌아가(`DETOUR`) 격리 전 2건, 격리 뒤 관리자 전 4건, 6건 모두 관리자 전에 출고(`shipped_before_operator` 4 이상, 5.5번) |
 
 `expect` 항목은 다음과 같습니다. 숫자는 정확히 일치해야 통과합니다(`_min`으로 끝나는 것은 그 값 이상).
 
@@ -197,7 +198,7 @@ cat /tmp/run1/summary.json
 ```yaml
 faults:
   - {at_s: 40, robot: pinky2, type: comm_loss, duration_s: 20}
-  - {at_s: 50, robot: pinky1, type: nav_abort, count: 2}
+  - {at_s: 50, robot: pinky1, type: nav_abort, count: 2}   # target: F2를 주면 그 지점으로 가는 목표만 중단합니다
   - {at_s: 50, robot: pinky1, type: stuck}
   - {at_s: 60, robot: pinky1, type: operator_remove}   # 코스에서 치운 뒤 심판이 confirm_clear를 부릅니다
   - {at_s: 0, arm: arm1, type: arm_fail, count: 3}     # after_items: N을 주면 N개를 담은 뒤 고장납니다
