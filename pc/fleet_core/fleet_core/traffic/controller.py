@@ -27,6 +27,7 @@ from fleet_core.common.commands import (
     ZoneView,
 )
 from fleet_core.traffic.blocking import TrafficBlocking
+from fleet_core.traffic.lane_path import TrafficPath
 from fleet_core.traffic.mission import (
     _COMM_REASON,
     AT_STATION,
@@ -63,7 +64,7 @@ from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
-class TrafficController(TrafficRecovery, TrafficBlocking):
+class TrafficController(TrafficRecovery, TrafficBlocking, TrafficPath):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -77,6 +78,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
                 "become conflict pairs and no two robots can stand on neighbouring waypoints")
         self.site = site
         self.params = params
+        self._check_goal_mode()
         self.zones = ZoneLocks(site.zones, clock, site.conflict_pairs(
             2 * params.robot_radius_m, params.release_distance_m))
         self.selector = RobotSelector(site, params)
@@ -601,7 +603,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
         """잠금은 로봇이 레인 위에 있다고 가정한다. 벗어나면 goal마다 한 번 알린다."""
         if not (m.goal and m.goal.kind == MOVE and m.goal.target_idx > 0):
             return
-        a, b = m.path[m.goal.target_idx - 1], m.path[m.goal.target_idx]
+        a, b = self._error_lane(m)
         s, e = self.site.lane_progress(a, b, m.x, m.y)
         m.off_lane = m.off_lane + 1 if e > self.params.lane_error_warn_m else 0
         if m.off_lane >= self.params.release_confirm_samples and not m.off_lane_warned:
@@ -856,7 +858,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
             anchor = m.idx
             step = self._step_between(m, anchor)
         reach = anchor
-        while (reach < last and self._step_between(m, reach) == step
+        while (reach < last and self._joins(m, reach, step)
                and self._zone(m.path[reach + 1]) in held):
             reach += 1
         if reach != anchor:
@@ -874,9 +876,10 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
         """새 goal은 진행 중인 goal을 대신한다. 이후 결과는 이 id와 맞아야 한다."""
         waypoint = m.path[target_idx]
         x, y = self.site.waypoint_pose(waypoint)
-        yaw = math.atan2(step[1], step[0]) if step else m.yaw
+        yaw = self._goal_yaw(m, target_idx, step)
         goal_id = self._next_goal_id()
         m.goal = _Goal(MOVE, goal_id, target_idx, step)
         m.off_lane, m.off_lane_warned = 0, False
         m.stall_hold = False
-        self._out.append(MoveCmd(m.name, goal_id, self.site.waypoint_id(waypoint), x, y, yaw))
+        self._out.append(MoveCmd(m.name, goal_id, self.site.waypoint_id(waypoint), x, y, yaw,
+                                 self._lane_polyline(m, target_idx, yaw)))

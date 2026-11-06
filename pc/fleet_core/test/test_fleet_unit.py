@@ -84,9 +84,12 @@ def test_robot_waits_at_the_boundary_when_the_next_zone_is_taken():
     assert core.zones.queue("Z-OUT") == ("r2",)
 
 
+POINT = replace(load_params(), lane_goal_mode="point")
+
+
 def test_target_stops_before_a_corner():
-    """직선 주행은 한 구역 안에서도 모서리를 가로지르면 안 된다."""
-    core, _ = started({"r1": (9, 2)})
+    """point 모드: 직선 주행은 한 구역 안에서도 모서리를 가로지르면 안 된다."""
+    core, _ = started({"r1": (9, 2)}, params=POINT)
     move = cmds(core.tick(), "MoveCmd")[0]
     # (9,2), (9,1), (9,0), (8,0)이 모두 허가됐지만 경로는 (9,0)에서 꺾인다.
     assert move.target_id == core.site.waypoint_id((9, 0))
@@ -94,14 +97,23 @@ def test_target_stops_before_a_corner():
 
 
 def test_next_leg_starts_only_after_the_corner_was_reached():
-    """모서리 근처에 서는 것으로는 부족하다. 실행 중 목표가 먼저 끝나야 한다."""
-    core, _ = started({"r1": (9, 2)})
+    """point 모드: 모서리 근처에 서는 것으로는 부족하다. 실행 중 목표가 먼저 끝나야 한다."""
+    core, _ = started({"r1": (9, 2)}, params=POINT)
     move = cmds(core.tick(), "MoveCmd")[0]
     place(core, "r1", (9, 0))
     assert not cmds(core.tick(), "MoveCmd"), "pose alone does not turn the robot"
     core.on_move_result("r1", move.goal_id, True, "")
     place(core, "r1", (9, 0))
     assert cmds(core.tick(), "MoveCmd")[0].target_id == core.site.waypoint_id((2, 0))
+
+
+def test_path_mode_goes_round_the_corner_along_the_lanes():
+    """path 모드: 허가된 데까지 꺾어 가되 선은 모서리를 지난다."""
+    core, _ = started({"r1": (9, 2)})
+    move = cmds(core.tick(), "MoveCmd")[0]
+    corner = core.site.waypoint_pose((9, 0))
+    assert move.target_id != core.site.waypoint_id((9, 0))
+    assert corner in [p[:2] for p in move.path]
 
 
 def test_new_grant_supersedes_the_running_goal_and_old_results_are_ignored():

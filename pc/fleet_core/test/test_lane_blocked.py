@@ -4,11 +4,12 @@ Pilot은 로봇을 손으로 몰아 시각을 정확히 본다. SimWorld는 두 
 LOCALIZING과 HEARTBEAT_LOST(계약 3절 5·6번)도 여기서 본다.
 """
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from fleet_core.common.commands import OrderRecord
-from fleet_core.common.params import load_params
+from fleet_core.common.params import load_params as _load_params
 from fleet_core.manager import FleetManager
 from fleet_core.traffic.lane_map import load_lane_map
 from fleet_core.traffic.mission import MOVE, _Goal
@@ -18,6 +19,12 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools"))
 
 import replay  # noqa: E402
+
+
+def load_params():
+    """파트 4 시험은 point 모드 목표의 모양을 본다. path 모드의 막힘은 test_lane_path.py."""
+    return replace(_load_params(), lane_goal_mode="point")
+
 
 PARAMS = load_params()
 ORDER = OrderRecord("O-001", {"A": 1})

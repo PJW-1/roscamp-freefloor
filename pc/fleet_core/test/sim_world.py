@@ -73,6 +73,7 @@ class VirtualRobot:
     localizing_until: float = 0.0  # 이 시각까지 위치를 못 잡아 LOCALIZING으로 보고
     nav_aborts: int = 0
     dock_fails: int = 0
+    via: list = field(default_factory=list)  # 목표 전에 거칠 점(path 모드)
 
 
 @dataclass
@@ -291,6 +292,7 @@ class SimWorld:
         r.goal_id = None
         r.goal_kind = ""
         r.target = None
+        r.via = []
         if r.comm_up:
             callback(r.name, goal_id, *args)
 
@@ -305,15 +307,22 @@ class SimWorld:
             r.nav_aborts -= 1
             self._finish_goal(r, self.core.on_move_result, False, "NAV_ABORTED")
             return
-        dx, dy = r.target[0] - r.x, r.target[1] - r.y
-        dist = math.hypot(dx, dy)
         step = r.speed * DT
-        if dist <= step:
+        while r.via:  # 선분을 차례로 따른다
+            gap = math.dist((r.x, r.y), r.via[0])
+            if gap > step:
+                break
+            r.x, r.y = r.via.pop(0)
+            step -= gap
+        aim = r.via[0] if r.via else r.target
+        dx, dy = aim[0] - r.x, aim[1] - r.y
+        dist = math.hypot(dx, dy)
+        if dist <= step and not r.via:
             r.x, r.y = r.target
             self._finish_goal(r, self.core.on_move_result, True, "")
-        else:
-            r.x += dx / dist * step
-            r.y += dy / dist * step
+        elif dist > 0:
+            r.x += dx / dist * min(step, dist)
+            r.y += dy / dist * min(step, dist)
 
     def _drive_dock(self, r):
         r.dock_left -= DT
@@ -441,17 +450,30 @@ class SimWorld:
         zone = self.site.zone_of[cell]
         assert zone in self.core.zones.held_by(cmd.robot), f"{cmd} targets an ungranted zone"
         assert (cmd.x, cmd.y) == self.site.waypoint_pose(cell), f"{cmd} pose is not the cell centre"
-        for step in range(5):
-            x = r.x + (cmd.x - r.x) * step / 4
-            y = r.y + (cmd.y - r.y) * step / 4
-            off = min(_point_segment(x, y, lane.ax, lane.ay, lane.bx, lane.by)
-                      for lane in self.site.lanes.values())
-            assert off < LINE_TOLERANCE_M, f"{cmd} from ({r.x}, {r.y}) leaves the lanes"
+        # path 모드: 첫 점은 보고 위치라 건너뛰고 실제 위치에서 다음 점들을 잇는다
+        via = [tuple(p[:2]) for p in cmd.path[1:-1]]
+        if cmd.path:
+            assert tuple(cmd.path[-1][:2]) == (cmd.x, cmd.y), f"{cmd} path ends off the target"
+        while via:  # 이미 지난 앞부분은 건너뛴다(FollowPath처럼)
+            a, b = via[0], via[1] if len(via) > 1 else (cmd.x, cmd.y)
+            on = _point_segment(r.x, r.y, *a, *b) < LINE_TOLERANCE_M
+            if not (on and math.dist((r.x, r.y), a) > LINE_TOLERANCE_M):
+                break
+            via.pop(0)
+        corners = [(r.x, r.y), *via, (cmd.x, cmd.y)]
+        for (ax, ay), (bx, by) in zip(corners, corners[1:], strict=False):
+            for step in range(5):
+                x = ax + (bx - ax) * step / 4
+                y = ay + (by - ay) * step / 4
+                off = min(_point_segment(x, y, lane.ax, lane.ay, lane.bx, lane.by)
+                          for lane in self.site.lanes.values())
+                assert off < LINE_TOLERANCE_M, f"{cmd} from ({r.x}, {r.y}) leaves the lanes"
         self._preempt(r)
         r.docked_at = ""
         r.goal_id = cmd.goal_id
         r.goal_kind = "move"
         r.target = (cmd.x, cmd.y)
+        r.via = via
         r.goal_elapsed = 0.0
 
     def _start_dock(self, cmd):

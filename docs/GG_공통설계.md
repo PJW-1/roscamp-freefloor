@@ -154,6 +154,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `score_distance_weight` | 0.91 | 레인을 따른 거리 1 m당 점수 |
 | `priority_at_station`, `priority_has_cargo` | 200, 100 | 교착 때 포기 대상을 고르는 우선순위. 스테이션에 서 있는지, 이름 지정 요청을 받았는지 |
 | `input_pose_margin_m` | 1.0 | 보고 위치가 웨이포인트들의 범위(최소·최대 x, y)에서 이보다 멀면 그 보고를 버리고 `INPUT_REJECTED`. 지시서의 "음수 좌표"를 지도 밖으로 넓혔다. 실제 지도 좌표는 음수일 수 있다 |
+| `lane_goal_mode` | path | 이동 목표 모드(5절). `path`는 레인 폴리라인을 `MoveTo.path`로 보낸다(FollowPath). `point`는 같은 방향 레인 끝 지점 하나만 보낸다(호환·비교용). 이 값이 없는 옛 기록은 `point`로 재생한다(데이터클래스 기본값) |
 
 지도 파일의 값: `half_width_m`(0.05, 레인에서 이만큼까지 레인 위로 친다. 추정), `lane_entry_m`(0.25), `bundle_two_way`(true, 양방향 구간을 잠금 하나로 묶는다).
 
@@ -211,7 +212,7 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `/fleet/assignments` AssignmentArray 토픽(항목마다 robot_id, order_id, station_id, task_type: TO_WORK/FILL/TO_OUTBOUND/SWAP/WAIT): FMS → central
 - `/fleet/zones` ZoneStateArray 토픽: FMS → central
 - `/fleet/confirm_clear` ConfirmClear 서비스: central(관리자) → FMS. 응답의 `string reason`은 11-06에 더한 제안(팀 합의 전, 0.3-draft)이다. 거부하면 이유, 받아들이면 빈 값. `accepted`, `released_zones`는 그대로다
-- `/{pinky}/state` 토픽, `/{pinky}/move_to`·`/{pinky}/dock` 액션: FMS ↔ 핑키. `move_to`는 레인 끝까지의 짧은 목표다(5절). 11-06 지시서 4번에서 `state`에 `BLOCKED`, `LOCALIZING`을, `MoveTo` 결과에 `REASON_HEARTBEAT_LOST`를 더했다. 상수만 더해 필드는 그대로다. 핑키가 지킬 동작은 `docs/핑키_계약.md`에 있다
+- `/{pinky}/state` 토픽, `/{pinky}/move_to`·`/{pinky}/dock` 액션: FMS ↔ 핑키. `move_to`는 잠금을 쥔 데까지의 짧은 목표이고, goal의 `path`(geometry_msgs/Pose[])에 레인 폴리라인을 싣는다(5절, 11-06 지시서 7번). 11-06 지시서 4번에서 `state`에 `BLOCKED`, `LOCALIZING`을, `MoveTo` 결과에 `REASON_HEARTBEAT_LOST`를 더했다. 상수만 더해 필드는 그대로다. 핑키가 지킬 동작은 `docs/핑키_계약.md`에 있다
 - `/workcell/fill_basket` FillBasket 액션(items → placed, missing, success, reason): FMS → workcell. 팔 2대 배분과 조율은 workcell 내부 책임
 - `/arm3/swap_basket` SwapBasket 액션(take_full, put_empty → took_full, put_empty_done): FMS → arm3
 - 목표가 끝난 방식: `MoveTo`, `FillBasket`, `SwapBasket`의 결과에는 `REASON_CANCELED`("CANCELED")가 있다. 서버가 reason을 비워 두면 FMS가 목표 상태로 채운다. `STATUS_CANCELED`는 `CANCELED`, `STATUS_ABORTED`는 `ABORTED`다. 서버가 쓴 reason은 그대로 둔다. `FillBasket`, `SwapBasket`의 이 상수는 2026-11-06에 더한 제안(팀 합의 전)이다. 값은 README에 적힌 약속 그대로이고, 형식 설명에 상수가 들어가지 않으므로 직렬화와 타입 해시는 바뀌지 않는다
@@ -234,14 +235,16 @@ run_mode는 FMS가 OrderBoard로 받는다. 삭제된 것: TaskBoard, StationCou
 ## 5. 교통 제어 규칙 (`traffic`, 핑키만)
 구역과 충돌쌍은 3절. 유지: 구역 잠금(현재+다음 1개), 구역별 FIFO, 위치 3회 확인 후 해제, 교착 감지, 통신 두절/복구, 이동 재시도, 시작 시 전원 보고 대기.
 
-이동 명령(레인 준수): 관제가 레인 끝까지의 짧은 `move_to`를 보낸다. 같은 방향으로 이어지는 레인은 잠금을 가진 데까지 한 목표로 묶고, 방향이 바뀌면 끊는다. Nav2는 점과 점 사이만 간다. **이 방식은 사용자 판단(2026-11-05)이고 FSM·Nav2 담당과 확인 전이다.** Nav2 keepout 필터로 정하면 `move_to`의 뜻이 바뀐다(13절).
+이동 명령(레인 준수, FollowPath): 관제가 잠금을 쥔 데까지의 짧은 `move_to`를 보낸다. 이어지는 레인은 방향이 바뀌어도 잠금을 쥔 데까지 한 목표로 묶고, goal의 `path`에 그 레인 폴리라인을 싣는다. 양방향 레인에서 되돌아가는 유턴만 끊는다. 유턴을 이으면 경로를 바꿀 때마다(호출, 취소) 목표 끝이 앞으로 밀려 경로가 끝없이 늘어난다(전수 검사에서 찾음). 첫 점은 로봇이 보고한 위치, 이어서 아직 지나지 않은 지점, 끝 점은 목표 지점(`target_pose`)이다. 지점을 빼는 것은 로봇이 나가는 레인을 따라 `arrival_tolerance_m`(0.15 m) 넘게 갔고 들어오는 레인보다 나가는 레인에 가까울 때뿐이다. 그래서 모서리 앞에서 위치 잡음으로 모서리를 가로지르지 않고, 0.15 m 안으로 지난 지점이 선 앞에 남을 수 있다. 그 앞부분은 핑키가 건너뛴다(FollowPath는 가장 가까운 점부터 따른다. FakePinky와 SimWorld도 그렇게 한다). 각 점의 방향은 다음 점을 향하고 끝 점은 마지막 레인 방향이다. 핑키는 Nav2 FollowPath로 그 선을 따른다. 잠금이 더 오면 관제가 더 긴 선으로 새 목표를 보낸다(선점). 끝 근처 재전송과 도착 판정은 핑키 몫이다(핑키 계약 3절 7번). 관제는 지금처럼 성공 결과와 위치로 도착을 확인한다(아래 "도착 판정"). `lane_goal_mode: point`면 예전처럼 같은 방향 레인만 묶고 방향이 바뀌면 끊으며 `path`는 비운다. 호환과 비교용이다. **이 방식은 11-06에 FollowPath로 정했고(13절) FSM·Nav2 담당과 확인 전이다.**
+
+꺾임을 넘는 목표와 다른 규칙(`traffic/lane_path.py`, `test_lane_path.py`): 경로 인덱스는 레인마다 d를 지날 때 넘어가므로 목표가 꺾임 너머에 있어도 해제(d), 지점 도착 판정(목표 지점까지의 거리), 멈춤 감시(위치), 레인 막힘의 "달리던 레인"(`_running_lane`, 경로 인덱스 앞뒤 레인 중 가까운 쪽)은 그대로 맞다. 바꾼 것은 이탈 e 하나다. point는 목표 직전 레인으로 재지만 path는 달리던 레인으로 잰다. 꺾인 목표의 첫 레인을 달리는 로봇이 마지막 레인 기준으로 멀다고 `LANE_ERROR`가 나지 않게 하려는 것이다.
 
 잠금 규칙:
 - 로봇은 현재 구역 말고는 쥔 것이 없을 때만 다음 구역을 청한다. 그래서 대기하는 구역은 많아야 하나다(`wait_zone`).
 - 구역마다 FIFO다. 충돌쌍에는 FIFO를 넓혀 쌍 전체의 요청 순서를 따른다. 한쪽이 계속 바빠도 다른 쪽이 굶지 않게 하려는 것이고, 지시서의 "레인별 FIFO"보다 넓다. 이 순서로 대기 고리가 생기는지는 지도마다 전수 검사로 본다(11절).
 - 해제: 로봇 위치 p를 그 구역을 떠나는 레인(시작 지점 p_i, 단위 벡터 u)에 투영해 s = (p − p_i)·u를 구한다. s > d(`release_distance_m`)가 `release_confirm_samples`번 연속이면 해제한다. 떠나는 레인이 경로에 없으면(앞쪽 구역, 손으로 옮긴 로봇) 구역 중심선에서 d 이상이어야 한다.
 - 근거식: d ≥ r + ε + v·(τ + tick), d ≥ 2r + ε. r은 반경, ε은 위치 오차, v는 속도, τ는 보고 지연, tick은 관제 주기다. 뒤의 식은 앞 로봇이 해제 지점 근처에 서고 뒤 로봇이 지점까지 오는 경우이고, 시험으로 만들지는 않았다. d ≤ 2r이면 `TrafficController`가 시작을 거부한다. d는 실측 전 값이다. 압박 시험 표는 작업 기록 7번에 있고, 실측 ε과 τ가 나오면 그 표로 d를 정한다.
-- 이탈 e = |(p − p_i) − s·u|는 해제 조건이 아니다. 이동 목표 중에 `lane_error_warn_m`을 넘는 보고가 `release_confirm_samples`번 이어지면 목표당 한 번 `LANE_ERROR`만 낸다. 경로의 첫 지점으로 가는 목표는 기준이 될 레인이 없어 보지 않는다. 목표를 연장하거나 다시 보내면 새 목표다. 횟수를 0부터 다시 세므로, 이탈이 이어지면 새 목표에서 다시 나오고 그 횟수를 채우기 전에 목표가 바뀌면 나오지 않을 수 있다. 05 레인 시뮬과 같다. 레인을 크게 벗어난 로봇도 s > d면 해제한다는 뜻이므로, 실측 e를 본 뒤 다시 판단한다(13절).
+- 이탈 e = |(p − p_i) − s·u|는 해제 조건이 아니다. 이동 목표 중에 `lane_error_warn_m`을 넘는 보고가 `release_confirm_samples`번 이어지면 목표당 한 번 `LANE_ERROR`만 낸다. 기준 레인은 `point`에서는 목표 직전 레인, `path`에서는 달리던 레인이다. 경로의 첫 지점으로 가는 목표는 기준이 될 레인이 없어 보지 않는다. 목표를 연장하거나 다시 보내면 새 목표다. 횟수를 0부터 다시 세므로, 이탈이 이어지면 새 목표에서 다시 나오고 그 횟수를 채우기 전에 목표가 바뀌면 나오지 않을 수 있다. 05 레인 시뮬과 같다. 레인을 크게 벗어난 로봇도 s > d면 해제한다는 뜻이므로, 실측 e를 본 뒤 다시 판단한다(13절).
 - 가장 짧은 레인이 d 이하이면 레인 끝에 서도 해제되지 않으므로 `TrafficController`가 시작을 거부한다. 기본 지도의 가장 짧은 레인은 0.4 m다.
 
 시작과 재시작: 전원이 지도에 올라야 움직이기 시작한다. 로봇은 위치를 보고하고 `MOVING`, `DOCKING`, `BLOCKED`, `LOCALIZING`이 아닐 때 지도에 오른다. `LOCALIZING` 보고는 자세를 쓰지 않고 지도 밖 검사도 하지 않는다. 지도에 오른 로봇이 `LOCALIZING`만 보내면 보고 시각을 갱신하지 않아 `comm_timeout_s` 뒤 `COMM_LOST`가 되고, 구역은 쥔 채 둔다. 위치를 다시 보고하면 복구 확인 뒤 이어 간다. 복구 확인 중 마지막 보고가 `LOCALIZING`이면 복구를 끝내지 않고, 위치 보고가 다시 오면 그때부터 확인을 잰다. `startup_wait_s`가 지나도 안 오른 로봇이 있으면 `ROBOT_NOT_REPORTING`을 낸다. 아래의 `PLACEMENT_CONFLICT`로 거부된 로봇은 이미 보고했으므로 여기서 세지 않는다. 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있으면 지도에 올리지 않고 `PLACEMENT_CONFLICT`를 내며, 그 로봇이 움직이거나 관리자가 치울 때까지 **전원이 기다린다**(정책, 팀 확인 필요). 지점에서 d보다 멀리 서 있으면 먼저 그 레인의 끝으로 간다. 전원이 오르기 전에는 `/fleet/zones`를 내지 않는다. FMS는 잠금을 아직 모르며, 모르는 것과 빈 것은 다르다.
@@ -484,8 +487,16 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 - **Open-RMF는 도입하지 않는다.** 계층 나누기와 용어만 참고한다. 이유: 코어가 orchestrator·traffic 자리를 둘 다 차지해 팀 구조가 통째로 바뀌고, 시간 궤적 협상은 Wi-Fi 지연·정지 오차에 민감하며 전수 검사 같은 증명을 못 주고, 8주 일정에 위험.
 - 시간·공간 예약, MAPF, 우선순위 최적화는 하지 않는다.
 - "어디에 뭐가 있다"(인식 결과, 상태, 명령)는 ROS, 픽셀(영상)은 ROS 밖이다. 집기용 사진은 HTTP 스냅샷 한 장, 화면용은 MJPEG over HTTP. 영상을 DDS로 Wi-Fi에 흘리지 않는다.
-- **핑키 계약(11-06, 사용자 지시)**: 관제가 핑키에 요구하는 통신 규격과 동작은 `docs/핑키_계약.md`에 요구사항으로 정했다. 제안으로 두지 않는다. 선점, 취소, 실패 반환, 도착 0.15 m, heartbeat 정지, `LOCALIZING`, `BLOCKED` 판정과 관제의 막힘 처리(5초 뒤 레인 표시, 60초 뒤 ERROR, 줄 서기 제외)를 담는다. `BLOCKED`, `LOCALIZING`, `HEARTBEAT_LOST`는 지시서 4번에서 정의 파일과 관제 코드에 넣었다. `MoveTo.path`는 지시서 7번에서 넣는다.
-- **레인 준수 방식(11-06 지시서 결정 2, 7번)**: FollowPath. 관제가 레인 폴리라인을 `MoveTo.path`로 보내고 핑키가 그 선을 따른다. 점 목표와 keepout 비교는 지시서 8번에서 이 절에 옮긴다.
+- **핑키 계약(11-06, 사용자 지시)**: 관제가 핑키에 요구하는 통신 규격과 동작은 `docs/핑키_계약.md`에 요구사항으로 정했다. 제안으로 두지 않는다. 선점, 취소, 실패 반환, 도착 0.15 m, heartbeat 정지, `LOCALIZING`, `BLOCKED` 판정과 관제의 막힘 처리(5초 뒤 레인 표시, 60초 뒤 ERROR, 줄 서기 제외)를 담는다. `BLOCKED`, `LOCALIZING`, `HEARTBEAT_LOST`는 지시서 4번에서 정의 파일과 관제 코드에 넣었다. `MoveTo.path`는 지시서 7번에서 넣었다.
+- **레인 준수 방식(11-06 지시서 결정 2, 7번)**: FollowPath로 정했다. 관제가 레인 폴리라인을 `MoveTo.path`로 보내고 핑키가 그 선을 따른다. "관제가 잡은 공간 = 실제 주행선". `point` 모드는 호환·비교용으로만 남긴다. FSM·Nav2 담당과 확인 전이다.
+
+  | 방식 | 장점 | 단점 |
+  |---|---|---|
+  | 점 목표(`point`) | 핑키는 NavigateToPose만 쓰면 된다. 지금 FSM과 가장 가깝다 | 꺾일 때마다 서고 다음 목표를 기다린다. 점 사이는 Nav2 플래너가 길을 정하므로 레인을 벗어날 수 있다. BT 복구(Spin, BackUp)가 잡지 않은 공간으로 움직일 수 있다 |
+  | 점 목표 + Nav2 keepout 필터 + BT 복구 축소 | 지도 마스크로 금지 구역을 막는다 | keepout은 방향을 표현하지 못해 2차선 대로에서 마주 오는 레인으로 넘어갈 수 있다. 좁은 통로에서 마스크와 팽창 반경 튜닝 부담이 크다. 마스크를 잠금에 맞춰 바꾸기 어렵다 |
+  | FollowPath(`path`, 채택) | 관제가 잡은 공간과 실제 주행선이 같다. 꺾임에서 서지 않는다. 플래너와 BT 복구를 쓰지 않는다 | 핑키 FSM이 FollowPath 클라이언트, 끝 근처 재전송, 도착 판정을 새로 가져야 한다. 선 위 물체는 돌아가지 않고 선다(BLOCKED, 계약 4절) |
+
+- **FSM 담당에게 넘길 것(파트 7)**: 옮길 코드는 `~/roscamp_ws/sim/pinky_multi_sim`에 있다. 경로 만들기(`free_path.py`의 `poses_along`: 선을 따라 촘촘히 점을 찍고 방향을 선에 맞춘다, `missions.py`의 `Driver.drive`: FollowPath goal), 끝 근처 재전송(`traffic.py`의 `REFRESH_WITHIN_M` 0.15 m, `RESEND_EVERY_S` 0.5 s: 끝 근처에서 그날의 AMCL로 끝을 다시 재게 한다), 도착 판정(`traffic.py`의 `goal_done`: 성공이어도 끝에서 `ARRIVED_M` 0.15 m 안일 때만 도착). RPP `rotate_to_heading_min_angle`은 0.25(`nav2_overrides.yaml`)를 유지한다. 지시서에 따르면 0.8로 올리면 충돌 경고가 8건에서 717건으로 늘었다(이 작업에서 다시 재지 않았다). 관제가 보내는 선은 지점만 담으므로 촘촘한 점 찍기는 핑키가 한다.
 
 정하지 않은 것:
 - **FMS 구조와 담당**: v17 구조 자체가 팀 합의 전이다. FMS 담당은 정하지 않았다. 제안은 v17의 core와 pinky(코드의 `traffic`과 주문 진행)를 핑키 관제 담당이, arm을 팔 담당이 맡는 것이다.

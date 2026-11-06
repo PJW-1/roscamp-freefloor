@@ -50,6 +50,8 @@ class FleetParams:
     blocked_timeout_s: float = 60.0
     blocked_rejoin_s: float = 10.0
     queue_gap_m: float = 0.6
+    # path: 레인 폴리라인(FollowPath), point: 지점 하나(비교용). 이 값이 없던 기록은 point였다.
+    lane_goal_mode: str = "point"
 
 
 def load_params(path=None) -> FleetParams:

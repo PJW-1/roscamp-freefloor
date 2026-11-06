@@ -1,4 +1,4 @@
-"""직선 이동, 자세 잡음, 로봇별 고장 일정. ROS를 쓰지 않는다."""
+"""직선과 선분 이동, 자세 잡음, 로봇별 고장 일정. ROS를 쓰지 않는다."""
 from __future__ import annotations
 
 import math
@@ -28,39 +28,71 @@ def abort_at_shutdown(handle) -> None:
         pass
 
 
+ON_SEGMENT_M = 0.05  # 이만큼 안이면 그 선분 위로 본다
+
+
 class Motion:
-    """목표 하나를 향해 직선으로 가는 점."""
+    """목표 하나를 향해 직선으로 가는 점. 거칠 점(via)이 있으면 선분을 차례로 간다."""
 
     def __init__(self, x: float, y: float, yaw: float = 0.0):
         self.x, self.y, self.yaw = x, y, yaw
         self.target: tuple[float, float] | None = None
+        self.via: list[tuple[float, float]] = []
 
-    def set_target(self, x: float, y: float) -> None:
+    def set_target(self, x: float, y: float, via=()) -> None:
         self.target = (x, y)
+        self.via = [tuple(p) for p in via]
+        self._skip_passed()
+
+    def _skip_passed(self) -> None:
+        """이미 지나 다음 선분 위에 있으면 그 점을 뺀다. FollowPath가 가장 가까운 점부터 가는 것과 같다."""
+        while self.via:
+            a = self.via[0]
+            b = self.via[1] if len(self.via) > 1 else self.target
+            length = math.dist(a, b)
+            if length == 0.0:
+                self.via.pop(0)
+                continue
+            ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+            s = (self.x - a[0]) * ux + (self.y - a[1]) * uy
+            off = abs((self.x - a[0]) * uy - (self.y - a[1]) * ux)
+            if not (1e-6 < s <= length and off <= ON_SEGMENT_M):
+                return
+            self.via.pop(0)
 
     def clear_target(self) -> None:
         self.target = None
+        self.via = []
 
     @property
     def moving(self) -> bool:
         return self.target is not None and self.remaining() > 0.0
 
     def remaining(self) -> float:
+        """남은 선의 길이."""
         if self.target is None:
             return 0.0
-        return math.dist((self.x, self.y), self.target)
+        points = [(self.x, self.y), *self.via, self.target]
+        return sum(math.dist(a, b) for a, b in zip(points, points[1:], strict=False))
 
     def step(self, dt: float, speed: float) -> None:
         if not self.moving:
             return
-        dist = self.remaining()
-        self.yaw = math.atan2(self.target[1] - self.y, self.target[0] - self.x)
         travel = speed * dt
-        if travel >= dist:
-            self.x, self.y = self.target
-        else:
-            self.x += (self.target[0] - self.x) / dist * travel
-            self.y += (self.target[1] - self.y) / dist * travel
+        while travel > 0.0:
+            aim = self.via[0] if self.via else self.target
+            dist = math.dist((self.x, self.y), aim)
+            if dist > 0.0:
+                self.yaw = math.atan2(aim[1] - self.y, aim[0] - self.x)
+            if travel < dist:
+                self.x += (aim[0] - self.x) / dist * travel
+                self.y += (aim[1] - self.y) / dist * travel
+                return
+            self.x, self.y = aim
+            travel -= dist
+            if not self.via:
+                return
+            self.via.pop(0)
 
 
 def noisy_pose(x: float, y: float, sigma: float, rng: random.Random) -> tuple[float, float]:

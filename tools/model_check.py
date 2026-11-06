@@ -466,17 +466,23 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=1, help="processes working on the states")
     parser.add_argument("--confirm", type=int, default=1,
                         help="reports past a zone that free it. The real core takes 3")
+    parser.add_argument("--goal-mode", choices=("file", "point", "path"), default="file",
+                        help="lane_goal_mode: as fleet_params.yaml says, or forced")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     bundle = {"file": None, "on": True, "off": False}[args.bundle]
     site = load_lane_map(args.map, bundle_two_way=bundle)
     start = args.start.split(",") if args.start else None
+    params = load_params()
+    if args.goal_mode != "file":
+        params = replace(params, lane_goal_mode=args.goal_mode)
 
     def show(known, frontier, dead):
         print(f"  {known} known, {frontier} to do, {dead} deadlocks", file=sys.stderr, flush=True)
 
-    result = check(site, args.robots, start, max_states=args.max_states, workers=args.workers,
+    result = check(site, args.robots, start, params, max_states=args.max_states,
+                   workers=args.workers,
                    progress=None if args.quiet else show, stop_at_first=args.stop_at_first,
                    confirm=args.confirm)
     if args.json:

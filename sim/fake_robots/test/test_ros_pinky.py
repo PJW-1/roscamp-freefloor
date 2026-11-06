@@ -8,10 +8,13 @@ pytest.importorskip("fleet_interfaces.msg")
 
 from conftest import CONTRACT, wait_until, write_scenario  # noqa: E402
 from fleet_core.common.contract import load_contract, to_ros_qos  # noqa: E402
-from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
+from fleet_core.traffic.lane_map import (
+    _point_segment,  # noqa: E402
+    load_lane_map,  # noqa: E402
+)
 from fleet_interfaces.action import Dock, MoveTo  # noqa: E402
 from fleet_interfaces.msg import RobotState  # noqa: E402
-from geometry_msgs.msg import Pose2D  # noqa: E402
+from geometry_msgs.msg import Point, Pose, Pose2D  # noqa: E402
 from rclpy.action import ActionClient  # noqa: E402
 
 CONTRACT_OBJ = load_contract(CONTRACT)
@@ -70,6 +73,24 @@ def test_move_to_publishes_state_feedback_and_succeeds(harness, tmp_path):
     assert (last.pose.x, last.pose.y) == pytest.approx((x, y), abs=1e-3)
     assert any(s.state == RobotState.STATE_MOVING for _, s in p.states)
     assert p.feedback
+
+
+def test_a_path_goal_follows_the_lanes_round_the_corner(harness, tmp_path):
+    """path 모드(지시서 7번): 꺾인 선을 그대로 따르고 끝에서 성공한다."""
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.5, "pose_noise_m": 0.0}})
+    assert wait_until(lambda: p.states, 5.0)
+    points = [SITE.waypoint_pose(w) for w in ("P-6", "N", "S")]
+    msg = MoveTo.Goal(target_id="S", target_pose=Pose2D(x=points[-1][0], y=points[-1][1]))
+    msg.path = [Pose(position=Point(x=x, y=y)) for x, y in points]
+    fut = p.move.send_goal_async(msg)
+    assert wait_until(fut.done, 5.0) and fut.result().accepted
+    assert result_of(fut.result()).result.success is True
+    seen = [(s.pose.x, s.pose.y) for _, s in p.states]
+    off = max(min(_point_segment(x, y, *a, *b) for a, b in zip(points, points[1:], strict=False))
+              for x, y in seen)
+    assert off < 0.01, "it cut the corner"
+    assert seen[-1] == pytest.approx(points[-1], abs=1e-3)
 
 
 def test_new_goal_supersedes_the_active_one(harness, tmp_path):

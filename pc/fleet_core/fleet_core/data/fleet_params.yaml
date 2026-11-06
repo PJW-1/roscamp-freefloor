@@ -44,3 +44,4 @@ score_distance_weight: 0.91   # 레인 거리 1 m당
 priority_at_station: 200
 priority_has_cargo: 100
 input_pose_margin_m: 1.0      # 웨이포인트 범위 밖으로 이보다 먼 보고 위치는 버린다
+lane_goal_mode: path          # path: 레인 폴리라인을 보내 FollowPath로 따르게 한다. point: 지점 하나(비교용)

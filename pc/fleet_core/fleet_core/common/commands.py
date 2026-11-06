@@ -25,6 +25,8 @@ class MoveCmd:
     x: float
     y: float
     yaw: float
+    # 레인 폴리라인 (x, y, yaw)들. 첫 점은 로봇 위치, 끝 점은 목표. 비면 점 목표(point 모드)
+    path: tuple = ()
 
 
 @dataclass(frozen=True)
