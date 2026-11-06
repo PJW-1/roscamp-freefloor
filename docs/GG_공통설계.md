@@ -388,7 +388,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 
 시나리오 파일의 `map`(선택)은 `sim/fake_robots/maps`의 지도 이름이다. 있으면 `pc.launch.py`와 `fakes.launch.py`가 `map_file`을 주지 않았을 때 그 지도를 모든 노드에 준다. 없으면 기본 지도다.
 
-특징 지도 시나리오 2개(11-06, 5번): `feature_basic_orders`(`basic_orders`와 같고 지도와 출발 칸만 다름), `feature_blocked_lane`(`blocked_lane`과 같고 지도, 출발 칸, 물체 시각(46초부터 30초)이 다름). 통합 시험 목록(`test_scenario_integration.py`)에는 넣지 않았다. 도메인 50~56을 넘기 때문이다.
+특징 지도 시나리오 2개(11-06, 5번): `feature_basic_orders`(`basic_orders`와 같고 지도와 출발 칸만 다름), `feature_blocked_lane`(`blocked_lane`과 같고 지도, 출발 칸, 물체 시각(46초부터 30초)이 다름, `DETOUR`를 기대함). 통합 시험 목록(`test_scenario_integration.py`)에는 넣지 않았다. 전체 시험 시간을 늘리지 않으려는 것이다. 따로 돌린 결과는 작업 기록(파트 5)에 있다.
 
 시나리오 7개: `basic_orders`(주문 6건, 고장 없음), `order_burst`(한꺼번에 8건, 진행 중 추가 주문, 밀린 주문이면 대기 구간을 거치지 않고 바로 작업공간으로 가는지 확인), `shared_lane_failure`(통신 두절+주행 실패), `stock_shortage`(재고 0인 품목과 기록만 있고 실물 없는 품목: PARTIAL과 HELD, OUT_OF_STOCK과 STOCK_MISMATCH 구분), `stuck_robot`(차선에서 멈춤: 뒤따르는 로봇이 막히고 경고가 나는지), `operator_recovery`(팔 고장 3회 → ERROR → 관리자가 치움 → 주문이 다시 처리되어 전부 끝남), `blocked_lane`(`basic_orders`에 pinky1 앞 물체: 5초 표시와 취소, 풀린 뒤 같은 목표로 이어 가 전부 출고. pinky3은 처음 2초 `LOCALIZING`).
 

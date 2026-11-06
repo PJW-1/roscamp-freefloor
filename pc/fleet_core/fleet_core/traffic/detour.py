@@ -41,15 +41,14 @@ from fleet_core.traffic.mission import (
 class TrafficDetour:
     def _standing_wait_s(self, m: _Mission) -> float | None:
         """달리면 None, 서 있으면 예상 대기 시간(초). 못 비키면 inf."""
-        if m.fault or m.comm or m.block:
+        queued = m.robot_state == BLOCKED and m.goal is not None and m.queue_since is not None
+        if m.fault or m.comm or m.block or (m.robot_state == BLOCKED and not queued):
             return math.inf
-        now = self._clock()
-        if m.robot_state == BLOCKED:
-            if m.goal is not None and m.queue_since is not None:
-                return max(0.0, now - m.queue_since)  # 줄 서기: 줄 선 시간
-            return math.inf
+        if queued:
+            return max(0.0, self._clock() - m.queue_since)  # 줄 서기: 줄 선 시간
         if m.goal is not None:
             return None
+        now = self._clock()
         zone = self.zones.waiting_for(m.name)
         if zone is not None:
             return max(0.0, now - m.wait_since) if m.wait_zone == zone else 0.0
