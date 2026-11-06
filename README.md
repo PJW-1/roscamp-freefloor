@@ -229,7 +229,7 @@ faults:
 | `LANE_BLOCKED`, `LANE_CLEARED` | WARN, INFO | `BLOCKED` 5초에 레인 표시와 취소, 풀림(파트 4) |
 | `BLOCKED_TOO_LONG` | ERROR | `BLOCKED` 60초(파트 4) |
 | `DETOUR` | INFO | 서 있는 보유자나 막힌 레인을 피해 길을 바꿈(파트 5) |
-| `ROBOT_ISOLATED` | ERROR | 지도에 오른 로봇이 ERROR가 되어 자동 격리. 주문은 바로 되돌림. 교환 중이거나 `ARM_NO_RESULT`면 결과나 `confirm_clear`까지 쥠(파트 5.5) |
+| `ROBOT_ISOLATED` | ERROR | 지도에 오른 로봇이 ERROR가 되어 자동 격리. 주문은 바로 되돌림. 교환 중이면 그 결과까지, `ARM_NO_RESULT`면 `confirm_clear`까지 쥠(늦은 `took_full`이면 출고)(파트 5.5) |
 
 ## 실물로 교체
 

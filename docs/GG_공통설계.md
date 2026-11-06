@@ -493,7 +493,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 | 담기, 교환 | `orders`가 `FillCmd`, `SwapCmd`를 내고 노드가 `/workcell/fill_basket`, `/arm3/swap_basket`을 호출한다. `traffic`은 팔을 모른다 |
 | 팔 재시도, 시간 초과, 바구니 상태 | `orders` |
 | 최종 보고 | `orders`의 `ReportOrderCmd`를 노드가 `/central/report_order`로 보낸다 |
-| 고장 로봇의 주문 | 지도에 오른 로봇이 ERROR가 되면 `traffic/isolation.py`가 격리하고 `RobotIsolated`로 `orders`에 알려 주문을 바로 되돌린다(`ORDER_REQUEUED`, 파트 5.5). 예외: 교환 중이면 그 결과까지, `ARM_NO_RESULT`가 걸린 주문은 늦은 결과나 `confirm_clear`까지 쥔다(5-1절). 격리 없이 치운 로봇은 `FleetManager.confirm_clear`가 `on_robot_removed`를 부른다 |
+| 고장 로봇의 주문 | 지도에 오른 로봇이 ERROR가 되면 `traffic/isolation.py`가 격리하고 `RobotIsolated`로 `orders`에 알려 주문을 바로 되돌린다(`ORDER_REQUEUED`, 파트 5.5). 예외: 교환 중이면 그 결과까지 쥔다. `ARM_NO_RESULT`가 걸린 주문은 `confirm_clear`까지 쥐고, 그 전에 찬 바구니를 꺼냈다는 늦은 교환 결과(`took_full`)가 오면 출고로 보고한다(5-1절). 격리 없이 치운 로봇은 `FleetManager.confirm_clear`가 `on_robot_removed`를 부른다 |
 | 잘못된 입력 | `FleetManager`와 `common/validate.py`, `orders/validate.py`가 거부하고 `INPUT_REJECTED`를 낸다(파트 1) |
 | 멈춤 감시, 막힘, 우회 | `controller.py` `_watch_stall`(파트 2), `traffic/blocking.py`(파트 4), `traffic/detour.py`(파트 5). 규칙은 5절 |
 | 교통 모델 | 레인 지도(3절). 잠금은 구역, 해제는 레인 투영(5절), 충돌쌍과 양방향 묶음은 지도에서 계산한다 |
