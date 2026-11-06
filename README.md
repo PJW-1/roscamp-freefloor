@@ -141,7 +141,7 @@ flowchart TB
 | `fake_arm_node` | arm3만. `/arm3/swap_basket`, `/arm3/state`. 고장 `swap_partial`, `arm.fail_rate` |
 | `fake_vision_node` | `/arm1/vision/items`, `/arm2/vision/items`. 실제 재고를 보여 주고 집어 간 만큼 줄어듭니다 |
 | `fake_central_node` | 재고 기록과 주문 목록, `/central/orders`, `submit_order`, `report_order`, `set_run_mode`, 중앙 이벤트 코드 |
-| `scenario_monitor_node` | 심판. 결과 파일을 쓰고 launch를 끝내며, `operator_remove` 때 관리자 대신 `confirm_clear`를, `operator_reinstate` 때 `reinstate`를 부릅니다. 치운 뒤 `ZONES_STILL_HELD`가 오면 남은 구역을 다시 치우고, 남은 구역이 없을 때만 `reinstate`를 부릅니다(`operator_clear.py`). 다시 치우면 `ZONES_CLEARED`가 하나 더 나와 `event_counts`가 실패하므로 드러납니다 |
+| `scenario_monitor_node` | 심판. 결과 파일을 쓰고 launch를 끝내며, `operator_remove` 때 관리자 대신 `confirm_clear`를(코스 밖 확인 뒤 0.5초가 지나고 심판의 보유가 0.3초 그대로일 때, 늦어도 1.0초에. 시뮬레이션 초), `operator_reinstate` 때 `reinstate`를 부릅니다. 치운 뒤 `ZONES_STILL_HELD`가 오면 남은 구역을 다시 치우고, 남은 구역이 없을 때만 `reinstate`를 부릅니다(`operator_clear.py`). 다시 치우면 `ZONES_CLEARED`가 하나 더 나와 `event_counts`가 실패하므로 드러납니다 |
 
 ## 실행
 
