@@ -108,10 +108,10 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
         if state == LOCALIZING:
             # 자세를 믿지 않는다. 보고 시각도 두어 오래 가면 COMM_LOST가 된다.
             m.robot_state, m.battery = state, battery
-            if m.comm == RECOVERING:
-                # 위치를 다시 잡을 때까지 복구 확인을 미룬다
-                m.recover_at = self._clock() + self.params.recover_check_s
             return
+        if m.comm == RECOVERING and m.robot_state == LOCALIZING:
+            # 위치를 다시 잡았다. 복구 확인을 이 보고부터 다시 잰다
+            m.recover_at = self._clock() + self.params.recover_check_s
         m.x, m.y, m.yaw, m.robot_state, m.battery = x, y, yaw, state, battery
         m.last_seen = self._clock()
         if m.arrival_by is not None:
@@ -517,8 +517,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
         """
         here = self._smoothed(m, now)
         idle = m.goal is None and not m.stall_hold
-        queued = m.robot_state == BLOCKED and self._queued_behind(m)
-        if idle or self._run_mode != RUN or m.block or queued:
+        if idle or self._run_mode != RUN or m.block or self._queue_rests(m):
             m.stall_from = None
             return
         if m.stall_from is None or math.dist(here, m.stall_from) >= self.params.stall_move_m:
@@ -610,8 +609,9 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
             self._event("WARN", "LANE_ERROR", f"{e:.2f} m off {a} to {b} at s={s:.2f}", m.name)
 
     def _release_if_cleared(self, m: _Mission, zone: str) -> None:
-        if m.block and m.block.cancel_id is not None:
-            return  # 막힘으로 취소한 goal의 결과 전에는 어느 구역도 놓지 않는다
+        if m.block_cancel is not None or (m.block and m.block.marked):
+            # 막힘 표시 중에는 막힘 쪽만 놓고, 취소한 goal의 결과 전에는 아무것도 놓지 않는다
+            return
         if m.outside.get(zone, 0) >= self.params.release_confirm_samples:
             self.zones.release(m.name, zone)
             m.outside.pop(zone, None)

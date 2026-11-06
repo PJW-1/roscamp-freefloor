@@ -10,6 +10,8 @@
     풀린 뒤 blocked_rejoin_s 안에 같은 레인에서 다시 막히면 이어 센다.
 줄 서기(같은 레인이나 다음 레인 앞 queue_gap_m 안의 정상 로봇)는 막힘으로 치지 않는다.
 막힘을 연 뒤에 줄 서기가 되면 그동안 시계를 멈춘다.
+줄 서기가 blocked_timeout_s를 넘으면 막힘으로 친다.
+표시 동안과 취소한 goal의 결과 전에는 다른 자동 해제가 쉬고, 여기서만 놓는다.
 heartbeat가 끊겨 로봇이 스스로 끝낸 이동(HEARTBEAT_LOST)도 여기서 다룬다.
 
 TrafficController에서 떼어 낸 부분이다. 제어기 상태를 쓰므로 혼자 쓰지 않는다.
@@ -47,7 +49,7 @@ class TrafficBlocking:
             # 두절과 복구 확인 중에는 풀지도 놓지도 않는다. 그동안의 BLOCKED를 못 봤을 수 있다
             b.clear_n = b.still_n = 0
             return
-        if b.marked and b.cancel_id is None:
+        if b.marked and m.block_cancel is None:
             b.still_n = 0 if m.robot_state in ON_A_GOAL else b.still_n + 1
         b.clear_n = 0 if m.robot_state == BLOCKED else b.clear_n + 1
         if b.clear_n >= self.params.release_confirm_samples:
@@ -58,7 +60,7 @@ class TrafficBlocking:
         if m.comm or m.fault or not (m.goal and m.goal.kind == MOVE):
             return
         lane = self._running_lane(m)
-        if lane is None or self._queued_behind(m, lane):
+        if lane is None or self._queue_rests(m, lane):
             return
         now = self._clock()
         total = 0.0
@@ -78,9 +80,9 @@ class TrafficBlocking:
             self._event("INFO", "LANE_CLEARED", f"{a} to {z} {how or 'is clear'}", m.name)
 
     def _cancel_finished(self, m: _Mission, goal_id) -> None:
-        """표시할 때 취소한 goal이 끝났다(결과, 거절, 미전송)."""
-        if m.block and m.block.cancel_id is not None and m.block.cancel_id == goal_id:
-            m.block.cancel_id = None
+        """표시할 때 취소한 goal이 끝났다(결과, 거절, 미전송). 막힘이 먼저 풀려도 같다."""
+        if m.block_cancel is not None and m.block_cancel == goal_id:
+            m.block_cancel = None
 
     def _heartbeat_stopped(self, m: _Mission, goal: _Goal) -> None:
         """heartbeat가 끊겨 로봇이 스스로 섰다. 실패로 세지 않고 잠시 뒤 같은 목표를 보낸다.
@@ -99,14 +101,14 @@ class TrafficBlocking:
         """막힌 시간을 잰다. 줄 서기 동안은 쉬고, 고장 난 로봇은 시각만 따라간다."""
         b = m.block
         if (m.live and not m.comm and m.robot_state == BLOCKED
-                and not self._queued_behind(m, b.lane)):
+                and not self._queue_rests(m, b.lane)):
             b.total += now - b.seen
         b.seen = now
         if not m.live:
             return
         if not b.marked and b.total >= self.params.blocked_mark_s:
             self._mark_block(m)
-        if b.marked and b.cancel_id is None and b.still_n >= self.params.release_confirm_samples:
+        if b.marked and m.block_cancel is None and b.still_n >= self.params.release_confirm_samples:
             self._free_unentered(m)
         if b.total >= self.params.blocked_timeout_s:
             self._fail(m, BLOCKED)
@@ -120,17 +122,22 @@ class TrafficBlocking:
         self.zones.cancel_all_requests(m.name)
         m.wait_zone = None
         if m.goal:
-            b.cancel_id = m.goal.id
+            m.block_cancel = m.goal.id
             self._cancel_goal(m)
         a, z = b.lane
         self._event("WARN", "LANE_BLOCKED", f"{a} to {z} blocked for {b.total:.0f} s", m.name)
 
     def _free_unentered(self, m: _Mission) -> None:
-        """취소가 끝나고 선 로봇이 들어가지 않은 앞 구역을 놓는다. 몸이 있는 레인의 구역은 쥔다."""
+        """취소가 끝나고 선 로봇이 들어가지 않은 앞 구역을 놓는다. 몸이 있는 레인의 구역은 쥔다.
+
+        표시 동안 구역을 놓는 곳은 여기뿐이다(_release_if_cleared는 쉰다).
+        """
         body = {self._zone(waypoint) for waypoint in m.block.lane}
         for zone in self.zones.held_by(m.name):
-            if zone not in body and self._off_the_floor(m, zone):
-                self._release_if_cleared(m, zone)
+            if (zone not in body and self._off_the_floor(m, zone)
+                    and m.outside.get(zone, 0) >= self.params.release_confirm_samples):
+                self.zones.release(m.name, zone)
+                m.outside.pop(zone, None)
 
     # ---- 레인과 줄 서기 ---------------------------------------------------------------------
 
@@ -168,6 +175,19 @@ class TrafficBlocking:
         else:
             return None
         return (path[end], path[end + 1]) if end + 1 < len(path) else None
+
+    def _queue_rests(self, m: _Mission, lane: tuple | None = None) -> bool:
+        """BLOCKED인데 줄 서기라 막힘과 멈춤 감시를 쉰다.
+
+        blocked_timeout_s 넘게 이어지면 쉬지 않는다. 서로 막고 서 있을 수 있어서다.
+        """
+        if m.robot_state != BLOCKED or not self._queued_behind(m, lane):
+            m.queue_since = None
+            return False
+        now = self._clock()
+        if m.queue_since is None:
+            m.queue_since = now
+        return now - m.queue_since < self.params.blocked_timeout_s
 
     def _queued_behind(self, m: _Mission, lane: tuple | None = None) -> bool:
         """같은 레인이나 다음 레인 앞 queue_gap_m 안에 정상인 다른 로봇이 있다.

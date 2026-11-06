@@ -59,7 +59,7 @@ class TrafficRecovery:
         self._event("INFO", "ZONES_CLEARED", f"released {released}: {note}", robot)
         if m.block:
             self._clear_block(m, "cleared by the operator")
-        m.block_rejoin = None
+        m.block_rejoin = m.block_cancel = None
         still_held = self.zones.held_by(robot)
         if still_held:
             # 이 로봇은 더는 자세로 판단하지 않으니 다른 무엇도 이 구역을 풀지 않는다.
@@ -101,7 +101,9 @@ class TrafficRecovery:
 
     def _finish_recoveries(self, now: float) -> None:
         for m in self._missions.values():
-            if m.live and m.comm == RECOVERING and now >= m.recover_at:
+            # 마지막 보고가 LOCALIZING이면 옛 자세로 끝내지 않는다
+            if (m.live and m.comm == RECOVERING and now >= m.recover_at
+                    and m.robot_state != LOCALIZING):
                 self._finish_recovery(m)
 
     def _finish_recovery(self, m: _Mission) -> None:

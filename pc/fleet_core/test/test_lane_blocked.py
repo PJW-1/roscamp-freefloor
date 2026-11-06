@@ -301,8 +301,29 @@ def test_a_recovery_keeps_the_zone_ahead_until_the_cancel_result():
     assert pilot.events("COMM_RESTORED") and not pilot.mission().comm
     assert pilot.held() == {"N", "S"}
     pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
-    pilot.run(0.1 * (CONFIRM + 1))
+    pilot.run(0.1)
+    assert pilot.held() == {"N", "S"}  # 결과 뒤 정지 보고가 아직 모자라다
+    pilot.run(0.1 * CONFIRM)
     assert pilot.held() == {"N"}
+
+
+def test_no_zone_is_let_go_before_the_cancel_result_even_after_the_clear():
+    """풀림이 취소 결과보다 먼저 와도 결과가 올 때까지 자동으로 놓지 않는다."""
+    pilot = Pilot()
+    blocked_on_the_way(pilot)
+    goal = first_goal(pilot)
+    pilot.run(MARK_S + 0.2)
+    pilot.state["pinky1"] = "MOVING"
+    pilot.run(0.1 * CONFIRM + 0.3)
+    m = pilot.mission()
+    assert m.block is None and pilot.events("LANE_CLEARED")
+    traffic = pilot.core.traffic
+    m.outside["S"] = CONFIRM
+    traffic._release_if_cleared(m, "S")
+    assert "S" in pilot.held()
+    pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
+    traffic._release_if_cleared(m, "S")
+    assert "S" not in pilot.held()
 
 
 def test_clear_reports_before_a_lost_link_do_not_count_after_it():
@@ -475,6 +496,17 @@ def test_the_block_clock_rests_while_a_healthy_robot_stands_close_ahead():
     assert rear.block.total == 0.0 and not rear.block.marked
 
 
+def test_a_queue_that_lasts_past_the_timeout_is_a_block():
+    """앞 정상 로봇 뒤 줄 서기도 blocked_timeout_s를 넘기면 막힘 규칙을 쓴다."""
+    pilot, traffic, rear = queue()
+    for step in range(round((PARAMS.blocked_timeout_s + 1.0) / 0.5)):
+        pilot.now[0] = step * 0.5
+        pilot.core.on_robot_state("pinky2", rear.x, rear.y, 0.0, "BLOCKED")
+        if step == 2:
+            assert rear.block is None
+    assert rear.block is not None and rear.block.lane == ("P-6", "N")
+
+
 def test_a_lane_no_longer_on_the_path_has_no_next_lane():
     """경로가 바뀌어 막힌 레인이 지금 자리에 없으면 그 다음 레인으로 줄 서기를 보지 않는다."""
     pilot, traffic, rear = queue()
@@ -586,6 +618,28 @@ def test_a_robot_that_says_localizing_during_the_recovery_check_is_not_resumed()
     assert len(pilot.events("COMM_LOST")) == 2
     pilot.state["pinky1"] = "IDLE"
     pilot.run(PARAMS.recover_check_s + 0.5)
+    assert pilot.mission().comm == ""
+
+
+def test_a_recovery_waits_when_the_last_report_said_localizing():
+    """LOCALIZING 하나 뒤 보고가 끊겨도 옛 자세로 복구를 끝내지 않는다. 위치가 오면 다시 잰다."""
+    pilot = Pilot(orders=())
+    pilot.run(0.3)
+    pilot.silent.add("pinky1")
+    pilot.run(PARAMS.comm_timeout_s + 0.5)
+    pilot.silent.clear()
+    pilot.tick()
+    assert pilot.mission().comm == "RECOVERING"
+    pilot.state["pinky1"] = "LOCALIZING"
+    pilot.tick()
+    pilot.silent.add("pinky1")
+    pilot.run(PARAMS.recover_check_s + 0.5)
+    assert pilot.mission().comm == "RECOVERING"
+    pilot.silent.clear()
+    pilot.state["pinky1"] = "IDLE"
+    pilot.run(PARAMS.recover_check_s - 0.2)
+    assert pilot.mission().comm == "RECOVERING"
+    pilot.run(0.4)
     assert pilot.mission().comm == ""
 
 

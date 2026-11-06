@@ -64,7 +64,6 @@ class _Block:
     seen: float = 0.0  # total을 마지막으로 잰 시각
     clear_n: int = 0  # BLOCKED가 아닌 연속 보고 수
     marked: bool = False  # LANE_BLOCKED를 냈다
-    cancel_id: int | None = None  # 표시할 때 취소한 goal. 결과가 오면 None
     still_n: int = 0  # 취소가 끝난 뒤 서 있는 연속 보고 수
 
 
@@ -110,6 +109,8 @@ class _Mission:
     stall_hold: bool = False  # heartbeat로 선 goal을 다시 보낼 때까지 멈춤 시계를 이어 잰다
     block: _Block | None = None
     block_rejoin: tuple | None = None  # (레인, 풀린 시각, 합). 곧 같은 레인에서 막히면 이어 센다
+    block_cancel: int | None = None  # 막힘 표시 때 취소한 goal. 결과가 오면 None. 풀려도 남는다
+    queue_since: float | None = None  # BLOCKED로 줄 서기를 시작한 시각
 
     @property
     def live(self) -> bool:
