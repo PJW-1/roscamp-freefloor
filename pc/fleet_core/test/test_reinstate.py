@@ -548,7 +548,7 @@ def test_a_holder_stopped_for_a_placement_is_a_standing_robot_with_no_end():
 
 
 def test_a_robot_put_back_short_of_a_waypoint_is_not_stopped_off_lane_in_path_mode():
-    """레인 중간(N 앞 0.14 m)에 다시 놓인 로봇. 첫 지점에 닿기 전에는 이탈을 재지 않는다."""
+    """레인 중간(N 앞 0.14 m)에 다시 놓인 로봇. 레인 위로 달리면 서지 않는다."""
     from test_lane_path import make as make_path
     from test_lane_path import moves
 
