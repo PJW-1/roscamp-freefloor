@@ -33,7 +33,19 @@ EXPECT_DEFAULTS = {
     "released_while_off_lane": 0,  # drift로 레인 밖이라 보고하는 동안 그 로봇이 놓은 구역 수
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
-                  "arm", "dock", "faults", "expect"}
+                  "arm", "dock", "faults", "expect", "map"}
+
+
+def scenario_map_file(scenario_path) -> str:
+    """시나리오의 `map`(maps 폴더의 지도 이름)을 절대 경로로. 없으면 빈 값(기본 지도)."""
+    path = Path(scenario_path)
+    name = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("map")
+    if not name:
+        return ""
+    found = path.resolve().parent.parent / "maps" / f"{name}.yaml"
+    if not found.is_file():
+        raise ScenarioError(f"map {name!r} is not in {found.parent}")
+    return str(found)
 
 
 class ScenarioError(ValueError):
@@ -290,5 +302,5 @@ def parse_scenario(data: dict, lane_map) -> Scenario:
 def load_scenario(path, lane_map=None) -> Scenario:
     if lane_map is None:
         from fleet_core.traffic.lane_map import load_lane_map
-        lane_map = load_lane_map()
+        lane_map = load_lane_map(scenario_map_file(path) or None)
     return parse_scenario(yaml.safe_load(Path(path).read_text(encoding="utf-8")), lane_map)

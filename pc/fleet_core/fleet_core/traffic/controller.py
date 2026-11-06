@@ -27,6 +27,7 @@ from fleet_core.common.commands import (
     ZoneView,
 )
 from fleet_core.traffic.blocking import TrafficBlocking
+from fleet_core.traffic.detour import TrafficDetour
 from fleet_core.traffic.mission import (
     AT_STATION,
     BLOCKED,
@@ -62,7 +63,7 @@ from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
-class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking):
+class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, TrafficDetour):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -683,11 +684,12 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking):
 
     # ---- mission steps ------------------------------------------------------------------
 
-    def _start_leg(self, m: _Mission, phase: str, dest: str | None, goal_waypoint) -> None:
-        """반드시 도달할 지점 이후의 경로를 바꾼다."""
+    def _start_leg(self, m: _Mission, phase: str, dest: str | None, goal_waypoint,
+                   way=None) -> None:
+        """반드시 도달할 지점 이후의 경로를 바꾼다. way는 우회가 고른 그 지점부터의 길."""
         _, old_next = self._upcoming(m) if m.path else ("", None)
         anchor = self._anchor(m)
-        tail = self.site.plan(m.path[anchor], goal_waypoint)
+        tail = way or self.site.plan(m.path[anchor], goal_waypoint)
         behind = max(m.idx - 1, 0)  # 방금 지난 레인은 남긴다. 그 구역을 아직 못 놓았을 수 있다
         m.path = m.path[behind:anchor + 1] + tail[1:]
         if m.goal and m.goal.kind == MOVE:
@@ -776,6 +778,9 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking):
             self._arrive(m)
             return
         self._request_next_zone(m)
+        if m.goal is None and m.settle_idx is None and m.idx == len(m.path) - 1:
+            self._arrive(m)  # 우회한 길이 여기서 끝난다
+            return
         self._issue_move(m)
 
     def _trim_parking_path(self, m: _Mission) -> None:
@@ -817,6 +822,11 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking):
         if following in held or any(zone != current for zone in held):
             m.wait_zone = None
             return
+        if self._consider_detour(m, following):
+            current, following = self._upcoming(m)
+            if following is None:  # 새 길은 이 구역 안에서 끝난다
+                m.wait_zone = None
+                return
         if self.zones.request(m.name, following):
             m.wait_zone = None
         else:

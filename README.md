@@ -109,7 +109,7 @@ flowchart TB
 | `pc/fleet_core` | 관제 판단 로직. ROS를 쓰지 않는 순수 Python과 pytest. `manager.py`(`FleetManager`), `orders/`(주문), `traffic/`(교통), `common/`(명령, 파라미터, 계약), `data/`(기본 지도와 파라미터) | 동작 |
 | `pc/fleet_manager` | `fleet_core`를 ROS에 연결하는 노드. 실행 파일 `fleet_manager_node`, 노드 이름 `fleet_manager` | 동작 |
 | `sim/fake_robots`, `sim/fake_robots/scenarios` | 가짜 핑키, 작업공간 서버, 출고 팔, 비전, 중앙, 시계, 심판 노드와 시나리오 | 동작 |
-| `sim/fake_robots/maps` | 비교용 일방통행 지도 2개. 기본 지도는 `pc/fleet_core/fleet_core/data/lane_map.yaml` | 동작 |
+| `sim/fake_robots/maps` | 비교용 지도: 일방통행 2개(`oneway_loop`, `oneway_shortcut`), 우회 시험용 특징 지도(`feature_map`), 11-06 변형 2개(`two_lane_avenue`, `two_lane_segments`). 시나리오는 `map:`으로 고른다. 기본 지도는 `pc/fleet_core/fleet_core/data/lane_map.yaml` | 동작 |
 | `tools` | 전수 검사(`model_check.py`), 기록 재생(`replay.py`), 지연·잡음 압박 시험(`pressure_sweep.py`), 격자 지도 변환(`convert_grid_map.py`) | 동작 |
 | `bringup/iponic_bringup` | `pc.launch.py` | 동작 |
 | `scripts/check_interfaces.py` | 실행 중인 시스템을 `contract.yaml`과 비교 | 동작 |

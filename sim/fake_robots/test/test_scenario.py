@@ -4,12 +4,13 @@ from pathlib import Path
 import pytest
 from conftest import GRID_MAP
 from fake_robots.common import load_fleet_params, split_fake_arms
-from fake_robots.scenario import ScenarioError, load_scenario, parse_scenario
+from fake_robots.scenario import ScenarioError, load_scenario, parse_scenario, scenario_map_file
 from fleet_core.traffic.lane_map import load_lane_map
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 SIX = {"basic_orders", "order_burst", "shared_lane_failure", "stock_shortage", "stuck_robot",
-       "operator_recovery", "blocked_lane", "off_lane"}
+       "operator_recovery", "blocked_lane", "feature_basic_orders", "feature_blocked_lane",
+       "off_lane"}
 
 
 @pytest.fixture(scope="module")
@@ -163,21 +164,43 @@ def shipped():
     return {f.stem: f for f in sorted(SCENARIOS.glob("*.yaml"))}
 
 
+def site_of(path, default):
+    """시나리오가 `map`으로 고른 지도, 없으면 기본 지도."""
+    chosen = scenario_map_file(path)
+    return load_lane_map(chosen) if chosen else default
+
+
 def test_exactly_the_six_scenarios_are_shipped(site):
     assert set(shipped()) == SIX
     for f in shipped().values():
-        load_scenario(f, site)
+        load_scenario(f, site_of(f, site))
+
+
+def test_a_scenario_can_choose_a_map_from_the_maps_folder():
+    assert scenario_map_file(SCENARIOS / "basic_orders.yaml") == ""
+    chosen = Path(scenario_map_file(SCENARIOS / "feature_basic_orders.yaml"))
+    assert chosen == (SCENARIOS.parent / "maps" / "feature_map.yaml").resolve()
+    assert load_scenario(SCENARIOS / "feature_blocked_lane.yaml").robots["pinky1"].start
+
+
+def test_an_unknown_map_name_is_refused(tmp_path):
+    path = tmp_path / "x.yaml"
+    path.write_text("map: no_such_map\n", encoding="utf-8")
+    with pytest.raises(ScenarioError, match="no_such_map"):
+        scenario_map_file(path)
 
 
 @pytest.mark.parametrize("name", sorted(SIX))
 def test_every_robot_starts_in_a_waiting_cell(site, name):
-    sc = load_scenario(SCENARIOS / f"{name}.yaml", site)
-    assert {r.start for r in sc.robots.values()} <= set(site.parking)
+    chosen = site_of(SCENARIOS / f"{name}.yaml", site)
+    sc = load_scenario(SCENARIOS / f"{name}.yaml", chosen)
+    assert {r.start for r in sc.robots.values()} <= set(chosen.parking)
 
 
 @pytest.mark.parametrize("name", sorted(SIX))
 def test_every_scenario_checks_order_of_work_and_the_arms(site, name):
-    raw = load_scenario(SCENARIOS / f"{name}.yaml", site).expect
+    path = SCENARIOS / f"{name}.yaml"
+    raw = load_scenario(path, site_of(path, site)).expect
     assert raw.fifo_violations == 0 and raw.dual_arm_overlaps == 0
     assert max(raw.orders_shipped or 0, raw.orders_shipped_min) >= 1
 

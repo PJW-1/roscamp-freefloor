@@ -2,10 +2,14 @@
 
 기본 지도에서 W를 떠나 A로 가는 로봇 하나로 잰다. 0.1초 틱.
 """
+import math
+from pathlib import Path
+
 from core_helpers import cmds, codes
 from fleet_core.common.params import load_params
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.lane_map import load_lane_map
+from fleet_core.traffic.mission import MOVE, _Goal
 from grid_map import grid_site
 
 PARAMS = load_params()
@@ -313,3 +317,75 @@ def test_a_marked_block_has_no_goal_so_lane_error_does_not_watch():
     out = core.tick()
     assert not events(out, "LANE_ERROR")
     assert status(core) == ("NONE", "BLOCKED")
+
+
+# ---- 우회(파트 5)와 함께 --------------------------------------------------------------------
+
+FEATURE = Path(__file__).resolve().parents[3] / "sim/fake_robots/maps/feature_map.yaml"
+
+
+def feature(starts):
+    now = [0.0]
+    site = load_lane_map(FEATURE)
+    core = TrafficController(site, load_params(), list(starts), lambda: now[0])
+    for robot, waypoint in starts.items():
+        core.on_robot_state(robot, *site.waypoint_pose(waypoint), 0.0, "IDLE")
+    core.on_run_mode("RUN")
+    return core, now
+
+
+def beside_on(core, robot, a, b, along, off, times=N):
+    x, y = core.site.waypoint_pose(a)
+    lane = core.site.lane(a, b)
+    for _ in range(times):
+        core.on_robot_state(robot, x + lane.ux * along - lane.uy * off,
+                            y + lane.uy * along + lane.ux * off, 0.0, "MOVING")
+
+
+def stop_off_lane_on(core, robot, path):
+    """robot이 path[0]에서 path[1]로 가다 레인을 벗어나 서게 한다."""
+    m = core._missions[robot]
+    m.phase, m.dest, m.path, m.idx = "TO_WORK", "WORK", list(path), 0
+    for waypoint in path[:2]:
+        core.zones.force_acquire(robot, core.site.zone_of[waypoint])
+    m.goal = _Goal(MOVE, 99, 1, core._step_between(m, 0))
+    beside_on(core, robot, path[0], path[1], 0.05, OFF)
+    core.take_output()
+    assert core.status_view(robot)["fault_reason"] == "OFF_LANE"
+
+
+def test_a_robot_off_its_lane_stands_for_good_so_the_one_behind_goes_around():
+    core, _ = feature({"r1": "F0", "r2": "F1"})
+    stop_off_lane_on(core, "r2", ["F1", "F2", "W"])
+    assert core._standing_wait_s(core._missions["r2"]) == math.inf
+    core.on_dispatch(1, "WORK", "r1")
+    out = core.tick()
+    assert len(events(out, "DETOUR")) == 1
+    m = core._missions["r1"]
+    assert m.path[m.idx:] == ["F0", "T2", "T1", "QW", "W"]
+
+
+def test_with_no_other_way_the_one_behind_waits_for_the_off_lane_robot():
+    core, _ = feature({"r1": "O", "r2": "F0"})
+    stop_off_lane_on(core, "r2", ["F0", "F1", "F2", "W"])
+    core.on_dispatch(1, "WORK", "r1")
+    out = core.tick()
+    assert not events(out, "DETOUR")
+    assert core.zones.waiting_for("r1") == "F0"
+
+
+def test_a_robot_on_a_detour_is_watched_and_resumed_on_its_new_lane():
+    core, _ = feature({"r1": "F0", "r2": "F1"})
+    stop_off_lane_on(core, "r2", ["F1", "F2", "W"])
+    core.on_dispatch(1, "WORK", "r1")
+    first = [c for c in core.tick() if type(c).__name__ == "MoveCmd" and c.robot == "r1"]
+    assert [c.target_id for c in first] == ["T2"]
+    beside_on(core, "r1", "F0", "T2", 0.05, OFF)
+    out = core.tick()
+    (warned,) = [e for e in events(out, "LANE_ERROR") if e.robot == "r1"]
+    assert "F0 to T2" in warned.detail
+    beside_on(core, "r1", "F0", "T2", 0.05, 0.0)
+    out = core.tick()
+    again = [c for c in cmds(out, "MoveCmd") if c.robot == "r1"]
+    assert [c.target_id for c in again] == ["T2"]
+    assert [e.robot for e in events(out, "BACK_ON_LANE")] == ["r1"]
