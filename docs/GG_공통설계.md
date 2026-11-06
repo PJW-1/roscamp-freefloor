@@ -3,8 +3,18 @@
 기준은 Confluence에 있는 것이 최종입니다(2026-11-04 확정).
 - 기준 UR: Confluence "주제1 : GG(Give Gift)" 페이지(425992, UR-01~14). 배터리·홈 복귀는 UR-10, 관리자 실시간 확인은 UR-11, 오류 알림은 UR-12, 충돌·간섭 방지는 UR-13, 이력 확인은 UR-14. 2785281(UR-01~15)은 더 이상 쓰지 않습니다.
 - 기준 SR: Confluence "System Requirements" 페이지(819201, SR-01~38, UR 열 포함). UR 열의 "-"는 최종 UR에 대응 항목이 없다는 뜻입니다. "Copy of System Requirements"는 작업본이며 기준이 아닙니다.
-- 계층(2026-11-05, v17 FMS 통합 판, 팀 합의 전): 사용자(화면) → 서버(central, FMS) → 로봇(핑키, 로봇팔). 위가 아래를 부르고 아래는 상태와 결과만 올린다. FMS는 프로세스 하나(노드 `fleet_manager`)이고, 그 안에 주문 진행을 맡는 `orders`와 교통 제어를 맡는 `traffic`이 파이썬 호출로 연결된다. 코드도 이 구조로 나눴다(11절). 이 문서와 Confluence가 다른 것으로 확인한 항목은 12절에 모았고, 어느 쪽으로 맞출지는 아직 정하지 않았다.
-- 최종 갱신: 2026-11-06. 개선 지시서(Drive `FMS_개선_지시서_2026-11-06.md`)에 따라 패키지·모듈 이름을 역할에 맞게 바꿨다(0.5번, 11절). 같은 날 앞서 코드 검토에서 찾은 결함 8건을 고치고 새 값과 이벤트를 반영했다(`docs/worklog_2026-11-06.md`). 2026-11-05: orchestrator와 fleet을 FMS 한 프로세스로 합치고, 둘 사이의 ROS 액션(`/fleet/dispatch`)과 서비스(`/fleet/release`), 중계 토픽(`/fleet/events`, `/orchestrator/*`)을 없앴다(4절). 지시서 "FMS 선행 작업"의 1~7번이 끝난 코드에 맞춰 전체를 고쳤다. 어긋났던 문장과 숫자의 근거는 `docs/worklog_2026-11-05.md`에 있다. 작업본은 저장소 `docs/GG_공통설계.md`이고 Drive 원본(2026-11-05 00:51 수정, 40 KB)은 고치지 않았다.
+- 11-06 결정(개선 지시서 `FMS_개선_지시서_2026-11-06.md`의 전제. 저장소 문서가 기준이고 Drive에는 아직 없다):
+  1. 중앙이 레인 그래프 위에서 경로와 순서를 정한다. 자유 선 경로 + 연속 공간 예약(pinky_multi_sim 방식)은 쓰지 않는다. 전수 검사가 가능해야 하기 때문이다. 자유 선의 이점은 촘촘한 레인 그래프로 얻는다.
+  2. 실행은 FollowPath(레인 폴리라인). 장애물 처리, 멈춤 감시, 대기-vs-우회, 끝 근처 재전송은 pinky_multi_sim의 규칙을 옮긴다. 라이다 합치기(obstacle_watch)는 옮기지 않는다. 감지는 로봇이 한다(14절).
+  3. 충돌 회피는 시간 없는 구역 잠금이다. Open-RMF, 시간 궤적, MAPF, 우선순위 최적화는 안 한다.
+  4. `orders`와 `traffic`의 분리를 지킨다. traffic은 주문을 모른다. 새 입력은 `commands.py`의 명령에 칸을 더한다.
+  5. 11-05 밤 "정할 것 9가지"의 권장을 모두 채택한다: FollowPath, AMCL 1 cm(Nav2 담당), 물체는 멈추고 알리기 → 우회, FMS도 멈춤 감시, 같은 도메인 + namespace, 교착은 지금 방식, 레인 이탈은 멈추고 구역 유지, 관리자 재투입 명령, 잘못된 입력은 거부하고 계속 실행.
+  6. 지도 요소는 방향별 레인 2줄의 넓은 길, 우회로가 있는 좁은 양방향 통로(+ 기존 교차)다. 레인 간격 ≥ 2r + 2e + 여유(e는 Gazebo 값 0.067 m 임시, 간격 0.3 m 이상). 긴 레인은 0.3~0.4 m 구간으로 쪼갠다.
+  7. 우회 규칙은 결정적이다. 기다릴지 돌아갈지를 규칙 하나가 정한다.
+  8. 검증: 특징 지도(구역 15개 안팎)에서 로봇 3대 전수 검사. 실제 지도는 2대 전수 + 3대 상한 탐색 + 시나리오.
+- 사용자가 지시서를 바꾼 것: 이름에 `gg_` 접두사를 쓰지 않고(패키지는 0.5 이전 이름), 계약 버전은 `0.3-draft`이며, 핑키 계약은 제안이 아니라 관제가 요구하는 것으로 쓴다.
+- 계층(2026-11-05, v17 FMS 통합 판, v18도 같다, 팀 합의 전): 사용자(화면) → 서버(central, FMS) → 로봇(핑키, 로봇팔). 위가 아래를 부르고 아래는 상태와 결과만 올린다. FMS는 프로세스 하나(노드 `fleet_manager`)이고, 그 안에 주문 진행을 맡는 `orders`와 교통 제어를 맡는 `traffic`이 파이썬 호출로 연결된다. 코드도 이 구조로 나눴다(11절). 이 문서와 Confluence가 다른 것으로 확인한 항목은 12절에 모았고, 어느 쪽으로 맞출지는 아직 정하지 않았다.
+- 최종 갱신: 2026-11-06 밤(파트 8, 문서 동기화). 기준 트리는 `fms-work-order`의 `b84f4d0`이고, 개선 지시서 파트 0, 0.5, 1, 2, 4, 5, 5.5가 들어 있다. 파트 3(레인 이탈), 7(FollowPath), 6(재투입)은 아직이다. 그 항목의 문장은 들어오는 대로 고친다. 앞서 지시서 0.5번에 따라 패키지·모듈 이름을 역할에 맞게 바꿨다(11절). 같은 날 앞서 코드 검토에서 찾은 결함 8건을 고치고 새 값과 이벤트를 반영했다(`docs/worklog_2026-11-06.md`). 2026-11-05: orchestrator와 fleet을 FMS 한 프로세스로 합치고, 둘 사이의 ROS 액션(`/fleet/dispatch`)과 서비스(`/fleet/release`), 중계 토픽(`/fleet/events`, `/orchestrator/*`)을 없앴다(4절). 지시서 "FMS 선행 작업"의 1~7번이 끝난 코드에 맞춰 전체를 고쳤다. 어긋났던 문장과 숫자의 근거는 `docs/worklog_2026-11-05.md`에 있다. 작업본은 저장소 `docs/GG_공통설계.md`이고 Drive 원본(2026-11-05 00:51 수정, 40 KB)은 고치지 않았다.
 
 ## 0. 용어와 컴포넌트
 
@@ -28,7 +38,7 @@
 
 FMS(fleet manager, RCS)는 핑키 플릿에 일을 나눠 주고(배분), 길을 정리하고(교통), 스테이션에 작업을 요청한다(핸드셰이크). 팔의 동작 자체는 스테이션이 한다. 프로세스 하나, 안에 orders와 traffic 두 모듈.
 
-FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실행 파일 `fleet_manager_node`)이고, 그 안에 모듈 2개(`orders`, `traffic`)와 둘을 잇는 `FleetManager`(`manager.py`)가 있다. v17 그림은 FMS 안을 core, pinky, arm 세 모듈로 그렸다. core와 arm이 `orders`에, pinky가 `traffic`에 해당한다. 패키지 이름은 그대로이고 2026-11-06에 패키지 안의 모듈만 나눴다(11절).
+FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실행 파일 `fleet_manager_node`)이고, 그 안에 모듈 2개(`orders`, `traffic`)와 둘을 잇는 `FleetManager`(`manager.py`)가 있다. v17·v18 그림은 FMS 안을 core, pinky, arm 세 모듈로 그렸다. core와 arm이 `orders`에, pinky가 `traffic`에 해당한다. 패키지 이름은 그대로이고 2026-11-06에 패키지 안의 모듈만 나눴다(11절).
 
 ### 컴포넌트
 
@@ -68,6 +78,24 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `PENDING`, `BOUND`, `FILLING`, `TO_OUTBOUND`, `SWAPPING`, `SHIPPED`, `PARTIAL`, `HELD` | 주문 상태 | 5-1절 |
 | `EMPTY`, `FULL`, `NONE` | `basket[robot]` | 빈 바구니, 담긴 바구니, 바구니 없음 |
 | `RUN`, `PAUSE`, `STOP` | run_mode | 5절, 5-1절 |
+
+`/fleet/robots`의 `fault_reason` 값(`controller.py`의 `status_view`). `fault`가 NONE이 아니면 그 고장의 이유, NONE이면 두절·복구 확인·막힘의 이유다.
+
+| `fault` | `fault_reason` | 언제 |
+|---|---|---|
+| `ERROR` | `STALLED` | 멈춤 감시로 재시도를 다 썼다(`GOAL_FAILED`) |
+| `ERROR` | `NOT_AT_TARGET` | 성공 결과 뒤 위치가 목표에서 멀어 재시도를 다 썼다 |
+| `ERROR` | `REJECTED`, `DOCK_FAILED` | 목표 거절, 도킹 실패로 재시도를 다 썼다 |
+| `ERROR` | 이동 결과의 reason(`NAV_ABORTED`, `TIMEOUT`, `CANCELED` 등) | 이동 실패로 재시도를 다 썼다. 핑키가 보낸 값 그대로 |
+| `ERROR` | `BLOCKED` | 막힘이 `blocked_timeout_s`에 닿았다(`BLOCKED_TOO_LONG`) |
+| `ERROR` | `RECOVERY_CONFLICT` | 복구한 로봇이 남의 구역 안에 있다 |
+| `ERROR` | `PLACEMENT_CONFLICT` | 시작 때 자리 충돌. 놓이면 지운다 |
+| `ERROR` | 주문 쪽 이유(`<서버>: <reason>`, `<서버> goal <n> never reported`, 일부 담김 금지 detail) | `RobotFaultCmd`(팔 재시도 초과, `ARM_NO_RESULT`, `ship_partial` false) |
+| `OUT_OF_SERVICE` | `confirm_clear`의 note | 관리자가 치웠다 |
+| `COMM_LOST` | `NO_STATE` | 보고가 `comm_timeout_s` 동안 없다 |
+| `RECOVERING` | `CHECKING_POSE` | 복구 확인 중 |
+| `NONE` | `BLOCKED` | 막힘을 연 동안(5절 레인 막힘) |
+| `NONE` | 빈 값 | 문제 없음 |
 
 ### 이벤트 코드 (`/central/events`)
 
