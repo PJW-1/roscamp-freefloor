@@ -341,6 +341,21 @@ def test_it_turns_back_when_the_new_way_can_no_longer_be_passed():
     assert core.zones.waiting_for("r1") in (None, "W")
 
 
+def test_a_zone_given_up_again_at_the_same_waypoint_is_listed_once():
+    # 전수 검사에서 찾은 경우: 다른 규칙이 같은 지점에서 옛 길을 다시 주면 목록이 끝없이 길어졌다
+    core, _ = make({"r1": "F2", "r2": "W"})
+    at_station(core, "r2")
+    core.on_dispatch(5, "OUTBOUND", "r1")
+    core.tick()
+    m = core._missions["r1"]
+    assert m.detour_avoid == ("W",)
+    for _ in range(3):
+        m.path, m.idx, m.goal = core.site.plan("F2", "O"), 0, None
+        assert core._consider_detour(m, "W") is True
+        assert path(core, "r1") == ["F2", "T1", "T2", "QO", "O"]
+    assert m.detour_avoid == ("W",)
+
+
 def test_a_zone_given_up_further_on_does_not_make_the_path_impassable():
     # 피한 구역이 지금 길 뒤쪽에 있어도 지금 길의 비용은 실제 비용이다(0.2 m 벌점)
     core, _ = make({"r1": "F0", "r2": "F1"}, station_wait_estimate_s=1.0)

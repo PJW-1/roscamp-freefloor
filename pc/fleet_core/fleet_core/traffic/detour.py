@@ -121,7 +121,7 @@ class TrafficDetour:
         way = found[1]
         current = self._zone(here)
         new_next = next((self._zone(w) for w in way if self._zone(w) != current), None)
-        if new_next != following:
+        if new_next != following and following not in m.detour_avoid:
             m.detour_avoid = (*m.detour_avoid, following)
         self._start_leg(m, m.phase, m.dest, way[-1], way=way)
         reasons = [why] if penalty > 0.0 else []
