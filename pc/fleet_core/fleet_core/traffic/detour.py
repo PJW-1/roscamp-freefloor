@@ -16,7 +16,7 @@
   - 그 밖(스테이션, 대기 칸, 할 일 대기): station_wait_estimate_s.
 고르는 때: 현재 구역 말고 쥔 것이 없어 다음 구역을 청할 때. 다음 구역을 이미 쥐었으면 안 바꾼다.
 막힌 로봇과 취소 결과를 기다리는 로봇(_held_for_block)은 다시 고르지 않는다.
-다음 구역에 벌점이 있거나 남은 경로에 막힌 레인이 있을 때만 계산한다.
+다음 구역에 벌점이 있거나, 남은 경로에 막힌 레인이나 못 비키는(무한) 보유자의 구역이 있을 때만 계산한다.
 새 길이 지금 길보다 싸야 바꾼다. 동점이면 그대로, 길이 없으면 그대로 기다린다.
 한 지점에서 포기한 다음 구역은 그 지점을 떠날 때까지 못 지난다(왕복 금지).
 지금 길을 못 지나면(비용 무한) 왕복 금지를 쉬고 다시 고른다.
@@ -95,7 +95,14 @@ class TrafficDetour:
         shut = self._shut_lanes()
         tail = m.path[anchor:]
         shut_ahead = [key for key in zip(tail, tail[1:], strict=False) if key in shut]
-        if penalty <= 0.0 and not shut_ahead:
+        current = self._zone(here)
+        stuck_ahead = []  # 다음 구역 뒤의 못 비키는 보유자. 유한 벌점은 다음 구역만 본다
+        for zone in dict.fromkeys(self._zone(w) for w in tail):
+            if zone not in (current, following):
+                far, far_why = self._zone_penalty(m, zone, cache)
+                if far == math.inf:
+                    stuck_ahead.append(far_why)
+        if penalty <= 0.0 and not shut_ahead and not stuck_ahead:
             return False
         avoid: set = set()
         parking = set(self.site.parking) - set(tail)
@@ -119,12 +126,12 @@ class TrafficDetour:
         if found is None or found[0] >= now_cost or found[1] == tail:
             return False
         way = found[1]
-        current = self._zone(here)
         new_next = next((self._zone(w) for w in way if self._zone(w) != current), None)
         if new_next != following and following not in m.detour_avoid:
             m.detour_avoid = (*m.detour_avoid, following)
         self._start_leg(m, m.phase, m.dest, way[-1], way=way)
         reasons = [why] if penalty > 0.0 else []
+        reasons += stuck_ahead
         reasons += [f"lane {a} to {b} blocked" for a, b in shut_ahead]
         route = " ".join(self.site.waypoint_id(w) for w in way)
         self._event("INFO", "DETOUR",

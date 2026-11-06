@@ -202,6 +202,36 @@ def test_it_goes_around_a_broken_robot():
     assert "F0 T2 T1 QW W" in event.detail
 
 
+def test_it_goes_around_a_broken_robot_further_on():
+    # 다음 구역은 비었지만 그 뒤 F2의 보유자가 고장이다. F1에 들어가면 돌 길이 없다
+    core, _ = make({"r1": "F0", "r2": "F2"})
+    core.on_robot_fault("r2", "x")
+    core.on_dispatch(1, "WORK", "r1")
+    out = core.tick()
+    assert path(core, "r1") == ["F0", "T2", "T1", "QW", "W"]
+    (event,) = codes(out, "DETOUR")
+    assert "F2 held by r2" in event.detail
+
+
+def test_a_broken_robot_further_on_with_no_way_around_is_waited_for():
+    core, _ = make({"r1": "F1", "r2": "W"})
+    core.on_robot_fault("r2", "x")
+    core.on_dispatch(1, "WORK", "r1")
+    out = core.tick()
+    assert path(core, "r1") == ["F1", "F2", "W"]
+    assert not codes(out, "DETOUR")
+
+
+def test_a_standing_robot_further_on_is_not_worth_a_detour_yet():
+    # 멀리 선 로봇은 도착할 때쯤 비킬 수 있다. 유한 벌점은 다음 구역만 본다
+    core, _ = make({"r1": "F0", "r2": "F2"})
+    at_station(core, "r2")
+    core.on_dispatch(1, "WORK", "r1")
+    out = core.tick()
+    assert path(core, "r1") == ["F0", "F1", "F2", "W"]
+    assert not codes(out, "DETOUR")
+
+
 def test_with_detours_off_it_waits_in_line():
     core, _ = make({"r1": "F0", "r2": "F1"}, detour_enabled=False)
     core.on_robot_fault("r2", "x")
