@@ -24,6 +24,7 @@ from fleet_core.common.commands import (
     OrderRecord,
     ReleaseCmd,
     RobotFaultCmd,
+    RobotIsolated,
     RobotStatusView,
     ZoneView,
 )
@@ -183,6 +184,8 @@ class FleetManager:
 
     def confirm_clear(self, robot, zone_ids, note="") -> list[str] | None:
         """놓은 구역, 거부면 None. 거부 이유는 last_clear_reason(받아들이면 빈 값).
+
+        격리된 로봇이면 주문은 이미 돌아갔으니 구역만 푼다. 아니면 묶인 주문도 되돌린다.
 
         모르는 로봇·구역은 INPUT_REJECTED, 이름이 맞는 거부는 CLEAR_REFUSED. 판단은 traffic이 한다.
         """
@@ -363,6 +366,9 @@ class FleetManager:
         elif isinstance(item, RobotFaultCmd):
             self._note("inside", item)
             self.traffic.on_robot_fault(item.robot, item.reason)
+        elif isinstance(item, RobotIsolated):
+            self._note("inside", item)
+            self.orchestrator.on_robot_isolated(item.robot, item.reason)
         elif isinstance(item, DispatchFeedback):
             self._note("inside", item)
             self.orchestrator.on_dispatch_feedback(item.goal_id, item.robot_id, item.phase)

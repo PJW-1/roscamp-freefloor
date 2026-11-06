@@ -143,18 +143,20 @@ class FaultSchedule:
     def removed(self, t: float) -> bool:
         return any(f.type == "operator_remove" and t >= f.at_s for f in self._own)
 
-    def take_nav_abort(self, t: float) -> bool:
-        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다."""
+    def take_nav_abort(self, t: float, target_id: str = "") -> bool:
+        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다. target이면 그 지점만."""
         for f in self._own:
-            if f.type == "nav_abort" and t >= f.at_s and self._abort_left[id(f)] > 0:
+            if (f.type == "nav_abort" and t >= f.at_s and self._abort_left[id(f)] > 0
+                    and f.target in ("", target_id)):
                 self._abort_left[id(f)] -= 1
                 return True
         return False
 
-    def give_back_nav_abort(self) -> None:
+    def give_back_nav_abort(self, target_id: str = "") -> None:
         """중단이 나기 전에 끝난 목표의 고장 횟수를 돌려준다."""
         for f in self._own:
-            if f.type == "nav_abort" and self._abort_left[id(f)] < f.count:
+            if (f.type == "nav_abort" and self._abort_left[id(f)] < f.count
+                    and f.target in ("", target_id)):
                 self._abort_left[id(f)] += 1
                 return
 

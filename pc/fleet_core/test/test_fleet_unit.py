@@ -667,7 +667,7 @@ def test_failure_that_placed_everything_needs_no_retry():
     assert view(core, "r1")["state"] == "TO_OUTBOUND"
 
 
-def test_fill_retries_run_out_into_error_with_the_order_still_bound():
+def test_fill_retries_run_out_into_error_and_the_order_goes_back_by_itself():
     core, now, fill = filling()
     seen = []
     for attempt in range(core.params.move_retry_limit + 1):
@@ -683,7 +683,8 @@ def test_fill_retries_run_out_into_error_with_the_order_still_bound():
             assert not fills
     assert seen.count("FILL_RETRY") == core.params.move_retry_limit
     v = view(core, "r1")
-    assert (v["state"], v["order"]) == ("ERROR", "O-001")
+    assert (v["state"], v["order"]) == ("ERROR", None), "isolated (part 5.5)"
+    assert seen.count("ORDER_REQUEUED") == 1
 
 
 def test_fill_failed_event_is_an_error():
@@ -921,12 +922,13 @@ def test_swap_retries_run_out_into_error():
         now[0] += core.params.arm_retry_wait_s
         place(core, "r1", OUT_DOCK)
         out = core.tick()
-        seen += [e for e in cmds(out, "EventOut") if e.code == "SWAP_FAILED"]
+        seen += [e for e in cmds(out, "EventOut") if e.code in ("SWAP_FAILED", "ORDER_REQUEUED")]
         if attempt < core.params.move_retry_limit:
             swap = cmds(out, "SwapCmd")[0]
-    assert len(seen) == 1 and seen[0].level == "ERROR"
+    assert [(e.code, e.level) for e in seen] == [("SWAP_FAILED", "ERROR"),
+                                                 ("ORDER_REQUEUED", "INFO")]
     assert view(core, "r1")["state"] == "ERROR"
-    assert view(core, "r1")["order"] == "O-001"
+    assert view(core, "r1")["order"] is None, "isolated (part 5.5)"
 
 
 def test_canceled_swap_does_not_count_as_an_attempt():

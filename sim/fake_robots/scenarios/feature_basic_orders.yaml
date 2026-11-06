@@ -1,0 +1,33 @@
+# 특징 지도(지시서 5번)의 정상 경로: basic_orders와 같고 지도와 출발 칸만 다르다.
+map: feature_map
+seed: 7
+speed_factor: 5.0
+timeout_s: 900
+stock: {arm1: {A: 6, B: 6}, arm2: {C: 6, D: 6}}
+orders:
+  - {at_s: 0, id: O-001, items: {A: 1, C: 1}}
+  - {at_s: 0, id: O-002, items: {B: 1, D: 1}}
+  - {at_s: 10, id: O-003, items: {A: 2}}
+  - {at_s: 20, id: O-004, items: {C: 1, D: 1, A: 1}}
+  - {at_s: 40, id: O-005, items: {B: 2, C: 2}}
+  - {at_s: 60, id: O-006, items: {D: 1}}
+robots:
+  pinky1: {start: P-3, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-2, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-1, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 6
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED, DOCKED]
+  event_counts: {ORDER_BOUND: 6, COMM_LOST: 0, GOAL_RETRY: 0, ZONE_WAIT_LONG: 0, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED}

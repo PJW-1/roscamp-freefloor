@@ -12,7 +12,6 @@ from fleet_core.traffic.mission import (
     AT_STATION,
     COMM_LOST,
     DOCKING,
-    ERROR,
     IDLE,
     LOCALIZING,
     OUT_OF_SERVICE,
@@ -114,9 +113,7 @@ class TrafficRecovery:
         for held in self.zones.held_by(m.name):
             self._release_if_cleared(m, held)
         if zone not in self.zones.held_by(m.name) and not self.zones.request(m.name, zone):
-            m.fault = ERROR
-            m.fault_reason = "RECOVERY_CONFLICT"
-            self.zones.cancel_all_requests(m.name)
+            self._fail(m, "RECOVERY_CONFLICT")  # 격리도 여기서 걸린다
             self._event("ERROR", "RECOVERY_CONFLICT",
                         f"{m.name} is in {zone} held by {self.zones.holder(zone)}", m.name)
             return

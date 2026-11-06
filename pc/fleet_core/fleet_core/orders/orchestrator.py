@@ -79,6 +79,7 @@ class _LostJob:
     kind: str  # FILL 또는 SWAP
     order_id: str  # 포기할 때 묶여 있던 주문, 이미 보고했으면 빈 값
     cleared: bool = False  # 운영자가 로봇을 해제해서 취소됨
+    isolated: bool = False  # 자동 격리로 취소됨(cleared도 참)
 
 
 @dataclass
@@ -100,6 +101,7 @@ class _Robot:
     arm: _ArmJob | None = None
     arm_retry_at: float = 0.0  # 실패나 거절 뒤 이 시각 전에는 새 팔 goal 없음
     attempts: int = 0
+    isolated: str = ""  # 격리 이유. 해제(confirm_clear)로 지운다
 
 
 class OrderOrchestrator:
@@ -178,6 +180,9 @@ class OrderOrchestrator:
         if took_full and r.basket == FULL:
             r.basket = NONE
             self._report_shipped(r)
+        if r.isolated:
+            self._requeue_isolated(r)  # 가져가지 못했으면 이제 되돌린다
+            return
         if put_empty_done and r.basket == NONE:
             r.basket = EMPTY
             r.attempts = 0
@@ -186,23 +191,52 @@ class OrderOrchestrator:
         self._arm_attempt_failed(r, job, reason, "SWAP_RETRY", "SWAP_FAILED")
 
     def on_robot_removed(self, robot) -> None:
-        """운영자가 로봇을 뺐다. 주문은 등록 순서 자리로 돌아간다."""
+        """운영자가 로봇을 뺐다. 아직 묶인 주문은 등록 순서 자리로 돌아간다.
+
+        격리된 로봇은 대개 주문을 이미 되돌렸다. 예외 둘은 여기서 되돌린다: 교환 취소 결과를
+        기다리던 주문(그 뒤 took_full이 와도 ARM_LATE_RESULT만 낸다), ARM_NO_RESULT로 쥔 주문.
+        """
         r = self._robots.get(robot)
         if r is None:
             return
+        r.isolated = ""
         if r.arm:
-            # 해제된 로봇에 팔이 한 일은 운영자가 센다. 늦은 결과가 뭔가 했으면 알린다.
-            # 서버가 아직 멈추는 중이어도 다음 로봇 탓으로 치지 않는다.
-            self._out.append(CancelCmd(r.arm.server, r.arm.goal_id))
-            self._cleared_jobs[r.arm.server] = (
-                r.arm.goal_id, self._clock() + self.params.arm_cancel_wait_s)
-            self._lost_jobs[r.arm.goal_id] = _LostJob(robot, r.arm.server, r.arm.kind,
-                                                      self.order_of(robot), cleared=True)
-            r.arm = None
+            self._drop_arm(r)
         if r.order:
             self._event("INFO", "ORDER_REQUEUED",
                         f"{r.order.order_id} was bound, basket held {r.order.placed}", robot)
             r.order = None
+        r.stage = ""
+        r.outbound_goal = None
+        self._sync_calls()
+
+    def on_robot_isolated(self, robot, reason) -> None:
+        """교통이 로봇을 격리했다(지시서 5.5). 주문은 사람 없이 대기로 돌아간다.
+
+        자리는 등록 순서다. 묶을 때 늘 대기 맨 앞을 쓰므로, 되돌린 주문은 한 번도 묶이지 않은
+        주문보다 앞서고 되돌린 주문끼리는 등록 순서를 지킨다.
+        두 번 출고를 막는 예외 둘: 결과 없는 팔 작업(ARM_NO_RESULT)이 그 주문에 걸려 있으면
+        confirm_clear까지, 교환 중이면 그 결과까지 주문을 둔다. 팔이 이미 바구니를 가져갔을 수 있다.
+        """
+        r = self._robots.get(robot)
+        if r is None or self._result_still_due(r):
+            return
+        r.isolated = reason
+        if r.arm and r.arm.kind == SWAP and r.order:
+            if r.arm.canceled_at is None:
+                self._cancel_arm(r)
+            return  # on_swap_result나 ARM_NO_RESULT 규칙이 이어 받는다
+        if r.arm:
+            self._drop_arm(r, isolated=True)  # 늦게 담긴 품목은 이 로봇 바구니에 남는다
+        self._requeue_isolated(r)
+
+    def _requeue_isolated(self, r: _Robot) -> None:
+        if r.order:
+            self._event("INFO", "ORDER_REQUEUED",
+                        f"{r.order.order_id} was bound, basket held {r.order.placed}, "
+                        f"robot isolated: {r.isolated}", r.name)
+            r.order = None
+        r.basket = NONE  # 바구니 안 물건은 로봇과 함께 남는다. 사람이 치운다
         r.stage = ""
         r.outbound_goal = None
         self._sync_calls()
@@ -270,7 +304,7 @@ class OrderOrchestrator:
         self._out.append(EventOut(level, code, detail, robot))
 
     def _fail(self, r: _Robot, reason: str) -> None:
-        """운영자가 봐야 한다. 묶인 주문은 그대로 둔다."""
+        """교통에 알린다. 교통이 격리하면 RobotIsolated로 주문을 되돌린다."""
         self._out.append(RobotFaultCmd(r.name, reason))
 
     def _leave_station(self, r: _Robot) -> None:
@@ -298,6 +332,24 @@ class OrderOrchestrator:
             del self._cleared_jobs[server]
             cleared = None
         return not cleared and now >= r.arm_retry_at
+
+    def _drop_arm(self, r: _Robot, isolated: bool = False) -> None:
+        """해제나 격리로 팔 작업을 취소한다. 그 로봇에 팔이 한 일은 운영자가 센다.
+
+        늦은 결과가 뭔가 했으면 알린다. 서버가 아직 멈추는 중이어도 다음 로봇 탓으로 치지 않는다.
+        """
+        self._out.append(CancelCmd(r.arm.server, r.arm.goal_id))
+        self._cleared_jobs[r.arm.server] = (
+            r.arm.goal_id, self._clock() + self.params.arm_cancel_wait_s)
+        self._lost_jobs[r.arm.goal_id] = _LostJob(r.name, r.arm.server, r.arm.kind,
+                                                  self.order_of(r.name), cleared=True,
+                                                  isolated=isolated)
+        r.arm = None
+
+    def _result_still_due(self, r: _Robot) -> bool:
+        """ARM_NO_RESULT로 포기한 작업이 지금 묶인 주문에 걸려 있다."""
+        return any(lost.robot == r.name and not lost.cleared and self._still_bound(lost)
+                   for lost in self._lost_jobs.values())
 
     def _cancel_arm(self, r: _Robot) -> None:
         r.arm.canceled_at = self._clock()
@@ -340,7 +392,7 @@ class OrderOrchestrator:
         return self._lost_jobs.pop(goal_id)
 
     def _still_bound(self, lost: _LostJob) -> bool:
-        """고장 중에는 로봇 해제만이 주문을 떼어 간다."""
+        """고장 중에는 해제나 격리만 주문을 떼어 간다."""
         return bool(lost.order_id) and self.order_of(lost.robot) == lost.order_id
 
     def _late_event(self, goal_id: int, lost: _LostJob, reported: str) -> None:
@@ -349,9 +401,10 @@ class OrderOrchestrator:
         elif self._still_bound(lost):
             then = f"{lost.order_id} is still bound and {lost.robot} stays in fault"
         else:
-            then = (f"{lost.robot} was cleared and {lost.order_id} requeued, so it may be filled "
+            then = (f"{lost.order_id} was requeued from {lost.robot}, so it may be filled "
                     "or shipped twice: check the basket")
-        after = "the clear" if lost.cleared else "ARM_NO_RESULT"
+        after = ("the isolation" if lost.isolated else "the clear" if lost.cleared
+                 else "ARM_NO_RESULT")
         self._event("WARN", "ARM_LATE_RESULT",
                     f"{lost.server} goal {goal_id} reported {reported} after {after}, {then}",
                     lost.robot)

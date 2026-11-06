@@ -162,7 +162,7 @@ class FakePinkyNode(Node):
     def _end(self, goal: _Goal, success: bool, reason: str = "") -> None:
         if (goal.abort_at is not None and not goal.done.is_set()
                 and reason != MoveTo.Result.REASON_NAV_ABORTED):
-            self._faults.give_back_nav_abort()  # 대체·취소된 목표의 중단은 다음 목표로
+            self._faults.give_back_nav_abort(goal.target_id)  # 대체·취소되면 다음 목표로
         goal.finish(success, reason)
         if self._active is goal:
             self._rest = (RobotState.STATE_DOCKED if goal.kind == "dock" and success
@@ -185,7 +185,7 @@ class FakePinkyNode(Node):
                 via = [(p.position.x, p.position.y) for p in handle.request.path[1:-1]]
                 self._motion.set_target(*noisy_pose(pose.x, pose.y, self._cfg.stop_error_m,
                                                     self._rng), via=via)
-                if self._faults.take_nav_abort(t):
+                if self._faults.take_nav_abort(t, goal.target_id):
                     eta = self._motion.remaining() / self._cfg.speed_mps
                     goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
             else:

@@ -333,13 +333,14 @@ def test_arm_failing_three_times_then_operator_recovery_finishes_every_order():
                      faults=[{"at_s": 0.0, "type": "fill_fail", "count": 3, "place": 1}])
     assert world.run_until(lambda: world.state("pinky1") == "ERROR", 200)
     assert "FILL_FAILED" in world.event_codes("ERROR")
-    assert world.core.robot_view("pinky1")["order"] == "O-001"
+    world.step()
+    assert world.core.robot_view("pinky1")["order"] is None, "isolated (part 5.5)"
     assert world.core.shipped == 0
+    requeued = next(e for e in world.events if e.code == "ORDER_REQUEUED")
+    assert requeued.detail.startswith("O-001")
 
     world.confirm_clear("pinky1", world.core.zones.held_by("pinky1"), "took it off")
     world.step()
-    requeued = next(e for e in world.events if e.code == "ORDER_REQUEUED")
-    assert requeued.detail.startswith("O-001")
     assert world.run_until(lambda: world.all_orders_final() and world.all_parked(["pinky2"]))
     assert world.report_statuses() == {o["id"]: "SHIPPED" for o in orders}
     assert world.shipped_order() == ["O-001", "O-002", "O-003"], "it keeps its place"

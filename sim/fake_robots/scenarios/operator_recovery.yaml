@@ -1,5 +1,6 @@
 # arm1이 채움에 세 번 연속 실패해 재시도 한도를 다 쓴다. pinky1은 주문을 쥔 채
-# 작업대 도크에서 ERROR가 된다. 60초에 운영자가 들어내고 confirm_clear가 주문을 맨 앞에 돌려놓는다.
+# 작업대 도크에서 ERROR가 된다. 플릿이 바로 격리해 주문을 맨 앞에 돌려놓는다(지시서 5.5).
+# 60초에 운영자가 들어내고 confirm_clear는 구역만 푼다.
 # pinky2가 그 주문을 받고 68초, 채우는 도중에 운영자가 이것도 들어낸다.
 # 작업셀은 멈추는 데 cancel_seconds가 걸려 그때까지 바쁘고, pinky3은 clear 약 3초 뒤 도크에 닿는다.
 # 플릿 매니저는 취소된 목표의 결과가 나올 때까지 pinky3의 목표를 쥐고 있어야 한다.
@@ -34,6 +35,7 @@ expect:
   zone_holder_max: 1
   released_without_position_check: 0
   unheld_zone_pose: 0
-  events_include: [FILL_RETRY, FILL_FAILED, ZONES_CLEARED, ORDER_REQUEUED]
-  event_counts: {FILL_RETRY: 2, FILL_FAILED: 1, ZONES_CLEARED: 2, ORDER_REQUEUED: 2, ROBOT_NOT_REPORTING: 0}
+  events_include: [FILL_RETRY, FILL_FAILED, ZONES_CLEARED, ORDER_REQUEUED, ROBOT_ISOLATED]
+  # ORDER_REQUEUED 2: pinky1은 격리 때, pinky2는 격리 없이 치울 때 한 번씩
+  event_counts: {FILL_RETRY: 2, FILL_FAILED: 1, ZONES_CLEARED: 2, ORDER_REQUEUED: 2, ROBOT_ISOLATED: 1, ROBOT_NOT_REPORTING: 0}
   order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED}

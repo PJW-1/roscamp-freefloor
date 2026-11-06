@@ -146,6 +146,14 @@ NO_ROBOT = "NO_ROBOT"  # 지금 읽는 피드백 단계는 이것뿐
 
 
 @dataclass(frozen=True)
+class RobotIsolated:
+    """교통이 이 로봇을 ERROR로 세웠다. 구역은 쥐고, 주문 쪽이 주문을 되돌린다."""
+
+    robot: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class DispatchFeedback:
     goal_id: int
     robot_id: str
