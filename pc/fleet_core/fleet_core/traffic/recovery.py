@@ -1,8 +1,7 @@
-"""Comm loss, recovery, deadlock retreat and the operator's confirm_clear.
+"""통신 끊김, 복구, 교착 후퇴, 운영자의 confirm_clear.
 
-TrafficRecovery is a part of TrafficController, split out to keep files short. Its methods use
-the controller's state (self._missions, self.zones, self._clock, self._out) and are not meant to
-be used alone. The public method here is confirm_clear; the rest are called from the tick.
+파일을 짧게 하려고 TrafficController에서 떼어 낸 부분이다. 제어기 상태를 쓰므로 혼자 쓰지 않는다.
+공개 메서드는 confirm_clear뿐이고 나머지는 tick에서 부른다.
 """
 from __future__ import annotations
 
@@ -23,11 +22,10 @@ from fleet_core.traffic.mission import (
 
 class TrafficRecovery:
     def confirm_clear(self, robot, zone_ids, note="") -> list[str] | None:
-        """The operator cleared a stuck robot. The one release not judged by pose.
+        """운영자가 멈춘 로봇을 해제했다. 자세로 판단하지 않는 유일한 해제다.
 
-        Returns the zones released, or None if it was refused and nothing changed. No zones is
-        right for a robot that never got on the map. Only some of its zones is taken as meant,
-        with a warning, and another call frees the rest.
+        놓은 구역을 돌려주고, 거절하면 아무것도 안 바꾸고 None. 맵에 오른 적 없는 로봇은
+        빈 목록이 맞다. 일부 구역만 주면 의도로 보고 경고하며, 나머지는 다시 불러 푼다.
         """
         refusal = self._clear_refusal(robot, zone_ids)
         if refusal:
@@ -47,7 +45,7 @@ class TrafficRecovery:
         self._event("INFO", "ZONES_CLEARED", f"released {released}: {note}", robot)
         still_held = self.zones.held_by(robot)
         if still_held:
-            # Nothing else frees them: this robot is no longer judged by its pose.
+            # 이 로봇은 더는 자세로 판단하지 않으니 다른 무엇도 이 구역을 풀지 않는다.
             self._event("WARN", "ZONES_STILL_HELD", f"{still_held} stay locked", robot)
         if m.dispatch:
             self._out.append(DispatchResult(m.dispatch.goal_id, False, robot, "ROBOT_REMOVED"))
@@ -73,7 +71,7 @@ class TrafficRecovery:
             if now - m.last_seen > self.params.comm_timeout_s:
                 m.comm = COMM_LOST
                 m.called = False
-                # A silent robot must not stop the zone passing to those queued behind it.
+                # 말 없는 로봇이 뒤 대기자에게 구역이 넘어가는 것을 막으면 안 된다.
                 self.zones.cancel_all_requests(m.name)
                 self._event("WARN", "COMM_LOST", f"no state for {now - m.last_seen:.1f} s", m.name)
 
@@ -118,10 +116,10 @@ class TrafficRecovery:
             m.dest = None
 
     def _resume_waypoint(self, m: _Mission):
-        """Where a robot back from silence stands. One report can be off, so what it holds decides.
+        """통신이 돌아온 로봇의 위치. 보고 하나는 틀릴 수 있어 쥔 구역으로 정한다.
 
-        Within d of a waypoint it counts as on that waypoint, as a driving robot does. Just past d
-        the zone behind may be gone already, and a report short of d must not send it back there.
+        달리는 로봇처럼 지점에서 d 안이면 그 지점이다. d를 막 지나면 뒤 구역은 이미 놓았을 수
+        있으니, d에 못 미친 보고 하나로 그리로 되돌리면 안 된다.
         """
         waypoint = self.site.nearest_waypoint(m.x, m.y, radius=self.params.release_distance_m)
         held = self.zones.held_by(m.name)
@@ -133,12 +131,12 @@ class TrafficRecovery:
     # ---- deadlock safety net ------------------------------------------------------------
 
     def _priority(self, robot: str) -> int:
-        """Only what traffic knows: at a station, and asked by name to go somewhere."""
+        """교통이 아는 것만 본다: 스테이션에 있는지, 지정 배차가 있는지."""
         m = self._missions[robot]
         return priority(self.params, m.phase == AT_STATION, m.dispatch is not None)
 
     def _check_deadlock(self, now: float) -> bool:
-        """Return True while a wait cycle exists, which halts new moves and grants."""
+        """대기 순환이 있는 동안 True. 그동안 새 이동과 구역 허가를 멈춘다."""
         cycle = find_cycle(wait_graph(self.zones))
         if not cycle:
             self._deadlock_since = None
@@ -157,7 +155,7 @@ class TrafficRecovery:
         return True
 
     def _retreat(self, robot: str, cycle: list[str]) -> None:
-        """Give up reservations of zones not yet entered. Physical reversing is not built."""
+        """아직 들어가지 않은 구역 예약을 내놓는다. 실제 후진은 아직 없다."""
         m = self._missions[robot]
         given_up = [zone for zone in self.zones.held_by(robot) if self._off_the_floor(m, zone)]
         if not given_up:
@@ -170,14 +168,14 @@ class TrafficRecovery:
         self._event("ERROR", "DEADLOCK_RETREAT", f"{robot} gives up {given_up}", robot)
 
     def _finish_retreat(self, cycle: list[str]) -> None:
-        """Release only what the stopped robot is still outside of."""
+        """멈춘 로봇이 아직 밖에 있는 구역만 놓는다."""
         robot, zones, _ = self._retreating
         m = self._missions[robot]
         for zone in zones:
             self._release_if_cleared(m, zone)
         nothing_released = set(zones) <= set(self.zones.held_by(robot))
         if nothing_released and any(self._off_the_floor(m, zone) for zone in zones):
-            # Outside but too few reports so far: the next ones can still confirm it.
+            # 밖에 있지만 보고가 아직 모자라다. 다음 보고로 확인될 수 있다.
             self._retreating = (robot, zones, self._clock() + self.params.recover_check_s)
             return
         self._retreating = None

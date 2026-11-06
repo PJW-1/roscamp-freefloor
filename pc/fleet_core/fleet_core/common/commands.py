@@ -1,8 +1,6 @@
-"""The commands, results and views of the FMS cores.
+"""FMS 코어의 명령, 결과, 뷰. ROS는 모른다.
 
-The first part is what the ROS wrapper turns into goals and messages. The second part is what
-the orders and traffic modules say to each other through FleetManager, and never reaches ROS.
-Nothing here knows about ROS.
+앞부분은 ROS 래퍼가 goal과 메시지로 바꾸고, 뒷부분은 FleetManager 안에서만 오간다.
 """
 from __future__ import annotations
 
@@ -38,7 +36,7 @@ class DockCmd:
 
 @dataclass(frozen=True)
 class CancelCmd:
-    robot: str  # robot name, or the server of an arm job
+    robot: str  # 로봇 이름 또는 팔 작업 서버
     goal_id: int
 
 
@@ -48,7 +46,7 @@ class FillCmd:
     robot: str
     station_id: str
     order_id: str
-    items: dict[str, int]  # only what is still missing from the basket
+    items: dict[str, int]  # 바구니에 아직 없는 것만
 
 
 @dataclass(frozen=True)
@@ -99,8 +97,8 @@ class AssignmentView:
 @dataclass(frozen=True)
 class RobotStatusView:
     robot_id: str
-    fsm_state: str  # what the pinky reported, as it reported it
-    task_type: str  # as in AssignmentView, empty when off the floor
+    fsm_state: str  # 핑키가 보낸 값 그대로
+    task_type: str  # AssignmentView와 같음, 투입 전이면 빈 값
     order_id: str
     fault: str  # NONE | ERROR | COMM_LOST | OUT_OF_SERVICE | RECOVERING
     fault_reason: str
@@ -119,7 +117,7 @@ class RobotStatusView:
 class DispatchCmd:
     goal_id: int
     station_id: str
-    robot_id: str = ""  # empty: traffic picks the robot
+    robot_id: str = ""  # 비면 교통이 로봇을 고른다
 
 
 @dataclass(frozen=True)
@@ -134,7 +132,7 @@ class ReleaseCmd:
 
 @dataclass(frozen=True)
 class RobotFaultCmd:
-    """The arm side gave up on this robot, so traffic must treat it as failed."""
+    """주문 쪽이 이 로봇을 포기했으니 교통도 실패로 다룬다."""
 
     robot: str
     reason: str
@@ -142,7 +140,7 @@ class RobotFaultCmd:
 
 # ---- inside the FMS: traffic -> orders --------------------------------------------------------
 
-NO_ROBOT = "NO_ROBOT"  # the only feedback phase anything reads today
+NO_ROBOT = "NO_ROBOT"  # 지금 읽는 피드백 단계는 이것뿐
 
 
 @dataclass(frozen=True)

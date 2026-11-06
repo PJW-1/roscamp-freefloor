@@ -1,12 +1,11 @@
-"""OrderOrchestrator: orders, baskets and arm jobs. No ROS, no wall clock, no lanes.
+"""주문, 바구니, 팔 작업을 맡는다. ROS, 실제 시계, 레인은 모른다.
 
-It asks for robots with DispatchCmd and lets go of them with ReleaseCmd, and hears back through
-on_dispatch_result. Which robot comes and how it gets there is traffic's business. An order is
-bound when a robot has finished docking at the fill station, so the dock arrival order is the
-work order and a robot failing on its way holds nothing.
+로봇은 DispatchCmd로 부르고 ReleaseCmd로 놓아 준다. 어느 로봇이 어떻게 오는지는 교통이 정한다.
+주문은 채우기 스테이션 도킹이 끝나야 묶인다. 그래서 도착 순서가 작업 순서이고,
+가다가 실패한 로봇은 주문을 쥐고 있지 않다.
 
-Open WORK dispatches always equal the unbound orders: every input that changes one fixes the
-other before it returns.
+열린 WORK 배차 수는 항상 묶이지 않은 주문 수와 같다.
+한쪽을 바꾸는 입력은 반환 전에 다른 쪽도 맞춘다.
 """
 from __future__ import annotations
 
@@ -30,15 +29,15 @@ from fleet_core.common.commands import (
 
 STOP = "STOP"
 
-# What the robot's stay at a station is for.
+# 스테이션에 머무는 목적
 FILLING = "FILLING"
 SWAPPING = "SWAPPING"
 
-# Station actions, as written in the site map.
+# 맵에 적힌 스테이션 동작
 FILL = "fill"
 SWAP = "swap"
 
-# What is on the tray.
+# 트레이 위 상태
 EMPTY = "EMPTY"
 FULL = "FULL"
 NONE = "NONE"
@@ -65,21 +64,21 @@ def _subtract(items: dict[str, int], *taken: dict[str, int]) -> dict[str, int]:
 class _ArmJob:
     server: str
     goal_id: int
-    kind: str  # FILL or SWAP
+    kind: str  # FILL 또는 SWAP
     sent_at: float
     canceled_at: float | None = None
-    timed_out: bool = False  # canceled because it ran too long, not because of STOP
+    timed_out: bool = False  # STOP이 아니라 시간 초과로 취소됨
 
 
 @dataclass
 class _LostJob:
-    """A job given up on with ARM_NO_RESULT, or canceled by a clear. Its result can still come."""
+    """ARM_NO_RESULT로 포기했거나 해제로 취소한 작업. 결과가 늦게 올 수 있다."""
 
     robot: str
     server: str
-    kind: str  # FILL or SWAP
-    order_id: str  # bound when it was given up on, empty if the order was already reported
-    cleared: bool = False  # canceled because the operator cleared the robot
+    kind: str  # FILL 또는 SWAP
+    order_id: str  # 포기할 때 묶여 있던 주문, 이미 보고했으면 빈 값
+    cleared: bool = False  # 운영자가 로봇을 해제해서 취소됨
 
 
 @dataclass
@@ -87,19 +86,19 @@ class _BoundOrder:
     order_id: str
     items: dict[str, int]
     placed: dict[str, int] = field(default_factory=dict)
-    missing: dict[str, int] = field(default_factory=dict)  # final: nobody will try these again
+    missing: dict[str, int] = field(default_factory=dict)  # 확정, 다시 시도하지 않음
 
 
 @dataclass
 class _Robot:
     name: str
-    stage: str = ""  # FILLING or SWAPPING while the robot is kept at a station for an arm
+    stage: str = ""  # 팔 작업으로 스테이션에 잡혀 있는 동안 FILLING 또는 SWAPPING
     basket: str = EMPTY
     order: _BoundOrder | None = None
-    last_order_id: str = ""  # names the swap goal after the order was already reported
+    last_order_id: str = ""  # 주문 보고 뒤에도 교환 goal에 붙일 이름
     outbound_goal: int | None = None
     arm: _ArmJob | None = None
-    arm_retry_at: float = 0.0  # no new arm goal before this, after a failure or a rejection
+    arm_retry_at: float = 0.0  # 실패나 거절 뒤 이 시각 전에는 새 팔 goal 없음
     attempts: int = 0
 
 
@@ -116,12 +115,12 @@ class OrderOrchestrator:
         self._out: list = []
         self._run_mode: str | None = None
         self._board: list = []
-        self._reported: set[str] = set()  # the board may still list these for a moment
-        self._open_calls: list[int] = []  # WORK dispatches sent and not answered yet
+        self._reported: set[str] = set()  # 보드에 잠시 남아 있을 수 있다
+        self._open_calls: list[int] = []  # 보냈지만 아직 답이 없는 WORK 배차
         self._work = next(s.id for s in stations.values() if s.action == FILL)
         self._outbound = next(s.id for s in stations.values() if s.action == SWAP)
-        self._cleared_jobs: dict[str, tuple[int, float]] = {}  # server -> canceled goal, deadline
-        self._lost_jobs: dict[int, _LostJob] = {}  # goal -> job, until its late result comes
+        self._cleared_jobs: dict[str, tuple[int, float]] = {}  # 서버 -> 취소한 goal, 기한
+        self._lost_jobs: dict[int, _LostJob] = {}  # goal -> 작업, 늦은 결과가 올 때까지
 
     # ---- inputs -------------------------------------------------------------------------
 
@@ -162,7 +161,7 @@ class OrderOrchestrator:
         job, r.arm = r.arm, None
         _merge(r.order.placed, placed)
         if success:
-            # The server has finished trying: whatever is not in the basket stays out of it.
+            # 서버가 시도를 마쳤으니 바구니에 없는 것은 빠진 것으로 확정한다.
             r.order.missing = _subtract(r.order.items, r.order.placed)
             return
         self._arm_attempt_failed(r, job, reason, "FILL_RETRY", "FILL_FAILED")
@@ -185,12 +184,11 @@ class OrderOrchestrator:
         self._arm_attempt_failed(r, job, reason, "SWAP_RETRY", "SWAP_FAILED")
 
     def on_robot_removed(self, robot) -> None:
-        """The operator took the robot away. Its order goes back to its registration position."""
+        """운영자가 로봇을 뺐다. 주문은 등록 순서 자리로 돌아간다."""
         r = self._robots[robot]
         if r.arm:
-            # What the arm did for a cleared robot is for the operator to count, and a late
-            # result that did something says so. The server is still busy stopping, and that
-            # must not count against the next robot.
+            # 해제된 로봇에 팔이 한 일은 운영자가 센다. 늦은 결과가 뭔가 했으면 알린다.
+            # 서버가 아직 멈추는 중이어도 다음 로봇 탓으로 치지 않는다.
             self._out.append(CancelCmd(r.arm.server, r.arm.goal_id))
             self._cleared_jobs[r.arm.server] = (
                 r.arm.goal_id, self._clock() + self.params.arm_cancel_wait_s)
@@ -219,7 +217,7 @@ class OrderOrchestrator:
                 job.timed_out = True
             elif job.canceled_at is not None and (
                     now - job.canceled_at >= self.params.arm_cancel_wait_s):
-                # Nobody can say what is in the basket now, so the operator has to look.
+                # 바구니 내용을 알 수 없으니 운영자가 확인해야 한다.
                 r.arm = None
                 self._lost_jobs[job.goal_id] = _LostJob(r.name, job.server, job.kind,
                                                         self.order_of(r.name))
@@ -228,7 +226,7 @@ class OrderOrchestrator:
                 self._event("ERROR", "ARM_NO_RESULT", reason, r.name)
 
     def step(self, robot) -> None:
-        """Do what comes next for a robot traffic has made available."""
+        """교통이 넘겨준 로봇의 다음 일을 한다."""
         r = self._robots[robot]
         if r.stage == FILLING:
             self._step_filling(r)
@@ -263,7 +261,7 @@ class OrderOrchestrator:
         self._out.append(EventOut(level, code, detail, robot))
 
     def _fail(self, r: _Robot, reason: str) -> None:
-        """The operator has to look at it. It keeps any bound order."""
+        """운영자가 봐야 한다. 묶인 주문은 그대로 둔다."""
         self._out.append(RobotFaultCmd(r.name, reason))
 
     def _leave_station(self, r: _Robot) -> None:
@@ -284,7 +282,7 @@ class OrderOrchestrator:
                 del self._cleared_jobs[server]
 
     def _arm_goal_allowed(self, r: _Robot, server: str) -> bool:
-        """Hold a new goal after a failure, and while the server stops a cleared robot's job."""
+        """실패 직후와, 서버가 해제된 로봇의 작업을 멈추는 동안은 새 goal을 보내지 않는다."""
         now = self._clock()
         cleared = self._cleared_jobs.get(server)
         if cleared and now >= cleared[1]:
@@ -298,7 +296,7 @@ class OrderOrchestrator:
 
     def _arm_attempt_failed(self, r, job, reason, retry_code, failed_code) -> None:
         if reason == CANCELED and job.canceled_at is not None and not job.timed_out:
-            return  # STOP canceled it, nothing went wrong
+            return  # STOP으로 취소한 것이라 실패가 아니다
         r.attempts += 1
         r.arm_retry_at = self._clock() + self.params.arm_retry_wait_s
         if r.attempts > self.params.move_retry_limit:
@@ -311,7 +309,7 @@ class OrderOrchestrator:
     def _late_fill(self, goal_id: int, placed: dict[str, int]) -> None:
         lost = self._take_lost_job(goal_id, FILL)
         if lost is None or (lost.cleared and not placed):
-            return  # a canceled job that did nothing leaves the operator nothing to count
+            return  # 취소된 작업이 한 일이 없으면 운영자가 셀 것도 없다
         self._late_event(goal_id, lost, f"placed {placed}")
         if self._still_bound(lost):
             _merge(self._robots[lost.robot].order.placed, placed)
@@ -333,7 +331,7 @@ class OrderOrchestrator:
         return self._lost_jobs.pop(goal_id)
 
     def _still_bound(self, lost: _LostJob) -> bool:
-        """Only clearing the robot takes the order away while it is in fault."""
+        """고장 중에는 로봇 해제만이 주문을 떼어 간다."""
         return bool(lost.order_id) and self.order_of(lost.robot) == lost.order_id
 
     def _late_event(self, goal_id: int, lost: _LostJob, reported: str) -> None:
@@ -352,13 +350,13 @@ class OrderOrchestrator:
     # ---- orders -------------------------------------------------------------------------
 
     def _pending(self) -> list:
-        """Board orders nobody holds or finished, in registration order."""
+        """아무도 쥐지 않았고 끝나지도 않은 보드 주문, 등록 순서대로."""
         bound = {r.order.order_id for r in self._robots.values() if r.order}
         return [o for o in self._board
                 if o.order_id not in bound and o.order_id not in self._reported]
 
     def _sync_calls(self) -> None:
-        """Keep one open WORK dispatch per unbound order. The newest ones are canceled first."""
+        """묶이지 않은 주문마다 WORK 배차를 하나씩 둔다. 줄일 때는 최신 것부터 취소한다."""
         wanted = len(self._pending())
         while len(self._open_calls) < wanted:
             goal_id = self._next_dispatch_id()
@@ -420,7 +418,7 @@ class OrderOrchestrator:
             return
         order = r.order
         if sum(order.items.values()) > self.params.basket_capacity:
-            # Nobody looked on the shelf, so nothing is missing: the stock record stays as it is.
+            # 선반을 보지 않았으니 빠진 것도 없다. 재고 기록은 그대로 둔다.
             self._report(r, HELD, f"{sum(order.items.values())} items exceed the basket "
                                   f"capacity of {self.params.basket_capacity}")
             self._leave_station(r)

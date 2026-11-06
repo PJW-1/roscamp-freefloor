@@ -1,6 +1,6 @@
-"""Which robots are called to the fill station.
+"""채우기 스테이션으로 부를 로봇을 고른다.
 
-Pure: TrafficController describes each robot with a RobotInfo and applies the result.
+순수 함수다. TrafficController가 로봇마다 RobotInfo를 주고 결과를 적용한다.
 """
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class RobotInfo:
     robot_id: str
-    waypoint: object  # waypoint it counts from
+    waypoint: object  # 거리를 재는 출발 지점
     called: bool = False
-    parked: bool = False  # standing in a waiting waypoint, in line behind the waypoints ahead of it
-    eligible: bool = True  # available, not kept at a station and not sent somewhere by name
-    available: bool = True  # False while comm is lost or in error
+    parked: bool = False  # 대기 지점에 서 있음, 앞 대기 지점 뒤에 줄 선다
+    eligible: bool = True  # 사용 가능, 스테이션에 잡혀 있지 않고 지정 배차도 없음
+    available: bool = True  # 통신 끊김이나 오류 중이면 False
 
 
 class RobotSelector:
@@ -24,7 +24,7 @@ class RobotSelector:
         self._dock = next(s.dock for s in site.stations.values() if s.action == "fill")
 
     def pick(self, calls: int, robots: list[RobotInfo]) -> set[str]:
-        """Return the robots to call, at most `calls` of them."""
+        """부를 로봇들, 최대 `calls`대."""
         pool = [r for r in robots if r.eligible]
         chosen: set[str] = set()
         while len(chosen) < calls:
@@ -42,7 +42,7 @@ class RobotSelector:
         return score + (self._params.score_same_call if robot.called else 0.0)
 
     def _may_pick(self, robot: RobotInfo, pool: list[RobotInfo], robots: list[RobotInfo]) -> bool:
-        """The waiting line is one-way: nobody passes the waiting robots ahead of it."""
+        """대기 줄은 한 방향이다. 앞에서 기다리는 로봇을 앞지르지 않는다."""
         if not robot.parked:
             return True
         rank = self._site.parking.index(robot.waypoint)

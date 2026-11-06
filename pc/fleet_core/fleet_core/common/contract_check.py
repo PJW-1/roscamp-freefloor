@@ -1,6 +1,6 @@
-"""Compare the contract with what a running ROS graph exposes. No ROS imports.
+"""계약과 실행 중인 ROS 그래프를 비교한다. ROS는 import하지 않는다.
 
-`observed` is plain data so the logic is testable without a graph:
+그래프 없이 테스트하려고 `observed`는 순수 데이터다:
   {"topics": {name: {"types": [...], "publishers": [QosSpec], "subscribers": [QosSpec]}},
    "actions": {name: [types]}, "services": {name: [types]}}
 """
@@ -13,14 +13,14 @@ from fleet_core.common.contract import QosSpec
 
 @dataclass(frozen=True)
 class Problem:
-    kind: str  # missing, wrong_type or qos
+    kind: str  # missing, wrong_type, qos 중 하나
     name: str
     detail: str
-    severity: str = "error"  # error or warning
+    severity: str = "error"  # error 또는 warning
 
 
 def _norm(type_name: str) -> str:
-    """Accept both `pkg/msg/Name` and `pkg/Name`."""
+    """`pkg/msg/Name`과 `pkg/Name`을 둘 다 받는다."""
     parts = type_name.split("/")
     return f"{parts[0]}/{parts[-1]}" if len(parts) == 3 else type_name
 

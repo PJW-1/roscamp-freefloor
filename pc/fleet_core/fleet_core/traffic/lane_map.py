@@ -1,19 +1,15 @@
-"""Course map: waypoints, directed lanes, lock units, stations and parking, loaded from YAML.
+"""코스 맵(지점, 방향 레인, 잠금 단위, 스테이션, 대기 지점)을 YAML에서 읽는다.
 
-A robot drives straight from waypoint to waypoint, in whatever direction the lane points. There is
-no grid. The real map is not agreed yet, so coordinates live in the map file and nothing else in
-the code base hard-codes one: a new map is new data.
+로봇은 레인 방향대로 지점에서 지점으로 곧게 달린다. 실제 맵이 아직 정해지지 않아
+좌표는 맵 파일에만 둔다. 새 맵은 새 데이터일 뿐이다.
 
-A lock unit is what one robot holds at a time, and it is also what the rest of the code calls a
-zone. Every waypoint belongs to exactly one unit, and a lane belongs to the unit of the waypoint it
-ends at:
-  - Lanes that end at one waypoint could never be used together, so they share a lock, and that
-    lock's queue is also the merge's FIFO. Where one lane reaches each waypoint, one lane is one
-    lock.
-  - A two-way pair is one lock when bundled, so two robots cannot meet head-on on it.
-  - Lanes of different units too close for two robot bodies are found by conflict_pairs().
+잠금 단위는 한 로봇이 한 번에 쥐는 것이고, 나머지 코드에서는 구역이라 부른다.
+지점은 정확히 한 단위에 속하고, 레인은 끝 지점의 단위에 속한다.
+  - 한 지점에서 끝나는 레인들은 함께 쓸 수 없어 잠금을 같이 쓰고, 그 대기열이 합류 FIFO다.
+  - 양방향 쌍은 묶으면 잠금 하나라서 두 로봇이 마주 달릴 수 없다.
+  - 다른 단위인데 두 로봇이 지나기에 너무 가까운 레인은 conflict_pairs()가 찾는다.
 
-A waypoint is a vertex of the lane graph. It is not called a node, to keep that word for ROS.
+지점은 레인 그래프의 꼭짓점이다. 노드라는 말은 ROS용으로 남겨 둔다.
 """
 from __future__ import annotations
 
@@ -28,36 +24,36 @@ DEFAULT_MAP = Path(__file__).parents[1] / "data" / "lane_map.yaml"
 
 
 class LaneMapError(ValueError):
-    """The map file is inconsistent, or a requested path does not exist."""
+    """맵 파일이 맞지 않거나 요청한 경로가 없다."""
 
 
 @dataclass(frozen=True)
 class Station:
     id: str
-    dock: object  # waypoint
-    queue: tuple  # (from, to) lanes where robots line up for the dock
-    commit: object  # waypoint: a robot holding its unit can no longer be sent elsewhere
-    server: str  # who answers this station's action
-    arms: tuple[str, ...]  # the arms working behind that server
-    action: str  # fill or swap
+    dock: object  # 지점
+    queue: tuple  # 도크 앞에 줄 서는 (from, to) 레인
+    commit: object  # 지점: 이 단위를 쥔 로봇은 더는 다른 곳으로 보낼 수 없다
+    server: str  # 이 스테이션 액션의 서버
+    arms: tuple[str, ...]  # 그 서버 뒤에서 일하는 팔
+    action: str  # fill 또는 swap
 
 
 @dataclass(frozen=True)
 class Lane:
-    a: object  # waypoint it starts at
-    b: object  # waypoint it ends at
+    a: object  # 시작 지점
+    b: object  # 끝 지점
     ax: float
     ay: float
     bx: float
     by: float
-    ux: float  # unit vector from a to b
+    ux: float  # a에서 b로의 단위 벡터
     uy: float
-    length: float  # planning cost, the straight distance unless the file says otherwise
-    span: float  # straight distance
+    length: float  # 경로 계획 비용, 파일에 없으면 직선 거리
+    span: float  # 직선 거리
 
 
 def _waypoint_id(raw):
-    """A waypoint is named by a string, or by [col, row] on a map converted from waypoints."""
+    """지점 이름은 문자열, 또는 변환된 맵에서는 [col, row]."""
     if isinstance(raw, (list, tuple)):
         return tuple(int(v) for v in raw)
     return str(raw)
@@ -71,7 +67,7 @@ def _point_segment(x, y, ax, ay, bx, by) -> float:
 
 
 def _segment_distance(a1, a2, b1, b2) -> float:
-    """Shortest distance between two segments, each a pair of (x, y)."""
+    """두 선분 사이 최단 거리. 선분은 (x, y) 두 개."""
     def side(p, q, r):
         return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
 
@@ -160,7 +156,7 @@ class LaneMap:
         return Station(name, dock, queue, commit, raw["server"], tuple(raw["arms"]), raw["action"])
 
     def _build_zones(self, units: dict, two_way: dict, bundle: bool) -> dict:
-        """Every waypoint in one unit: as written, else merged by a bundle, else on its own."""
+        """지점마다 단위 하나: 적힌 대로, 아니면 묶음으로 합치고, 아니면 혼자."""
         name_of: dict = {}
         for name, raw in units.items():
             for member in raw:
@@ -182,7 +178,7 @@ class LaneMap:
         return {name: frozenset(members) for name, members in zones.items()}
 
     def _zone_segments(self, zone: str) -> list[tuple]:
-        """The floor of a zone: its waypoints, and its lanes from the point a robot has entered."""
+        """구역의 바닥: 지점들과, 로봇이 들어선 것으로 치는 점부터의 레인."""
         members = self.zones[zone]
         segments = [(*self._pose[n], *self._pose[n]) for n in members]
         for waypoint in members:
@@ -202,7 +198,7 @@ class LaneMap:
         return {key for key in self.lanes if key[1] in self.zones[zone]}
 
     def lane_progress(self, a, b, x: float, y: float) -> tuple[float, float]:
-        """s = (p - p_a)·u, how far along the lane, and e = |(p - p_a) - s·u|, how far off it."""
+        """s = (p - p_a)·u는 레인을 따라 간 거리, e = |(p - p_a) - s·u|는 벗어난 거리."""
         lane = self.lanes[(a, b)]
         rx, ry = x - lane.ax, y - lane.ay
         s = rx * lane.ux + ry * lane.uy
@@ -215,12 +211,11 @@ class LaneMap:
         return f"c{waypoint[0]}_{waypoint[1]}" if isinstance(waypoint, tuple) else waypoint
 
     def nearest_waypoint(self, x: float, y: float, waypoints=None, radius: float | None = None):
-        """The waypoint whose unit a pose belongs to.
+        """자세가 속한 단위의 지점.
 
-        Standing on a waypoint, that waypoint: within `radius`, half_width by default. On a lane,
-        the waypoint it leads to, because driving on a lane needs that waypoint's unit. A true pose
-        can use the narrow default, a single noisy report cannot, so what decides from one report
-        passes a wider radius. `waypoints` restricts the answer to the nearest of those waypoints.
+        `radius`(기본 half_width) 안이면 그 지점이다. 레인 위면 레인의 끝 지점이다.
+        레인을 달리려면 그 지점의 단위가 필요하기 때문이다. 보고 하나는 오차가 있으니
+        보고 하나로 판단할 때는 더 넓은 반경을 넘긴다. `waypoints`를 주면 그중 가장 가까운 것.
         """
         if waypoints is not None:
             return min(waypoints, key=lambda c: math.dist((x, y), self._pose[c]))
@@ -233,25 +228,23 @@ class LaneMap:
         return lane.b
 
     def distance_to_zone(self, x: float, y: float, zone: str) -> float:
-        """Distance from a pose to a zone's floor. Zero when the pose is inside."""
+        """자세에서 구역 바닥까지 거리. 안에 있으면 0."""
         nearest = min(_point_segment(x, y, *segment) for segment in self._segments[zone])
         return max(0.0, nearest - self.half_width)
 
     def shortest_exit_lane(self) -> float:
-        """Length of the shortest lane leaving a unit, which a release has to fit on."""
+        """단위를 떠나는 가장 짧은 레인 길이. 해제 거리가 이 안에 들어가야 한다."""
         return min((lane.span for (a, b), lane in self.lanes.items()
                     if self.zone_of[a] != self.zone_of[b]), default=math.inf)
 
     # ---- conflict pairs -----------------------------------------------------------------------
 
     def conflict_pairs(self, clearance_m: float, release_m: float) -> set[frozenset]:
-        """Pairs of units that must not be held together: their lanes pass closer than 2r.
+        """함께 쥐면 안 되는 단위 쌍: 레인이 2r보다 가깝게 지난다.
 
-        Lanes that meet at a waypoint would always count, and then nobody could follow anybody. A
-        robot gives up the unit behind it only after driving release_m along the next lane, so
-        from the shared waypoint that stretch cannot hold it while another robot holds the first
-        unit, and only the rest of the lane counts. The two directions of a two-way pair are left
-        out: holding them together is what the bundle is for.
+        지점에서 만나는 레인을 다 세면 아무도 앞 로봇을 따라갈 수 없다. 로봇은 다음 레인을
+        release_m 달린 뒤에야 뒤 단위를 놓으므로, 공유 지점부터 그 구간은 빼고 나머지만 센다.
+        양방향 쌍의 두 방향은 뺀다. 함께 쥐는 것은 묶음이 맡는다.
         """
         pairs: set[frozenset] = set()
         lanes = list(self.lanes.values())
@@ -264,21 +257,21 @@ class LaneMap:
 
     def _too_close(self, one: Lane, other: Lane, clearance: float, release: float) -> bool:
         if frozenset({one.a, one.b}) == frozenset({other.a, other.b}):
-            return False  # a two-way pair
+            return False  # 양방향 쌍
         shared = {one.a, one.b} & {other.a, other.b}
         if not shared:
             return self._lane_distance(one, 0.0, other, 0.0) < clearance
         waypoint = next(iter(shared))
-        if one.a == waypoint and other.a == waypoint:  # a fork: either one can be the leader
+        if one.a == waypoint and other.a == waypoint:  # 갈림길: 어느 쪽이든 앞설 수 있다
             return (self._lane_distance(one, release, other, 0.0) < clearance
                     or self._lane_distance(one, 0.0, other, release) < clearance)
-        if one.a == waypoint:  # other leads into one
+        if one.a == waypoint:  # other가 one으로 이어진다
             return self._lane_distance(one, release, other, 0.0) < clearance
         return self._lane_distance(one, 0.0, other, release) < clearance
 
     @staticmethod
     def _lane_distance(one: Lane, skip_one: float, other: Lane, skip_other: float) -> float:
-        """Distance between two lanes, leaving out the first metres of each."""
+        """두 레인 사이 거리. 각 레인의 앞 몇 미터는 뺀다."""
         if skip_one >= one.span or skip_other >= other.span:
             return math.inf
         return _segment_distance(
@@ -292,10 +285,10 @@ class LaneMap:
         return sum(self.lanes[(a, b)].length for a, b in zip(path, path[1:], strict=False))
 
     def plan(self, start, goal) -> list:
-        """Shortest path along the lanes, in metres. The returned path includes both ends."""
+        """레인을 따라가는 최단 경로(미터 기준). 양 끝 지점을 포함한다."""
         best = {start: 0.0}
         prev: dict = {start: None}
-        seen = 0  # breaks ties in the heap without comparing waypoints
+        seen = 0  # 힙에서 지점을 비교하지 않고 동점을 가른다
         heap = [(0.0, seen, start)]
         while heap:
             cost, _, waypoint = heapq.heappop(heap)

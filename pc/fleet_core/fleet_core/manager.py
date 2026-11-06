@@ -1,15 +1,8 @@
-"""FleetManager: one TrafficController and one OrderOrchestrator, joined by plain calls.
+"""교통과 주문 코어를 직접 호출로 잇는다. 둘 사이 명령은 밖에 안 나가고 나머지는 tick()으로 나간다.
 
-What the two say to each other goes straight across and never leaves this class. Everything
-else comes out of tick() for the ROS wrapper. This is the same input and output surface the
-wrapper had before the two were split apart.
-
-Beyond the dispatch calls, two things cross that the dispatch API cannot say: run mode, because a
-STOP also stops robots driving for no order, and the operator removing a robot.
-
-Every call from outside goes through _input: the cores read one time for the whole call, and the
-call goes in the record if one is being kept, so a run can be played back without ROS
-(tools/replay.py, which also describes the format).
+배차 API 밖으로 넘기는 것은 둘: run mode(STOP은 주문 없이 달리는 로봇도 세움)와 운영자의 로봇 제거.
+외부 호출은 모두 _input을 거친다. 호출 동안 시각을 하나로 고정하고, 기록 중이면 남겨
+ROS 없이 재생할 수 있다(형식은 tools/replay.py).
 """
 from __future__ import annotations
 
@@ -63,9 +56,9 @@ class FleetManager:
         return self.orchestrator.shipped
 
     def record_to(self, write) -> None:
-        """`write` gets every input and what came of it, one JSON line each.
+        """모든 입력과 결과를 한 줄씩 JSON으로 `write`에 넘긴다.
 
-        The first line is all a replay starts from, so this comes before the first input.
+        재생은 첫 줄에서 시작하므로 첫 입력보다 먼저 불러야 한다.
         """
         if self._fed:
             raise RuntimeError("a record has to start before the first input")
@@ -229,7 +222,7 @@ class FleetManager:
         return self._goal_seq
 
     def _step_robot(self, robot) -> None:
-        """Arm side, then traffic, then the arm side again for an order bound just now."""
+        """주문, 교통 순으로 돌고, 방금 묶인 주문을 위해 주문 쪽을 한 번 더 돈다."""
         self.orchestrator.step(robot)
         self._pump()
         self.traffic.step(robot)
@@ -238,7 +231,7 @@ class FleetManager:
         self._pump()
 
     def _pump(self) -> None:
-        """Carry the inside commands across until neither core has anything left to say."""
+        """두 코어 모두 보낼 명령이 없을 때까지 내부 명령을 넘긴다."""
         while True:
             items = self.orchestrator.take_output() + self.traffic.take_output()
             if not items:

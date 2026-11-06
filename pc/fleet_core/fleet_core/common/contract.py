@@ -1,7 +1,6 @@
-"""Read the interface contract: names, types and QoS for every topic, action and service.
+"""인터페이스 계약(토픽, 액션, 서비스의 이름, 타입, QoS)을 읽는다.
 
-Nodes ask for an entry by its `key`, so renaming a topic or changing a QoS only needs an
-edit in contract.yaml. This module does not import ROS, so it also works in plain pytest.
+노드는 `key`로 찾으므로 이름이나 QoS는 contract.yaml만 고치면 된다. ROS 없이 pytest에서 돈다.
 """
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ import yaml
 
 
 class ContractError(ValueError):
-    """The contract file is invalid or an entry was requested wrongly."""
+    """계약 파일이 잘못됐거나 항목을 잘못 요청했다."""
 
 
 @dataclass(frozen=True)
@@ -27,7 +26,7 @@ class QosSpec:
 @dataclass(frozen=True)
 class Entry:
     key: str
-    kind: str  # topic, action or service
+    kind: str  # topic, action, service 중 하나
     template: str
     type: str
     qos_name: str | None
@@ -100,7 +99,7 @@ class Contract:
         return self.profiles[entry.qos_name]
 
     def expanded(self, include_real_only: bool = True) -> list[ExpandedEntry]:
-        """Return one record per concrete name, for checking a running system."""
+        """실제 이름마다 하나씩 돌려준다. 실행 중인 시스템 점검용."""
         out = []
         for entry in self.entries.values():
             if entry.real_only and not include_real_only:
@@ -119,7 +118,7 @@ def load_contract(path) -> Contract:
 
 
 def to_ros_qos(spec: QosSpec):
-    """Build an rclpy QoSProfile. rclpy is imported here so plain pytest never needs it."""
+    """rclpy QoSProfile을 만든다. pytest에 rclpy가 없어도 되게 여기서 import한다."""
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
     return QoSProfile(

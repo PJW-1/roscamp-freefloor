@@ -1,17 +1,16 @@
-"""TrafficController: robot selection, zone locks and motion. No ROS, no wall clock, no orders.
+"""로봇 선택, 구역 잠금, 이동을 맡는다. ROS, 실제 시계, 주문은 모른다.
 
-Callers feed robot updates and dispatch requests through the on_* methods and call tick()
-periodically. tick() returns the commands to send, the events to publish and the dispatch
-feedback and results for whoever asked. What a robot does at a station is not known here: it
-stands there (AT_STATION) until it is released or sent somewhere else.
+입력은 on_* 메서드로 받고 tick()을 주기적으로 부른다. tick()은 보낼 명령, 이벤트,
+배차 피드백과 결과를 돌려준다. 스테이션에서 하는 일은 모른다. 놓아 주거나 다른 곳으로
+보낼 때까지 그 자리에 서 있다(AT_STATION).
 
-Safety rules kept here, each backed by a test:
-  - A robot holds its current zone and at most one next zone, and moves only inside them.
-  - A zone is released only after consecutive reports are past it by the release distance,
-    so one noisy pose cannot free a zone the robot's body is still next to.
-  - Results of goals that are no longer the robot's active goal are ignored.
-  - Nothing moves until every robot has reported, because a robot that has not reported may
-    be standing in the zone another one would be given.
+안전 규칙(각각 테스트가 있다):
+  - 로봇은 현재 구역과 다음 구역 하나까지만 쥐고 그 안에서만 움직인다.
+  - 구역은 연속 보고가 해제 거리만큼 지난 뒤에만 놓는다. 오차 섞인 보고 하나로
+    로봇 몸이 아직 붙어 있는 구역을 풀지 않게 한다.
+  - 지금 활성 goal이 아닌 goal의 결과는 무시한다.
+  - 모든 로봇이 보고하기 전에는 아무것도 안 움직인다. 보고 안 한 로봇이 다른 로봇에게
+    줄 구역에 서 있을 수 있기 때문이다.
 """
 from __future__ import annotations
 
@@ -81,12 +80,12 @@ class TrafficController(TrafficRecovery):
         self._missions = {name: _Mission(name) for name in robots}
         self._out: list = []
         self._run_mode: str | None = None
-        self._open_calls: list[int] = []  # dispatches to the fill station with no robot named
+        self._open_calls: list[int] = []  # 로봇 지정 없는 채우기 스테이션 배차
         self._work = next(s.id for s in site.stations.values() if s.action == FILL)
         self._outbound = next(s.id for s in site.stations.values() if s.action == SWAP)
         self._deadlock_since: float | None = None
         self._deadlock_acted = False
-        self._retreating: tuple[str, list[str], float] | None = None  # robot, zones, release time
+        self._retreating: tuple[str, list[str], float] | None = None  # 로봇, 구역, 해제 시각
         self._startup_since: float | None = None
         self._missing_reported = False
         self._no_robot_warned = False
@@ -110,13 +109,13 @@ class TrafficController(TrafficRecovery):
     def on_run_mode(self, run_mode) -> None:
         if run_mode == STOP and self._run_mode != STOP:
             for m in self._missions.values():
-                # A silent robot may not hear it, so recovery sends its cancel instead.
+                # 말 없는 로봇은 못 들을 수 있어 취소는 복구 때 보낸다.
                 if m.goal and m.comm != COMM_LOST:
                     self._cancel_goal(m)
         self._run_mode = run_mode
 
     def on_dispatch(self, goal_id, station_id, robot_id="") -> None:
-        """Ask for a robot at a station. With no robot named it becomes an open call."""
+        """스테이션으로 로봇을 부른다. 로봇을 지정하지 않으면 열린 호출이 된다."""
         if not robot_id:
             if station_id != self._work:
                 raise ValueError(f"only the fill station takes open calls, not {station_id}")
@@ -189,7 +188,7 @@ class TrafficController(TrafficRecovery):
         self._goal_failed(m, "REJECTED")
 
     def on_goal_not_sent(self, robot, goal_id) -> None:
-        """Its action server is not there, so the goal never left. No attempt was made."""
+        """액션 서버가 없어 goal이 나가지 않았다. 시도 횟수로 치지 않는다."""
         m = self._missions[robot]
         goal = m.goal
         if goal is None or goal.id != goal_id:
@@ -219,7 +218,7 @@ class TrafficController(TrafficRecovery):
                     f"{m.dest} error x={error_x_cm} y={error_y_cm} yaw={error_yaw_deg}", robot)
         self._finish_dispatch(m, error_x_cm, error_y_cm, error_yaw_deg)
 
-    # confirm_clear, the operator's input, is in recovery.py with the rest of recovery.
+    # 운영자 입력 confirm_clear는 recovery.py에 있다.
 
     # ---- outputs ------------------------------------------------------------------------
 
@@ -239,7 +238,7 @@ class TrafficController(TrafficRecovery):
         return self._missions[robot].available
 
     def tick(self) -> list:
-        """One whole cycle, for a caller with nothing to do between its parts."""
+        """한 주기 전체. 단계 사이에 할 일이 없는 호출자용."""
         now = self._clock()
         everyone_here = self.tick_begin(now)
         halted = self.tick_progress(now)
@@ -251,17 +250,17 @@ class TrafficController(TrafficRecovery):
         return self.take_output()
 
     def tick_begin(self, now: float) -> bool:
-        """Startup and comm checks. Returns True once every robot has reported."""
+        """시작과 통신 점검. 모든 로봇이 보고하면 True."""
         everyone_here = self._everyone_reported(now)
         for m in self._missions.values():
-            if m.goal:  # one that did not leave is reported before the next tick
+            if m.goal:  # 나가지 못한 goal은 다음 tick 전에 보고된다
                 m.not_sent_warned = False
         self._check_comm(now)
         self._finish_recoveries(now)
         return everyone_here
 
     def tick_progress(self, now: float) -> bool:
-        """Follow poses and free passed zones. Returns True while a wait cycle halts new moves."""
+        """자세를 따라가며 지난 구역을 놓는다. 대기 순환으로 새 이동을 멈춘 동안 True."""
         for m in self._missions.values():
             if m.available:
                 self._judge_arrival(m, now)
@@ -270,8 +269,8 @@ class TrafficController(TrafficRecovery):
         return self._check_deadlock(now)
 
     def tick_pick(self) -> None:
-        """Decide who answers the open calls, and redirect the robots that changed."""
-        # A cleared robot is off the floor, so unlike a failed one it blocks nobody.
+        """열린 호출에 응할 로봇을 정하고, 바뀐 로봇의 경로를 다시 잡는다."""
+        # 해제된 로봇은 코스 밖이라 고장 로봇과 달리 아무도 막지 않는다.
         infos = [self._robot_info(m) for m in self._missions.values()
                  if m.placed and m.fault != OUT_OF_SERVICE]
         self._warn_if_no_robot()
@@ -283,7 +282,7 @@ class TrafficController(TrafficRecovery):
                 self._redirect(m)
 
     def step(self, robot) -> None:
-        """Act on the current phase, and straight away on any phase that leads to."""
+        """현재 단계를 처리하고, 이어지는 단계도 바로 처리한다."""
         m = self._missions[robot]
         phase = None
         while m.phase != phase:
@@ -318,7 +317,7 @@ class TrafficController(TrafficRecovery):
         }
 
     def status_view(self, robot) -> dict:
-        """What /fleet/robots shows that only traffic knows."""
+        """/fleet/robots에 나가는 값 중 교통만 아는 것."""
         m = self._missions[robot]
         wait_zone = self.zones.waiting_for(robot) or ""
         in_the_way = self.zones.blockers(robot, wait_zone) if wait_zone else ()
@@ -350,7 +349,7 @@ class TrafficController(TrafficRecovery):
             return True
         if self._startup_since is None:
             self._startup_since = now
-        silent = [m.name for m in missing if not m.fault]  # a refused robot has already reported
+        silent = [m.name for m in missing if not m.fault]  # 거절된 로봇은 이미 보고했다
         if (silent and not self._missing_reported
                 and now - self._startup_since >= self.params.startup_wait_s):
             self._missing_reported = True
@@ -365,11 +364,10 @@ class TrafficController(TrafficRecovery):
         return self.site.zone_of[waypoint]
 
     def _place(self, m: _Mission) -> None:
-        """Take the zone it reports from, or stay off the map and try again at the next report.
+        """보고한 위치의 구역을 잡는다. 못 잡으면 맵 밖에 두고 다음 보고 때 다시 한다.
 
-        A refused robot stands there with no lock, so _everyone_reported keeps everybody still
-        until it has moved or the operator has cleared it. The same goes for a robot on a goal
-        this FMS did not give it.
+        거절된 로봇은 잠금 없이 서 있으므로, 움직이거나 운영자가 해제할 때까지
+        _everyone_reported가 모두를 세워 둔다. 이 FMS가 주지 않은 goal로 달리는 로봇도 같다.
         """
         if m.robot_state in ON_A_GOAL:
             return
@@ -387,7 +385,7 @@ class TrafficController(TrafficRecovery):
         m.path = [waypoint]
         m.idx = 0
         m.phase = PARKED if waypoint in self.site.parking else IDLE
-        # Past d it is on the lane into that waypoint, and a straight line from there is no lane.
+        # d를 지나면 그 지점으로 가는 레인 위라서, 거기서 곧장 가면 레인을 벗어난다.
         if (math.dist((m.x, m.y), self.site.waypoint_pose(waypoint))
                 > self.params.release_distance_m):
             m.settle_idx = 0
@@ -396,7 +394,7 @@ class TrafficController(TrafficRecovery):
             m.fault_reason = ""
 
     def _upcoming(self, m: _Mission) -> tuple[str, str | None]:
-        """The robot's current zone and the next different zone on its path."""
+        """현재 구역과 경로상 다음 다른 구역."""
         current = self._zone(m.path[m.idx])
         for waypoint in m.path[m.idx + 1:]:
             zone = self._zone(waypoint)
@@ -405,7 +403,7 @@ class TrafficController(TrafficRecovery):
         return current, None
 
     def _anchor(self, m: _Mission) -> int:
-        """Path index the robot is committed to reach before anything can change its route."""
+        """경로를 바꾸기 전에 반드시 도달해야 하는 경로 인덱스."""
         if m.goal and m.goal.kind == MOVE:
             return m.goal.target_idx
         return m.settle_idx if m.settle_idx is not None else m.idx
@@ -417,7 +415,7 @@ class TrafficController(TrafficRecovery):
         m.goal = None
 
     def _fail(self, m: _Mission, reason: str = "") -> None:
-        """The operator has to look at it. It keeps its zones."""
+        """운영자가 봐야 한다. 구역은 계속 쥔다."""
         m.fault = ERROR
         m.fault_reason = reason
         m.called = False
@@ -431,10 +429,10 @@ class TrafficController(TrafficRecovery):
         return math.dist((m.x, m.y), target) <= self.params.arrival_tolerance_m
 
     def _judge_arrival(self, m: _Mission, now: float) -> None:
-        """A move said it succeeded with the last report too far off. Later reports decide.
+        """이동은 성공했는데 마지막 보고가 너무 멀다. 이후 보고로 판단한다.
 
-        Only a report that came after the success can fail it. With none, the pose is the old
-        one and says nothing, so it waits and the comm check speaks first.
+        성공 뒤에 온 보고만 실패로 만들 수 있다. 없으면 자세가 옛것이라 기다리고,
+        통신 점검이 먼저 알린다.
         """
         if m.arrival_by is None:
             return
@@ -461,7 +459,7 @@ class TrafficController(TrafficRecovery):
     # ---- progress and zone release ------------------------------------------------------
 
     def _track_progress(self, m: _Mission) -> None:
-        """Move the path index past every lane the pose is well along, up to the running target."""
+        """충분히 지난 레인마다 경로 인덱스를 넘긴다. 현재 목표까지만."""
         if not m.goal or m.goal.kind != MOVE:
             return
         while m.idx < m.goal.target_idx:
@@ -471,7 +469,7 @@ class TrafficController(TrafficRecovery):
             m.idx += 1
 
     def _exit_lane(self, m: _Mission, zone: str) -> tuple | None:
-        """The lane on which the path leaves a zone the robot is in or has been in."""
+        """로봇이 있거나 있던 구역을 경로가 떠나는 레인."""
         last = m.idx
         while last + 1 < len(m.path) and self._zone(m.path[last + 1]) == self._zone(m.path[last]):
             last += 1
@@ -482,14 +480,13 @@ class TrafficController(TrafficRecovery):
         return None
 
     def _clear_of(self, m: _Mission, zone: str) -> bool:
-        """Is the robot's body clear of a zone it holds?
+        """로봇 몸이 쥔 구역에서 벗어났는가?
 
-        On its path: s > d along the lane leaving the zone. Why d is big enough is in
-        fleet_params.yaml. Not on it (a zone ahead, or a robot moved by hand): at least d from the
-        zone's centre lines, the same measure as s.
+        경로 위면 구역을 떠나는 레인에서 s > d. d가 충분한 이유는 fleet_params.yaml에 있다.
+        경로 밖(앞 구역, 손으로 옮긴 로봇)이면 구역 중심선에서 d 이상, s와 같은 기준이다.
 
-        s is a projection, so it says nothing about a robot far off its lane. Lanes of the zone
-        close to the exit lane are a conflict pair already, and LANE_ERROR reports the rest.
+        s는 투영이라 레인에서 멀리 벗어난 로봇은 못 잡는다. 나가는 레인에 가까운 구역 레인은
+        이미 충돌 쌍이고, 나머지는 LANE_ERROR가 알린다.
         """
         lane = self._exit_lane(m, zone)
         if lane:
@@ -498,7 +495,7 @@ class TrafficController(TrafficRecovery):
         return self._off_the_floor(m, zone)
 
     def _off_the_floor(self, m: _Mission, zone: str) -> bool:
-        # The floor is half_width either side of the centre lines, so this is back to those.
+        # 바닥은 중심선 양쪽 half_width까지라, 더해서 중심선 기준 거리로 되돌린다.
         distance = self.site.distance_to_zone(m.x, m.y, zone) + self.site.half_width
         return distance >= self.params.release_distance_m
 
@@ -510,7 +507,7 @@ class TrafficController(TrafficRecovery):
                 m.outside.pop(zone, None)
 
     def _watch_lane_error(self, m: _Mission) -> None:
-        """Locks assume a robot stays on its lane. Say so when one does not, once per goal."""
+        """잠금은 로봇이 레인 위에 있다고 가정한다. 벗어나면 goal마다 한 번 알린다."""
         if not (m.goal and m.goal.kind == MOVE and m.goal.target_idx > 0):
             return
         a, b = m.path[m.goal.target_idx - 1], m.path[m.goal.target_idx]
@@ -526,10 +523,10 @@ class TrafficController(TrafficRecovery):
             m.outside.pop(zone, None)
 
     def _release_passed_zones(self, m: _Mission) -> None:
-        """Release held zones the robot is outside of and does not need next.
+        """벗어났고 다음에 필요 없는 구역을 놓는다.
 
-        Only the current and next zone count as still needed. A zone that comes up again much
-        later (a robot driving a whole loop crosses Z-X twice) must not stay held meanwhile.
+        필요한 구역은 현재와 다음 구역뿐이다. 한참 뒤 다시 지날 구역(한 바퀴 도는 로봇은
+        Z-X를 두 번 지난다)을 그동안 쥐고 있으면 안 된다.
         """
         keep = self._upcoming(m)
         for zone in self.zones.held_by(m.name):
@@ -539,8 +536,7 @@ class TrafficController(TrafficRecovery):
     # ---- calling robots -----------------------------------------------------------------
 
     def _robot_info(self, m: _Mission) -> RobotInfo:
-        # A robot driving inside the waiting waypoints counts from the waypoint it will stop at, one
-        # driving out of them from the waypoint it still stands in.
+        # 대기 지점 안에서 달리는 로봇은 멈출 지점에서, 빠져나가는 로봇은 아직 선 지점에서 잰다.
         index = self._anchor(m)
         if m.path[index] not in self.site.parking:
             index = m.idx
@@ -555,7 +551,7 @@ class TrafficController(TrafficRecovery):
         )
 
     def _committed(self, m: _Mission) -> bool:
-        """A robot heading to the fill dock cannot turn off once it has the commit zone."""
+        """채우기 도크로 가는 로봇은 commit 구역을 잡으면 방향을 바꿀 수 없다."""
         if m.phase != TO_WORK:
             return False
         zone = self._zone(self.site.stations[self._work].commit)
@@ -564,14 +560,14 @@ class TrafficController(TrafficRecovery):
         return zone not in {self._zone(c) for c in m.path[m.idx:]}
 
     def _warn_if_no_robot(self) -> None:
-        """Calls wait and no robot can come until the operator acts. Say so, once per stall."""
+        """호출이 남았는데 운영자가 손대기 전엔 올 로봇이 없다. 멈출 때마다 한 번 알린다."""
         stalled = bool(self._open_calls) and not any(m.live for m in self._missions.values())
         if stalled and not self._no_robot_warned:
             self._out.append(DispatchFeedback(self._open_calls[0], "", NO_ROBOT))
         self._no_robot_warned = stalled
 
     def _redirect(self, m: _Mission) -> None:
-        """Send an empty driving robot where its call now says."""
+        """빈 채로 달리는 로봇을 지금 호출이 가리키는 곳으로 보낸다."""
         if m.phase not in (TO_WORK, TO_PARK) or m.dispatch or self._committed(m):
             return
         if m.called:
@@ -582,13 +578,13 @@ class TrafficController(TrafficRecovery):
 
     def _finish_dispatch(self, m: _Mission, error_x_cm=0.0, error_y_cm=0.0,
                          error_yaw_deg=0.0) -> None:
-        """Standing at the dock: answer whoever asked, then wait to be told what comes next."""
+        """도크에 섰다. 요청한 쪽에 답하고 다음 지시를 기다린다."""
         if m.dispatch:
             goal_id, m.dispatch = m.dispatch.goal_id, None
         elif m.dest == self._work and self._open_calls:
             goal_id = self._open_calls.pop(0)
         else:
-            m.await_pick = True  # nobody is waiting for it any more
+            m.await_pick = True  # 이제 이 로봇을 기다리는 쪽이 없다
             return
         m.hold = True
         self._out.append(DispatchResult(goal_id, True, m.name, "", error_x_cm, error_y_cm,
@@ -597,11 +593,11 @@ class TrafficController(TrafficRecovery):
     # ---- mission steps ------------------------------------------------------------------
 
     def _start_leg(self, m: _Mission, phase: str, dest: str | None, goal_waypoint) -> None:
-        """Replace the path after the point the robot is committed to reach."""
+        """반드시 도달할 지점 이후의 경로를 바꾼다."""
         _, old_next = self._upcoming(m) if m.path else ("", None)
         anchor = self._anchor(m)
         tail = self.site.plan(m.path[anchor], goal_waypoint)
-        behind = max(m.idx - 1, 0)  # keep the lane just driven: its zone may not be released yet
+        behind = max(m.idx - 1, 0)  # 방금 지난 레인은 남긴다. 그 구역을 아직 못 놓았을 수 있다
         m.path = m.path[behind:anchor + 1] + tail[1:]
         if m.goal and m.goal.kind == MOVE:
             m.goal.target_idx -= behind
@@ -620,7 +616,7 @@ class TrafficController(TrafficRecovery):
         self._start_leg(m, phase, station, self.site.stations[station].dock)
 
     def _park_goal(self, m: _Mission, from_waypoint):
-        """Deepest parking waypoint it can drive to from here without passing another robot."""
+        """다른 로봇을 앞지르지 않고 갈 수 있는 가장 깊은 대기 지점."""
         spots = self.site.parking
         start = spots.index(from_waypoint) + 1 if from_waypoint in spots else 0
         goal = None
@@ -636,12 +632,12 @@ class TrafficController(TrafficRecovery):
         anchor_waypoint = m.path[self._anchor(m)]
         goal = self._park_goal(m, anchor_waypoint)
         if goal is None:
-            # Already parked with nothing free ahead: stay. Outside: queue for the entrance.
+            # 이미 대기 중이고 앞이 막혔으면 그대로, 밖이면 입구를 기다린다.
             goal = anchor_waypoint if anchor_waypoint in self.site.parking else self.site.parking[0]
         self._start_leg(m, TO_PARK, None, goal)
 
     def _next_work(self, m: _Mission) -> None:
-        """Leave a dock or a parked spot for whatever comes next."""
+        """다음 일을 위해 도크나 대기 지점을 떠난다."""
         if m.dispatch:
             self._start_dispatch_leg(m)
         elif m.called:
@@ -668,13 +664,13 @@ class TrafficController(TrafficRecovery):
         if m.hold or m.await_pick:
             return
         if m.called and m.dest == self._work and self._open_calls:
-            self._finish_dispatch(m)  # called while standing at the dock it was called to
+            self._finish_dispatch(m)  # 불린 도크에 이미 서 있을 때
             return
         self._next_work(m)
 
     def _step_parked(self, m: _Mission) -> None:
-        """Keep advancing into free waypoints so the parking entrance stays clear."""
-        if m.settle_idx is not None:  # found on the lane into this spot
+        """대기 입구가 비도록 빈 지점으로 계속 앞으로 간다."""
+        if m.settle_idx is not None:  # 이 자리로 오는 레인 위에서 발견됨
             self._issue_move(m)
         elif self._park_goal(m, m.path[m.idx]):
             self._start_park_leg(m)
@@ -689,7 +685,7 @@ class TrafficController(TrafficRecovery):
         self._issue_move(m)
 
     def _trim_parking_path(self, m: _Mission) -> None:
-        """Re-aim inside the parking: stop behind whoever got there first, or go deeper."""
+        """대기 지점 안에서 목표를 다시 잡는다. 먼저 온 로봇 뒤에 서거나 더 깊이 간다."""
         anchor = self._anchor(m)
         waypoint = m.path[anchor]
         spots = self.site.parking
@@ -700,7 +696,7 @@ class TrafficController(TrafficRecovery):
         start = spots.index(waypoint) + 1 if waypoint in spots else 0
         new_tail = spots[start:spots.index(goal) + 1] if goal else []
         if waypoint not in spots and not new_tail:
-            return  # the first parking waypoint is taken: keep queueing for it
+            return  # 첫 대기 지점이 찼으니 계속 기다린다
         if new_tail != old_tail:
             for removed in old_tail:
                 if removed not in new_tail:
@@ -719,7 +715,7 @@ class TrafficController(TrafficRecovery):
             self._next_work(m)
 
     def _request_next_zone(self, m: _Mission) -> None:
-        """Ask for the next zone only once the robot holds nothing but its current one."""
+        """현재 구역 말고 쥔 것이 없을 때만 다음 구역을 요청한다."""
         current, following = self._upcoming(m)
         if following is None:
             return
@@ -769,7 +765,7 @@ class TrafficController(TrafficRecovery):
             self._send_move(m, reach, step)
 
     def _step_between(self, m: _Mission, index: int) -> tuple[float, float]:
-        """The direction of a lane, rounded so that lanes in one straight line compare equal."""
+        """레인 방향. 한 직선 위 레인이 같게 나오도록 반올림한다."""
         lane = self.site.lane(m.path[index], m.path[index + 1])
         return (round(lane.ux, 6), round(lane.uy, 6))
 
@@ -777,7 +773,7 @@ class TrafficController(TrafficRecovery):
         return self._step_between(m, index - 1) if index > 0 else None
 
     def _send_move(self, m: _Mission, target_idx: int, step) -> None:
-        """A new goal replaces any running one. Its id is what later results must match."""
+        """새 goal은 진행 중인 goal을 대신한다. 이후 결과는 이 id와 맞아야 한다."""
         waypoint = m.path[target_idx]
         x, y = self.site.waypoint_pose(waypoint)
         yaw = math.atan2(step[1], step[0]) if step else m.yaw

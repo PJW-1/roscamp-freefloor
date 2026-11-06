@@ -1,37 +1,37 @@
-# Policy values. Items marked estimate must be measured on the real course.
-basket_capacity: 4            # estimate: most items one basket holds, depends on the real basket
-ship_partial: true            # a basket with some items still goes out; an empty one stays
-robot_radius_m: 0.08          # estimate: Pinky body only, the tray behind it is not included yet
-release_margin_extra_m: 0.05  # scenario judge only: radius + this = off the course
-# On the path, the zone behind is released once a report is this far along the lane that left it,
-# measured as s = (p - p_i)·u. Rule: d >= r + eps + v * (tau + tick), so the body is past the zone
-# even when the report is eps off and tau + tick old: 0.08 + 0.03 + 0.2 * (0.2 + 0.1) = 0.17 m.
-# Also d > 2r, because a robot behind may then drive up to the waypoint just left, and d >= 2r + eps
-# if the one in front may stop right after a report that was eps ahead of it. Estimates until
-# eps and tau are measured on the real robot; docs/worklog_2026-11-05.md has the pressure table.
+# 정책 값. 추정 표시는 실제 코스에서 재야 한다.
+basket_capacity: 4            # 추정: 바구니 하나에 담는 최대 수량, 실제 바구니에 따라 다름
+ship_partial: true            # 일부만 담겨도 내보내고, 빈 바구니는 남긴다
+robot_radius_m: 0.08          # 추정: 핑키 몸체만, 뒤 트레이는 아직 미포함
+release_margin_extra_m: 0.05  # 시나리오 판정 전용: 반경 + 이 값 = 코스 이탈
+# 경로 위에서 뒤 구역은 보고가 나가는 레인을 따라 이만큼 지나면 놓는다. s = (p - p_i)·u.
+# 규칙 d >= r + eps + v * (tau + tick): 보고가 eps 틀리고 tau + tick 늦어도 몸이 구역을 지난다.
+# 0.08 + 0.03 + 0.2 * (0.2 + 0.1) = 0.17 m.
+# 또 d > 2r: 뒤 로봇이 방금 떠난 지점까지 올 수 있다. 앞 로봇이 eps 앞선 보고 직후 멈출 수
+# 있으면 d >= 2r + eps. eps와 tau를 실제 로봇에서 재기 전까지 추정이다.
+# 압박 표는 docs/worklog_2026-11-05.md.
 release_distance_m: 0.2
-release_confirm_samples: 3    # consecutive reports past that distance before a release
-lane_error_warn_m: 0.15       # warn when a robot is this far off its lane, e = |(p - p_i) - s·u|
-move_retry_limit: 2           # retries after the first failure, three attempts in total
-move_retry_wait_s: 2.0        # estimate: three attempts outlast comm_timeout_s, so a comm loss shows first
-arrival_tolerance_m: 0.15     # estimate: a move's success counts only this close to the target waypoint
-arrival_settle_s: 1.0         # estimate: reports lag, so they get this long after a success to show it
-startup_wait_s: 10.0          # alert if a robot has not reported by then
-comm_timeout_s: 3.0           # estimate
-heartbeat_period_s: 0.5       # proposal for /fleet/heartbeat. Wall clock, it watches a process
-heartbeat_timeout_s: 1.5      # proposal: a robot stops after this long without one, three beats
-recover_check_s: 1.0          # estimate
-arm_cancel_wait_s: 5.0        # estimate
-arm_retry_wait_s: 2.0         # estimate
-fill_timeout_s: 90.0          # estimate: two arms filling one basket
-swap_timeout_s: 60.0          # estimate: arm3 taking the full basket and placing an empty one
-cancel_retry_s: 1.0           # estimate: ask again this often while a canceled goal has no result
-cancel_warn_after: 5          # CANCEL_UNCONFIRMED after this many periods with no result; at least
-                              # arm_cancel_wait_s, so an arm the core still waits for is not called late
-report_retry_s: 2.0           # estimate: send an order report again after this long with no reply
-zone_wait_warn_s: 60.0        # warn when a robot has waited this long for one zone
-deadlock_grace_s: 5.0         # wait before the second deadlock step
-score_same_call: -4.0         # a robot already called keeps the call unless another is clearly closer
-score_distance_weight: 0.91   # per metre along the lanes
+release_confirm_samples: 3    # 해제 전에 그 거리를 지난 연속 보고 수
+lane_error_warn_m: 0.15       # 레인에서 이만큼 벗어나면 경고, e = |(p - p_i) - s·u|
+move_retry_limit: 2           # 첫 실패 뒤 재시도 수, 모두 세 번 시도
+move_retry_wait_s: 2.0        # 추정: 세 번 시도가 comm_timeout_s보다 길어 통신 끊김이 먼저 보인다
+arrival_tolerance_m: 0.15     # 추정: 목표 지점에 이만큼 가까워야 이동 성공으로 친다
+arrival_settle_s: 1.0         # 추정: 보고가 늦으니 성공 뒤 이만큼 기다린다
+startup_wait_s: 10.0          # 이때까지 보고 없는 로봇은 알린다
+comm_timeout_s: 3.0           # 추정
+heartbeat_period_s: 0.5       # /fleet/heartbeat 제안값. 프로세스를 보므로 실제 시계 기준
+heartbeat_timeout_s: 1.5      # 제안값: 이만큼(세 번) 못 받으면 로봇이 멈춘다
+recover_check_s: 1.0          # 추정
+arm_cancel_wait_s: 5.0        # 추정
+arm_retry_wait_s: 2.0         # 추정
+fill_timeout_s: 90.0          # 추정: 팔 두 대가 바구니 하나를 채움
+swap_timeout_s: 60.0          # 추정: arm3가 찬 바구니를 빼고 빈 바구니를 놓음
+cancel_retry_s: 1.0           # 추정: 취소한 goal 결과가 없으면 이 주기로 다시 요청
+cancel_warn_after: 5          # 결과 없이 이만큼 주기가 지나면 CANCEL_UNCONFIRMED.
+                              # 코어가 기다리는 팔을 늦었다고 하지 않게 arm_cancel_wait_s 이상
+report_retry_s: 2.0           # 추정: 답이 없으면 이만큼 뒤 주문 보고를 다시 보냄
+zone_wait_warn_s: 60.0        # 한 구역을 이만큼 기다리면 경고
+deadlock_grace_s: 5.0         # 교착 두 번째 단계 전 대기
+score_same_call: -4.0         # 이미 불린 로봇은 다른 로봇이 확실히 가깝지 않으면 호출을 유지
+score_distance_weight: 0.91   # 레인 거리 1 m당
 priority_at_station: 200
 priority_has_cargo: 100

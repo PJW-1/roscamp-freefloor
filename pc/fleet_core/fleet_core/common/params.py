@@ -1,4 +1,4 @@
-"""Policy values of the fleet manager, loaded from data/fleet_params.yaml."""
+"""플릿 매니저 정책 값. data/fleet_params.yaml에서 읽는다."""
 from __future__ import annotations
 
 from dataclasses import dataclass
