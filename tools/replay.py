@@ -113,7 +113,10 @@ def replay(path) -> Result:
     core = start_core(head, lambda: now[0])
     produced: list[str] = []
     core.record_to(produced.append)
-    for entry in rest:
+    for number, entry in enumerate(rest, start=2):
+        if "unrecordable" in entry:
+            raise ValueError(f"line {number}: this input could not be recorded "
+                             f"({entry['unrecordable']})")
         if "in" in entry:
             now[0] = entry["t"]
             getattr(core, entry["in"])(*_arguments(entry))

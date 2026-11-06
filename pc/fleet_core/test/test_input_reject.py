@@ -433,3 +433,29 @@ def test_a_robot_id_that_is_not_a_string_plays_back_the_same(tmp_path):
     assert len(rejected(core.tick())) == 1
     result = _play(tmp_path, lines)
     assert result.compared and result.same, result
+
+
+def _cyclic_order():
+    items = {}
+    items["A"] = items
+    return OrderRecord("O-009", items)
+
+
+UNWRITABLE = {
+    "a cycle": [_cyclic_order()],
+    "a key that is not a string": [OrderRecord("O-009", {("A",): 1})],
+}
+
+
+@pytest.mark.parametrize("orders", UNWRITABLE.values(), ids=UNWRITABLE.keys())
+def test_an_input_the_record_cannot_write_is_still_handled(tmp_path, orders):
+    core, now, lines = _recorded()
+    core.on_order_board("STOP", orders)
+    out = core.tick()
+    assert not core.traffic.running
+    assert len(rejected(out)) == 1
+    assert any("unrecordable" in json.loads(line) for line in lines)
+    path = tmp_path / "run.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="could not be recorded"):
+        replay.replay(path)

@@ -118,6 +118,9 @@ class TrafficController(TrafficRecovery):
                 # 말 없는 로봇은 못 들을 수 있어 취소는 복구 때 보낸다.
                 if m.goal and m.comm != COMM_LOST:
                     self._cancel_goal(m)
+        if run_mode != self._run_mode:
+            for m in self._missions.values():
+                m.stall_from = None  # 모드가 바뀌면 멈춤 시계를 다시 잰다
         self._run_mode = run_mode
 
     def on_dispatch(self, goal_id, station_id, robot_id="") -> None:
@@ -507,7 +510,8 @@ class TrafficController(TrafficRecovery):
         if m.stall_mean is None:
             m.stall_mean = (m.x, m.y)
         else:
-            a = 1.0 - math.exp(-(now - m.stall_seen) / self.params.stall_smooth_s)
+            tau = self.params.stall_smooth_s
+            a = 1.0 - math.exp(-(now - m.stall_seen) / tau) if tau > 0 else 1.0
             mx, my = m.stall_mean
             m.stall_mean = (mx + a * (m.x - mx), my + a * (m.y - my))
         m.stall_seen = now

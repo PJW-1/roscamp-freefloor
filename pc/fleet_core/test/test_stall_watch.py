@@ -2,6 +2,7 @@
 
 기본 지도에서 로봇 하나, 0.1초 틱. test_goal_retry.py와 같은 방식이다.
 """
+import dataclasses
 import math
 import random
 import sys
@@ -301,6 +302,25 @@ def test_pause_is_not_a_stall_and_the_clock_starts_again_on_run():
     stalls = run.events("GOAL_STALLED")
     assert len(stalls) == 1
     assert stalls[0][0] >= resumed + STALL_S
+
+
+def test_pause_and_run_between_two_ticks_still_restart_the_clock():
+    run = Run()
+    run.run(STALL_S - 1.0)
+    run.core.on_order_board("PAUSE", [ORDER])
+    run.core.on_order_board("RUN", [ORDER])
+    resumed = run.now[0]
+    run.run(STALL_S + 0.5)
+    stalls = run.events("GOAL_STALLED")
+    assert len(stalls) == 1
+    assert stalls[0][0] >= resumed + STALL_S
+
+
+def test_no_smoothing_does_not_divide_by_zero():
+    run = Run()
+    run.core.traffic.params = dataclasses.replace(run.core.traffic.params, stall_smooth_s=0.0)
+    run.run(STALL_S + 0.5)
+    assert len(run.events("GOAL_STALLED")) == 1
 
 
 def test_a_silent_robot_is_left_to_the_comm_check():

@@ -123,7 +123,7 @@ class FleetManager:
 
         틀린 주문 하나가 STOP을 막으면 안 되고, 하나만 빼면 철회로 보이기 때문이다.
         """
-        self._input("on_order_board", run_mode, _recorded_orders(orders))
+        self._input("on_order_board", run_mode, orders)
         mode_problem = run_mode_problem(run_mode)
         if mode_problem:
             self._topic_rejected(("order_board",), mode_problem, "order board dropped")
@@ -277,8 +277,17 @@ class FleetManager:
         self._fed = True
         self._time = self._clock()
         if self._write:
-            self._write(json.dumps({"t": self._time, "in": method, "args": args},
-                                   default=_recordable))
+            self._write(self._input_line(method, args))
+
+    def _input_line(self, method, args) -> str:
+        """기록 줄. 못 쓰는 입력도 처리는 계속하고, 재생할 수 없다는 표시만 남긴다."""
+        try:
+            if method == "on_order_board":
+                args = (args[0], _recorded_orders(args[1]))
+            return json.dumps({"t": self._time, "in": method, "args": args}, default=_recordable)
+        except Exception as error:  # 순환 참조, 문자열이 아닌 키, repr 실패
+            return json.dumps({"t": self._time, "in": method,
+                               "unrecordable": type(error).__name__})
 
     def _reject(self, detail, robot="") -> None:
         known = robot if isinstance(robot, str) and robot in self.traffic.robots else ""
