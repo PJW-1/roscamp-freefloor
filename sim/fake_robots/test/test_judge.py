@@ -768,6 +768,28 @@ def test_a_robot_put_back_that_is_never_placed_is_counted():
     assert check(j, "unheld_zone_pose")["value"] == 1
 
 
+def test_a_robot_put_back_unplaced_is_counted_when_its_grace_ends():
+    """2차 리뷰 4번: 유예가 끝난 뒤 다시 grace_s를 기다리지 않는다."""
+    j = _put_back_off_its_start(1.0)
+    for t in (1.0, 1.5, 1.99):
+        j.tick(t)
+    assert check(j, "unheld_zone_pose")["value"] == 0
+    j.tick(2.0)
+    assert check(j, "unheld_zone_pose")["value"] == 1
+
+
+def test_a_robot_put_back_on_its_own_start_cell_gets_no_start_exemption():
+    """출발 칸을 떠나는 것을 못 본 채 치웠다가 같은 칸에 다시 놓아도 면제는 유예뿐이다."""
+    j = ScenarioJudge(SITE, scenario(faults=REINSTATED, orders_shipped_min=1),
+                      margin_m=0.13, grace_s=1.0)
+    j.on_true_pose("pinky1", *at(WAITING[1]))  # 시작 칸 P-5
+    j.tick(0.0)
+    j.put_back(1.0, "pinky1", WAITING[1])
+    for t in (1.0, 2.0, 3.0, 9.0):
+        j.tick(t)
+    assert check(j, "unheld_zone_pose")["value"] == 1
+
+
 def test_orders_bound_by_a_robot_after_its_reinstate_are_counted():
     j = ScenarioJudge(SITE, scenario(faults=REINSTATED, orders_shipped_min=1,
                                      bound_after_reinstate_min=1), margin_m=0.13, grace_s=1.0)

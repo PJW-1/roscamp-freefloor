@@ -3,6 +3,10 @@
 OUT_OF_SERVICE를 풀고 기록을 새로 만들어 맵 밖에 둔다. 다음 위치 보고 때 시작과 같은
 절차(_place)로 올라온다. 시작 때와 달리 올라오기 전에도 다른 로봇은 멈추지 않는다.
 이미 운행 중이고, 이 로봇은 치운 동안에도 잠금 없이 서 있었기 때문이다.
+예외: 남이 쥔 구역에 보고되면(PLACEMENT_CONFLICT) 그 주인만 세운다. 목표와 구역 요청을
+취소하고 새 배차와 호출을 주지 않는다. 진행 중인 지정 배차는 남겨 풀린 뒤 이어 간다.
+둘 다 제자리면 저절로 풀리지 않는다. 관리자가 재투입 로봇을 옮겨 다시 보고하게 하거나
+다시 치워야 한다.
 TrafficController 상태를 쓰므로 혼자 쓰지 않는다.
 """
 from __future__ import annotations
@@ -57,6 +61,10 @@ class TrafficReinstate:
             held = self._missions[name]
             if held.goal:
                 self._cancel_goal(held)
+            # 줄에 남은 요청은 뒤 로봇까지 막는다. 풀리면 _request_next_zone이 다시 청한다.
+            self.zones.cancel_all_requests(name)
+            held.wait_zone = None
+            held.called = False
         return f", {sorted(holders)} stop until it is placed or cleared"
 
     def _held_for_placement(self, robot) -> bool:

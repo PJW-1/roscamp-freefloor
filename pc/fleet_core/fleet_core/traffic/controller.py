@@ -137,7 +137,7 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         if m is None:
             self._out.append(DispatchResult(goal_id, False, robot_id, "NO_SUCH_ROBOT"))
             return
-        if not m.available:
+        if not self.available(robot_id):  # 재투입 때문에 세운 로봇도 새 배차를 받지 않는다
             self._out.append(DispatchResult(goal_id, False, robot_id, "NOT_AVAILABLE"))
             return
         if m.dispatch:
@@ -299,7 +299,7 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         self._warn_if_no_robot()
         called = self.selector.pick(len(self._open_calls), infos)
         for m in self._missions.values():
-            if m.available:
+            if self.available(m.name):
                 m.called = m.name in called
                 m.await_pick = False
                 self._redirect(m)
@@ -615,7 +615,7 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
             parked=waypoint in self.site.parking,
             eligible=(m.available and not m.hold and m.dispatch is None
                       and not self._held_for_placement(m.name)),
-            available=m.available,
+            available=self.available(m.name),
         )
 
     def _committed(self, m: _Mission) -> bool:

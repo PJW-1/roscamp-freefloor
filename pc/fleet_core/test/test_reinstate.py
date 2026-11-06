@@ -213,6 +213,60 @@ def test_clearing_the_conflicting_robot_again_frees_the_holder():
     assert core.traffic.available("pinky1")
 
 
+def test_a_held_holder_gives_up_its_zone_requests_so_those_behind_are_not_blocked():
+    """2차 리뷰 1번: FIFO 대기열의 요청이 남으면 뒤 로봇까지 막는다."""
+    core, now = cleared(robots=THREE, robot="pinky3")
+    zones = core.zones
+    zones.force_acquire("pinky1", "N")  # pinky1이 N을 쥐고
+    assert not zones.request("pinky2", "N")  # pinky2가 먼저 줄을 서고
+    core.traffic._missions["pinky2"].wait_zone = "N"
+    core.reinstate("pinky3", "EMPTY", "back")
+    report(core, "pinky3", "P-5")  # pinky2 자리
+    assert not core.traffic.available("pinky2")
+    assert "pinky2" not in zones.queue("N")
+    assert core.traffic._missions["pinky2"].wait_zone is None
+    assert core.traffic.status_view("pinky2")["wait_zone"] == ""
+    zones.release("pinky1", "N")
+    assert zones.holder("N") is None
+    assert not zones.blockers("pinky1", "N"), "nobody left in line ahead"
+
+
+def test_a_held_robot_takes_no_new_named_dispatch():
+    """2차 리뷰 2번: 세운 동안 새 지정 배차는 NOT_AVAILABLE."""
+    core, now = cleared()
+    core.reinstate("pinky2", "EMPTY", "back")
+    report(core, "pinky2", "P-6")  # pinky1 자리
+    core.tick()
+    core.traffic.on_dispatch(901, "OUTBOUND", "pinky1")
+    out = core.traffic.take_output()
+    results = [c for c in out if type(c).__name__ == "DispatchResult" and c.goal_id == 901]
+    assert len(results) == 1
+    assert not results[0].success and results[0].reason == "NOT_AVAILABLE"
+    assert core.traffic._missions["pinky1"].dispatch is None
+
+
+def test_a_held_robot_drops_an_open_call_but_keeps_its_named_dispatch():
+    core, now = cleared(robots=THREE, robot="pinky3")
+    core.traffic.on_dispatch(902, "OUTBOUND", "pinky2")
+    core.on_order_board("RUN", [O1])
+    core.tick()
+    core.reinstate("pinky3", "EMPTY", "back")
+    report(core, "pinky3", "P-6")  # pinky1 자리
+    m1, m2 = core.traffic._missions["pinky1"], core.traffic._missions["pinky2"]
+    assert not m1.called, "an open call does not stay on a held robot"
+    for _ in range(5):
+        now[0] += 0.5
+        core.tick()
+    assert not core.traffic._missions["pinky1"].called
+    report(core, "pinky3", "P-5")  # pinky2 자리로 옮겨 다시 보고
+    assert core.traffic._missions["pinky2"].dispatch is not None, "named dispatch kept"
+    assert not core.traffic.available("pinky2")
+    report(core, "pinky3", "P-3")
+    assert core.traffic.available("pinky2")
+    assert m2 is core.traffic._missions["pinky2"]
+    assert m2.dispatch is not None and m2.dispatch.goal_id == 902
+
+
 def test_a_robot_with_no_basket_fetches_one_at_the_outbound_before_any_order():
     core, _ = cleared(robots={"pinky1": "P-6"}, robot="pinky1")
     core.reinstate("pinky1", "NONE", "tray empty")

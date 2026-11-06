@@ -223,3 +223,19 @@ def test_no_reinstate_after_a_refused_clear(harness, tmp_path):
     assert wait_until(lambda: ("clear", "pinky1") in calls, 8.0)
     time.sleep(3.0)
     assert ("reinstate", "pinky1") not in calls
+
+
+def test_a_reinstate_not_ready_does_not_hold_back_another_robot(harness, tmp_path):
+    """2차 리뷰 5번: pinky2의 치우기가 끝나지 않아도 pinky1은 다시 넣는다."""
+    robots = {**ONE_ROBOT, "pinky2": {"start": "P-5", "speed_mps": 1.0, "pose_noise_m": 0.0}}
+    _, probe = start(
+        harness, tmp_path, orders=ONE_ORDER, timeout_s=60, robots=robots,
+        expect={"orders_shipped_min": 1},
+        faults=[{"at_s": 0.3, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 0.5, "robot": "pinky2", "type": "operator_remove"},
+                {"at_s": 1.0, "robot": "pinky2", "type": "operator_reinstate", "start": "P-5"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-6"}])
+    calls = []
+    _serve_both(probe, calls)
+    assert wait_until(lambda: ("reinstate", "pinky1") in calls, 10.0), calls
+    assert ("reinstate", "pinky2") not in calls

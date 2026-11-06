@@ -148,13 +148,20 @@ class ScenarioJudge:
         self.event_rows.append((t, "NOTE", source, code, detail))
 
     def put_back(self, t: float, robot: str, waypoint) -> None:
-        """관리자가 로봇을 이 지점에 다시 놓았다. 매니저가 잡을 grace_s 동안만 면제한다."""
-        self._put_back[robot] = (waypoint, t + self.grace_s)
+        """관리자가 로봇을 이 지점에 다시 놓았다. 매니저가 잡을 grace_s 동안만 면제한다.
 
-    def _just_put_back(self, robot: str, x: float, y: float, t: float) -> bool:
+        시작 칸 면제는 더 쓰지 않는다. 못 잡으면 유예가 끝나는 시각에 바로 센다.
+        """
+        self._put_back[robot] = (waypoint, t, t + self.grace_s)
+        self._left_start.add(robot)
+
+    def _put_back_spot(self, robot: str, x: float, y: float):
+        """놓인 지점에 아직 서 있으면 (지점, 놓은 시각, 유예 끝), 떠났으면 지우고 None."""
         spot = self._put_back.get(robot)
-        return (spot is not None and t < spot[1]
-                and self.site.nearest_waypoint(x, y) == spot[0])
+        if spot is not None and self.site.nearest_waypoint(x, y) != spot[0]:
+            del self._put_back[robot]
+            return None
+        return spot
 
     def on_board(self, order_ids: list[str]) -> None:
         self.board = list(order_ids)
@@ -275,14 +282,20 @@ class ScenarioJudge:
     def _check_unheld(self, t: float) -> None:
         current = set()
         for robot, (x, y) in self._positions().items():
-            if self._still_on_start_cell(robot, x, y) or self._just_put_back(robot, x, y, t):
+            spot = self._put_back_spot(robot, x, y)
+            if spot is None and self._still_on_start_cell(robot, x, y):
                 continue
             zone = self._zone_of_pose(x, y)
+            if self.holders.get(zone) == robot and spot is not None:
+                del self._put_back[robot]  # 잡았다
             if self.site.distance_to_zone(x, y, zone) > EPS or self.holders.get(zone) == robot:
+                continue
+            if spot is not None and t < spot[2]:
                 continue
             key = (robot, zone)
             current.add(key)
-            since = self._unheld_since.setdefault(key, t)
+            # 놓인 뒤 계속 못 잡았으면 놓은 시각부터 잰다
+            since = self._unheld_since.setdefault(key, spot[1] if spot is not None else t)
             if t - since >= self.grace_s and key not in self._unheld_counted:
                 self._unheld_counted.add(key)
                 self.unheld_violations += 1

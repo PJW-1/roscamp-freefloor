@@ -161,19 +161,24 @@ class ScenarioMonitorNode(Node):
                         f"accepted={response.accepted} {' '.join(response.released_zones)}")
 
     def _reinstate_put_back_robots(self, t: float) -> None:
-        """앞선 치우기가 받아들여지고 로봇이 코스에 다시 보일 때 부른다."""
-        while self._reinstates and self._reinstates[0][0] <= t:
-            _, robot, waypoint, basket = self._reinstates[0]
-            if (not self._cleared.get(robot) or self.judge.off_course(robot)
+        """앞선 치우기가 받아들여지고 로봇이 코스에 다시 보일 때 부른다.
+
+        때가 된 항목을 모두 본다. 준비 안 된 항목은 남기고 다른 로봇 것은 처리한다.
+        """
+        waiting = []
+        for item in self._reinstates:
+            at_s, robot, waypoint, basket = item
+            if (at_s > t or not self._cleared.get(robot) or self.judge.off_course(robot)
                     or not self._reinstate.service_is_ready()):
-                return
-            self._reinstates.pop(0)
+                waiting.append(item)
+                continue
             self._cleared[robot] -= 1
             self.judge.put_back(t, robot, waypoint)
             self.judge.note(t, robot, "OPERATOR_REINSTATE", f"basket={basket}")
             future = self._reinstate.call_async(Reinstate.Request(
                 robot_id=robot, basket=basket, note="operator_reinstate"))
             future.add_done_callback(lambda f, r=robot: self._on_reinstated(r, f))
+        self._reinstates = waiting
 
     def _on_reinstated(self, robot: str, future) -> None:
         response = future.result()
