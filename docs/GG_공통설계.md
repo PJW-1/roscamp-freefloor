@@ -467,18 +467,20 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 - 프로토타입을 실행한 PC: Jazzy, colcon, pytest 7.4.4. rmw_cyclonedds 없음. 실행과 CI 기준은 Fast DDS(`rmw_fastrtps_cpp`)다. 옛 결과는 WSL2+CycloneDDS였으므로 환경이 다르다고 밝힌다. 실물에 쓸 DDS는 T-10 시험 뒤에 정한다.
 - 결과를 부풀리지 않는다. 실행 안 한 것은 안 했다고 쓴다.
 
-## 10. HW와 실행 위치 (`시스템_아키텍처.html` v17 기준)
+## 10. HW와 실행 위치 (`시스템_아키텍처.html` v18 기준)
 | 장치 | 대수 | 구성 | 실행하는 소프트웨어 | 네트워크 |
 |---|---|---|---|---|
 | 관제 PC | 1대 이상 | 사양 미정 | 화면, central, FMS(`fleet_manager`) | 유선 |
 | 공유기 | 전용 1대 | 기종과 위치 미정 | 없음 | |
 | Pinky Pro (pinky1~3) | 3대 | Raspberry Pi 4B(메모리 4 GB), 라이다 RPLidar C1, 구동 모터 Dynamixel 2개, 카메라 OV5647, 관성 센서 BNO055, 배터리 센서 ADC | pinky_bringup, pinky_fsm, pinky_dock, Nav2 + AMCL | Wi-Fi |
-| JetCobot 작업공간 (arm1, arm2) | 2대 | MyCobot 280(6축 + 그리퍼), 카메라 640×480, 팔마다 팔 PC 1대(사양 미정) | 팔마다 arm_control, arm_vision. workcell은 두 팔 PC 중 1곳(13절). v17은 arm_planner와 Vision 서버를 제안한다 | 유선 |
-| JetCobot 출고 구역 (arm3) | 1대 | 같은 구성 | arm_control(`swap_basket` 제공) | 유선 |
+| JetCobot 작업공간 (arm1, arm2) | 2대 | MyCobot 280(6축 + 그리퍼), 카메라 640×480, 팔마다 팔 PC 1대(사양 미정) | 팔마다 arm_control, arm_vision. workcell은 두 팔 PC 중 1곳(13절). v18은 이것을 `arm_planner (workcell)`(임시 이름)로 그리고, 두 팔의 배분과 궤적 계획, Vision 결과 받기를 맡긴다. Vision 서버는 제안 | 팔 PC 유선, 로봇 Wi-Fi |
+| JetCobot 출고 구역 (arm3) | 1대 | 같은 구성 | arm_control(`swap_basket` 제공) | 팔 PC 유선, 로봇 Wi-Fi |
 
 - 사양을 실물로 확인한 것은 핑키 1대(`pinky_06c5`)와 제트코봇 1대(`jetcobot_126b`)뿐이다. 나머지 4대는 같다고 가정했다.
 - 전용 공유기 1대로 묶기로 했다(2026-11-04). 지금은 로봇마다 자기 핫스팟을 쓰고 있다.
 - 실행 위치는 2026-11-04에 정했다: Nav2는 핑키 Pi, 상품 인식과 workcell은 팔 PC.
+- 네트워크: v18은 "PC 6대는 전부 유선, 로봇 6대(핑키 3, 제트코봇 3)는 Wi-Fi"(2026-11-05 확인)라고 적는다. 제트코봇의 Raspberry Pi 5는 그림에 없고, 고정 장비라 유선으로 잇기를 권한다. 이전 판의 "유선"은 팔 PC만 가리켰다.
+- 관제 PC 행은 이 문서의 배정이다. v18은 서버 구역에 central, DB, FMS, Vision 서버를 그리고, PC 6대의 역할 배정이 정해지면 다시 그린다고 적었다. FMS 안은 core, pinky, arm 세 모듈이고 arm은 `fill_basket`·`swap_basket` 클라이언트다(0절의 대응). workcell은 FMS에 합치지 않는다.
 
 ## 11. 코드의 현재 상태 (저장소 `PJW-1/roscamp-repo-2`, 브랜치 `fms-work-order`, 2026-11-06)
 **FMS는 코드에서도 두 모듈로 나뉘었다.** 11-05에 `FleetCore`와 `fleet_manager_node`를 `orchestrator_core`, `traffic_core`, `FmsCore`, `fms_node`로 나눴고, 11-06 개선 지시서 0.5번에서 이름과 폴더를 역할에 맞췄다. 지금은 `pc/fleet_core/fleet_core/` 안에 `manager.py`(`FleetManager`), `orders/orchestrator.py`(`OrderOrchestrator`), `traffic/`(`controller.py`의 `TrafficController`와 `mission.py`, `recovery.py`, `zones.py`, `selector.py`, `deadlock.py`, `lane_map.py`), `common/`(`commands.py`, `params.py`, `contract.py`, `contract_check.py`), `data/`가 있고, 노드는 `pc/fleet_manager/fleet_manager/fleet_manager_node.py`(노드 이름 `fleet_manager`)다. 바꾼 이름의 전체 표는 `docs/worklog_2026-11-06.md`에 있다. 지도 파일의 키 이름(`nodes:` → `waypoints:`, 옛 키는 로더가 거절한다)과 heartbeat의 이름 말고 동작은 바꾸지 않았다. 전체 시험은 경계 시험 2건이 늘어 875건이 모두 통과했고, 로봇 2대 전수 검사 다섯 경우의 숫자가 0.5 전과 같다. 옛 호출 방식을 쓰는 시험을 그대로 돌리려고 시험 폴더에 얇은 `legacy_core.py`만 남겼다. 경계는 `test_fms_boundary.py`가 import 그래프로 검사한다: `traffic` 패키지의 어느 모듈도 `orders`나 `manager`에 닿지 않는다.
@@ -583,5 +585,23 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 | `08_무엇을_개발했나_설명` | 이전 구조의 코드와 시험 결과를 설명한다(11절). SR 62개 기준의 번호를 쓴다. |
 | 저장소 `README` | 양팔 규칙(`dual_arm_overlaps`)은 이전 정의를 따른다(6절, 11절). 나머지는 이 문서와 같다. |
 | `05_관제_시뮬레이션_레인.html` | 조기 해제와 근접의 정의는 같다(`safety_meter.py`). 지도와 숫자는 그 시뮬의 것이다. |
-| `시스템_아키텍처.html` v17 | 이 문서와 같은 계층을 쓴다. FMS 안을 core, pinky, arm 세 모듈로 그렸다(0절의 대응). workcell을 FMS에 합치고 arm_planner를 두는 그림이지만, 코드는 `/workcell/fill_basket` 클라이언트만 둔다(지시서 9번). "모듈 분리를 시작하지 않았다", "공통 설계 문서는 합치기 전 구조"라는 문장은 이제 맞지 않는다. MAP 부분은 이전 격자 지도이고 3절과 다르다. |
+| `시스템_아키텍처.html` v18(2026-11-06, Drive 수정 2026-11-05 15:23 UTC) | 이 문서와 같은 계층을 쓴다. FMS 안을 core, pinky, arm 세 모듈로 그렸다(0절의 대응). workcell은 FMS에 합치지 않고 FMS는 `/workcell/fill_basket` 클라이언트만 둔다(코드와 같다). 코드 이름을 0.5 전 이름(`orchestrator_core`, `traffic_core`, `FmsCore`, `fms_node`)으로 적는다. MAP 부분은 이전 격자 지도(구역 16개, 3대 전수 149,238 상태)이고 3절과 다르다. 11-06 결정(머리 줄)은 들어 있지 않다(FollowPath가 나오지 않는다). |
 | `교통파트_지금할일_2026-11-05` | 지도 회의에 요소 하나만 넣자고 했고 기본 지도에는 둘(양방향 구간, 교차)이 있다(3절). `/fleet/assignments`에 필드를 더하자고 했고 코드는 `/fleet/robots`를 따로 둔다(지시서 4번). 코드 이름 `fleet_core`를 바꾸자고 했고 그대로 뒀다(11절). 표의 `(149238, 0, 0)`은 이전 지도의 값이다. |
+| Drive `Pinky Pro 3대 시뮬레이션 관제 정리 (2026-11-05)`, 코드 `~/roscamp_ws/sim/pinky_multi_sim` | Gazebo 3대 시뮬의 관제다. 별개 코드이고 커밋되지 않았으며 fleet_core와 통합하지 않는다. 자유 선 경로와 연속 공간 예약을 쓴다. 규칙만 옮겨 적는 출처다(아래). |
+
+**Gazebo 시뮬(pinky_multi_sim)과의 관계** (11-06 결정 1, 2. 그 폴더는 읽기만 했다)
+
+옮긴 규칙:
+
+| 규칙 | pinky_multi_sim | fleet_core |
+|---|---|---|
+| 멈춤 감시 | `traffic.py` `_watch_for_stall`. `STALL_S` 6, `MOVED_M` 0.02 | `traffic/controller.py` `_watch_stall`. `stall_s` 6, `stall_move_m` 0.05(위치 잡음 때문에 올림). 지수 평균(`stall_smooth_s`)과 도킹용 `dock_stall_s` 15는 더한 것 |
+| 도착 판정 | `goal_done`. 성공 보고라도 선 끝이고 끝점 `ARRIVED_M` 0.15 안이어야 도착 | `_judge_arrival`. `arrival_tolerance_m` 0.15, 보고가 늦을 때 `arrival_settle_s` 1 |
+| 대기-vs-우회 | `_blocked`, `_expected_wait`. 앞 로봇이 작업 중이면 남은 시간, 주행 중이면 기다린 시간, 고장이면 무한. 기다리는 사슬의 맨 앞을 본다. 속도 0.25 m/s | `traffic/detour.py`. 스테이션·대기 칸은 `station_wait_estimate_s` 30(교통은 팔 작업 시간을 모른다), 구역을 기다리면 기다린 시간(사슬은 보지 않는다), `detour_speed_mps` 0.2. 다음 구역을 청할 때만 다시 고른다 |
+| 물체 앞 정지 | 관제가 라이다로 물체를 찾고, 돌 길이 없으면 `ABANDON_S` 15초 뒤 임무를 포기 | 로봇이 `BLOCKED`를 보고하면 5초에 레인 표시, 60초에 ERROR와 자동 격리(`traffic/blocking.py`) |
+
+옮기지 않은 것: sim의 "서로 기다리면 늦게 시작한 임무가 비킨다"(`_yields_in`, `_give_way`). 교착은 지금 방식(`DEADLOCK_RETREAT`)이다.
+
+아직 옮기지 않은 것(파트 7, FSM 담당 몫): 경로 만들기, 끝 근처 재전송(`REFRESH_WITHIN_M` 0.15 안이면 0.5초마다), FollowPath 호출(`missions.py`). 지금 fleet_core에는 `FollowPath`가 없다.
+
+옮기지 않는 것(지시서 9절): obstacle_watch의 라이다 합치기(감지는 로봇이 한다), 자유 선 경로 + 연속 공간 예약(`free_path.py`, `_extend`), Gazebo를 CI나 시나리오에 넣는 것. fleet_core와 `.github/workflows/ci.yml`에 해당 코드가 없다.
