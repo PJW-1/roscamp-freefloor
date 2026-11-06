@@ -120,8 +120,8 @@ def test_a_robot_far_off_its_lane_is_reported_once():
     assert codes(core.tick()).count("LANE_ERROR") == 1
 
 
-def test_a_robot_off_its_lane_on_the_next_goal_is_reported_again():
-    """사이에 보고 없이 다음 목표가 나갈 수 있어, 새 목표를 알리는 것은 이것뿐이다."""
+def test_a_robot_off_its_lane_again_on_the_next_lane_is_reported_again():
+    """세웠다가 돌아오면 같은 목표를 다시 보내고, 다음 레인에서 다시 벗어나면 또 알린다."""
     core, _ = make({"r1": "W"})
     send(core, "r1", "OUTBOUND")
     first = move_of(core.tick(), "r1")[-1]
@@ -137,13 +137,14 @@ def test_a_robot_off_its_lane_on_the_next_goal_is_reported_again():
     report_beside("W", first.target_id)
     assert codes(core.tick()).count("LANE_ERROR") == 1
 
-    # 떠난 지점을 지났으므로 다음 구역을 요청하고 그다음 목표를 보낼 수 있다.
+    # 레인에 돌아오면 같은 지점으로 다시 간다.
     place(core, "r1", "W", core.params.release_distance_m + 0.05, first.target_id)
-    core.tick()
+    again = move_of(core.tick(), "r1")[-1]
+    assert again.target_id == first.target_id and again.goal_id != first.goal_id
     place(core, "r1", first.target_id)
-    core.on_move_result("r1", first.goal_id, True, "")
+    core.on_move_result("r1", again.goal_id, True, "")
     second = move_of(core.tick(), "r1")[-1]
-    assert second.goal_id != first.goal_id
+    assert second.target_id != first.target_id
 
     report_beside(first.target_id, second.target_id)
     assert codes(core.tick()).count("LANE_ERROR") == 1

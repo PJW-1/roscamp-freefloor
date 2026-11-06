@@ -174,6 +174,37 @@ def test_an_acute_turn_is_not_passed_before_the_robot_gets_round_it(a, b, along,
     assert m.path[m.idx] == expect
 
 
+@pytest.mark.parametrize("a, b, along, expect", [
+    ("F0", "T2", 0.25, ("F0", "T2")), ("F0", "T2", 0.5, ("F0", "T2")),
+    ("T2", "T1", 0.25, ("T2", "T1"))])
+def test_the_lane_error_is_measured_on_the_lane_before_an_acute_turn(a, b, along, expect):
+    """이탈 기준 레인(파트 3)도 예각에서 다음 레인으로 앞서 넘어가면 안 된다. 넘어가면 멈춘다."""
+    feature = load_lane_map(REPO / "sim/fake_robots/maps/feature_map.yaml")
+    core = TrafficController(feature, replace(load_params(), lane_goal_mode="path"), ["r1"],
+                             lambda: 0.0)
+    m = core._missions["r1"]
+    m.path, m.idx = ["O", "F0", "T2", "T1", "QW"], 2
+    m.goal = _Goal(MOVE, 1, 4)
+    lane, (x, y) = feature.lane(a, b), feature.waypoint_pose(a)
+    m.x, m.y = x + lane.ux * along, y + lane.uy * along
+    assert core._error_lane(m) == expect
+
+
+def test_a_report_pushed_sideways_before_a_turn_is_measured_on_the_lane_it_is_on():
+    """보고가 진행 방향 왼쪽으로 0.3 m 밀렸다(파트 3 drift, e2e 시험의 자리). 꺾인 다음 레인으로
+    기준을 옮기면 돌아온 보고를 그 레인에서 재게 되어 끝내 레인에 돌아오지 못한다."""
+    from sim_world import SimWorld
+    site = SimWorld(seed=7).site
+    core = TrafficController(site, replace(load_params(), lane_goal_mode="path"), ["r1"],
+                             lambda: 0.0)
+    m = core._missions["r1"]
+    m.path, m.idx = [(4, 3), (5, 3), (6, 3), (6, 4), (6, 5)], 1
+    m.goal = _Goal(MOVE, 1, 4)
+    lane = site.lane((5, 3), (6, 3))
+    m.x, m.y = lane.ax + 0.09, lane.ay + 0.3
+    assert core._error_lane(m) in (((4, 3), (5, 3)), ((5, 3), (6, 3)))
+
+
 def test_a_running_goal_is_extended_round_the_corner_when_the_next_zone_comes():
     core, first, sent = extend_from_p5("path")
     assert first.target_id == "P-6"

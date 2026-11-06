@@ -101,9 +101,10 @@ class TrafficRecovery:
 
     def _finish_recoveries(self, now: float) -> None:
         for m in self._missions.values():
-            # 마지막 보고가 LOCALIZING이면 옛 자세로 끝내지 않는다
+            # 마지막 보고가 LOCALIZING이면 옛 자세로 끝내지 않는다.
+            # 레인을 벗어난 동안은 자세를 확인할 수 없어 기다린다.
             if (m.live and m.comm == RECOVERING and now >= m.recover_at
-                    and m.robot_state != LOCALIZING):
+                    and m.robot_state != LOCALIZING and not self._still_off_lane(m)):
                 self._finish_recovery(m)
 
     def _finish_recovery(self, m: _Mission) -> None:

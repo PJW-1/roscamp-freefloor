@@ -89,15 +89,27 @@ class TrafficPath:
         예각에서는 들어오는 레인 위의 로봇도 나가는 레인에 투영하면 d 넘게 앞서 보인다.
         point는 목표가 꺾임에서 끝나 이 경우가 없다.
         """
-        i = m.idx
+        return self._corner_turned(m, m.idx)
+
+    def _corner_turned(self, m: _Mission, i: int) -> bool:
         if not self._follows_path or i == 0:
             return True
         return (self._gap_to(m, (m.path[i], m.path[i + 1]))
                 <= self._gap_to(m, (m.path[i - 1], m.path[i])))
 
-    def _error_lane(self, m: _Mission) -> tuple:
-        """이탈을 재는 레인. point는 목표 직전 레인, path는 지금 달리는 레인이다."""
-        last = (m.path[m.goal.target_idx - 1], m.path[m.goal.target_idx])
-        if not self._follows_path:
-            return last
-        return self._running_lane(m) or last
+    def _path_error_lane(self, m: _Mission, first: int) -> tuple:
+        """path 목표의 이탈 기준 레인: 진행 인덱스 앞뒤 두 레인 중 가까운 쪽(같으면 뒤).
+
+        꺾임을 넘는 목표에서 "시작점을 지난 마지막 레인"(s >= 0)을 쓰면, 꺾임 앞에서 옆으로
+        밀린 보고나 예각에 다가오는 로봇이 다음 레인에 앞서 걸린다. 진행 인덱스는 이 보고로
+        _track_progress가 넘길 곳까지 셈한다(해제 거리만큼 지나야 넘고 예각도 막는다).
+        """
+        k = min(m.idx, m.goal.target_idx)
+        while k < m.goal.target_idx:
+            s, _ = self.site.lane_progress(m.path[k], m.path[k + 1], m.x, m.y)
+            if s <= self.params.release_distance_m or not self._corner_turned(m, k):
+                break
+            k += 1
+        last = min(k, m.goal.target_idx - 1)
+        lanes = [(m.path[i], m.path[i + 1]) for i in range(max(first, last - 1), last + 1)]
+        return min(reversed(lanes), key=lambda lane: self._gap_to(m, lane))

@@ -880,6 +880,36 @@ def test_orders_for_one_arm_do_not_need_the_other():
     assert check(j, "dual_arm_overlaps")["arms_never_placing"] == []
 
 
+# -- 레인 이탈 중 해제 ---------------------------------------------------------------------
+
+
+def drifting(**expect):
+    sc = scenario(faults=[{"at_s": 10, "robot": "pinky1", "type": "drift", "duration_s": 5,
+                           "offset_m": 0.3}], orders_shipped_min=1, **expect)
+    return ScenarioJudge(SITE, sc, margin_m=0.13, grace_s=1.0)
+
+
+def release_far(j, t, robot="pinky1"):
+    """몸이 확실히 벗어난 뒤의 해제. 다른 검사에는 걸리지 않는다."""
+    j.on_true_pose(robot, *at(OTHER))
+    j.on_zones(t - 0.5, {ZONE: robot})
+    j.on_zones(t, {ZONE: ""})
+
+
+@pytest.mark.parametrize("t, robot, counted", [
+    (10.5, "pinky1", 0),  # 아직 FMS가 알아챌 수 없다
+    (12.0, "pinky1", 1),
+    (14.9, "pinky1", 1),
+    (15.5, "pinky1", 0),  # 이탈이 끝났다
+    (12.0, "pinky2", 0),
+])
+def test_a_release_from_a_drifting_robot_is_counted(t, robot, counted):
+    j = drifting()
+    release_far(j, t, robot)
+    result = check(j, "released_while_off_lane", t)
+    assert result["value"] == counted
+    assert result["ok"] is (counted == 0)
+    assert check(j, "released_without_position_check", t)["value"] == 0
 # ---- 자동 격리(지시서 5.5) -------------------------------------------------------------------
 
 
@@ -930,3 +960,17 @@ def test_detours_around_isolated_count_only_detours_naming_an_isolated_robot():
 def test_detours_around_isolated_is_not_checked_by_default():
     j = judge()
     assert check(j, "detours_around_isolated") == {"value": 0, "minimum": 0, "ok": True}
+
+
+def test_detours_around_isolated_see_every_holder_once_per_event():
+    j = judge(detours_around_isolated_min=1, all_orders_finished=False)
+    j.on_event(1.0, "ERROR", "pinky1", "ROBOT_ISOLATED", "NAV_ABORTED: stopped where it is")
+    j.on_event(2.0, "INFO", "pinky2", "DETOUR",
+               "avoids F1 held by pinky3, standing 16 s; "
+               "F2 held by pinky1, standing inf s; new path")
+    assert check(j, "detours_around_isolated")["value"] == 1
+    j.on_event(3.0, "ERROR", "pinky3", "ROBOT_ISOLATED", "NAV_ABORTED: stopped where it is")
+    j.on_event(4.0, "INFO", "pinky2", "DETOUR",
+               "avoids F1 held by pinky3, standing inf s; "
+               "F2 held by pinky1, standing inf s; new path")
+    assert check(j, "detours_around_isolated")["value"] == 2

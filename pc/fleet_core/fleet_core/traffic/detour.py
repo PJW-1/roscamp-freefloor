@@ -6,7 +6,8 @@
   - 서 있는 로봇이 쥔 구역(충돌 쌍 포함)은 예상 대기 시간 × detour_speed_mps. 무한이면 못 지난다.
   - 달리는 로봇이 쥔 구역은 벌점이 없다.
 서 있음과 달림(_standing_wait_s):
-  - 무한: 고장(ERROR, OUT_OF_SERVICE), 두절이나 복구 확인, 막힘 기록, BLOCKED 보고.
+  - 무한: 고장(ERROR, OUT_OF_SERVICE), 두절이나 복구 확인, 막힘 기록, BLOCKED 보고,
+    레인 이탈로 섬(파트 3, 돌아올 때를 모른다).
     막힘 기록 없이 목표를 둔 채 줄 선 BLOCKED(파트 4 줄 서기)는 줄 선 시간이다.
     줄 서기 시간 초과(blocked_timeout_s)가 지났거나 앞 로봇이 없으면 무한이다.
   - 달린다: 열린 이동이나 도킹 goal이 있다.
@@ -46,7 +47,8 @@ class TrafficDetour:
         queued = (m.robot_state == BLOCKED and m.goal is not None and m.queue_since is not None
                   and self._clock() - m.queue_since < self.params.blocked_timeout_s
                   and self._queued_behind(m))  # 시간 초과나 앞차가 떠난 낡은 시계는 빼고
-        if m.fault or m.comm or m.block or (m.robot_state == BLOCKED and not queued):
+        if (m.fault or m.comm or m.block or (m.robot_state == BLOCKED and not queued)
+                or m.off_lane_since is not None):
             return math.inf
         if queued:
             return max(0.0, self._clock() - m.queue_since)  # 줄 서기: 줄 선 시간
