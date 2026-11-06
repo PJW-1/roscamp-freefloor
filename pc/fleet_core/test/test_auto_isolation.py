@@ -429,13 +429,28 @@ def test_requeued_orders_keep_registration_order_ahead_of_never_bound_ones():
 
 
 def test_a_clear_before_the_swap_result_requeues_at_once_and_a_late_take_only_warns():
-    """정책: confirm_clear는 늘 되돌린다. ARM_NO_RESULT 뒤와 같은 규칙이고 창은 약 5초다."""
-    core, _, swap, _ = swapping_then_isolated()
-    core.on_robot_removed("r1")
-    out = core.take_output()
-    assert codes(out).count("ORDER_REQUEUED") == 1
-    assert core.order_of("r1") == ""
+    """정책: 교환 결과를 모르는 주문도 confirm_clear는 되돌린다. 늦은 took_full은 경고만 낸다."""
+    now = [0.0]
+    core = FleetManager(grid_site(), load_params(), ["r1"], lambda: now[0])
+    report(core, "r1", (4, 3))
+    core.on_order_board("RUN", [O1])
+    out = drive(core, "r1", lambda: core.robot_view("r1")["order"] == "O-001")
+    core.on_fill_result(cmds(out, "FillCmd")[0].goal_id, True, {"A": 1, "C": 1}, {})
+    out = drive(core, "r1", lambda: core.robot_view("r1")["phase"] == "SWAPPING")
+    out += core.tick()
+    swap = cmds(out, "SwapCmd")[0]
+    core.traffic.on_robot_fault("r1", "RECOVERY_CONFLICT")
+    core._pump()
+    seen = core.tick()
+    assert "ORDER_REQUEUED" not in codes(seen), "held for the swap result"
+    core.confirm_clear("r1", core.zones.held_by("r1"), "lifted")
+    seen = core.tick()
+    assert codes(seen).count("ORDER_REQUEUED") == 1
+    assert core.robot_view("r1")["order"] is None
+    assert [o.order_id for o in core.orchestrator._pending()] == ["O-001"]
+    assert len(core.orchestrator._open_calls) == 1, "a call for it is open again"
     core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
-    out = core.take_output()
-    assert "ARM_LATE_RESULT" in codes(out)
-    assert not cmds(out, "ReportOrderCmd") and core.shipped == 0
+    late = list(core._out)
+    assert [(type(c).__name__, getattr(c, "code", "")) for c in late] == [
+        ("EventOut", "ARM_LATE_RESULT")]
+    assert core.shipped == 0
