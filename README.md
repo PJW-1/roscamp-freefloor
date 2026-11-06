@@ -166,8 +166,8 @@ cat /tmp/run1/summary.json
 | `stock_shortage` | 재고 0인 품목, 기록만 있고 실물 없는 품목, 용량 초과 주문 | PARTIAL과 HELD, `OUT_OF_STOCK`과 `STOCK_MISMATCH` 구분 |
 | `stuck_robot` | 돌아오던 로봇이 대로(양방향 구간)에서 영구 정지 | 뒤따르는 로봇이 막히고 `COMM_LOST`, `ZONE_WAIT_LONG`이 남 |
 | `operator_recovery` | 팔 고장 3회로 ERROR, 관리자가 로봇을 치움. 다음 로봇도 담는 도중 치움(팔 취소가 느림) | `ORDER_REQUEUED` 후 앞으로 되돌아가고, 세 번째 로봇이 앞 작업의 취소 결과를 기다렸다가 전부 끝냄 |
-| `blocked_lane` | `basic_orders`에 pinky1 앞 물체(8초부터 15초 동안), pinky3은 처음 2초 `LOCALIZING` | 5초에 `LANE_BLOCKED`와 목표 취소, 물체가 사라지면 `LANE_CLEARED` 뒤 같은 목표로 이어 가 전부 출고 |
-| `off_lane` | `basic_orders`에 pinky1의 보고 위치만 레인 옆으로 0.3 m 밀림(7초부터 8초 동안) | `LANE_ERROR`와 목표 취소, 구역 유지, 뒤 로봇은 그 구역 앞에서 대기, 보고가 돌아오면 `BACK_ON_LANE` 뒤 같은 목표로 이어 가 전부 출고, 이탈 중 해제 0 |
+| `blocked_lane` | `basic_orders`에 pinky1 앞 물체(8초부터 15초 동안), pinky3은 처음 2초 `LOCALIZING`. 의도: 5초에 막힘 표시와 목표 취소, 물체가 사라지면 같은 목표로 이어 감 | `LANE_BLOCKED` 1번, `LANE_CLEARED` 1번, `BLOCKED_TOO_LONG`·`GOAL_RETRY`·`GOAL_STALLED`·`GOAL_FAILED` 0번, 6건 전부 출고, 구역 검사 |
+| `off_lane` | `basic_orders`에 pinky1의 보고 위치만 레인 옆으로 0.3 m 밀림(7초부터 8초 동안). 의도: 목표 취소와 구역 유지, 뒤 로봇은 그 구역 앞에서 대기, 보고가 돌아오면 같은 목표로 이어 감 | `LANE_ERROR` 1번, `BACK_ON_LANE` 1번, `OFF_LANE`·`GOAL_FAILED` 0번, 6건 전부 출고, `released_while_off_lane` 0, 구역 검사 |
 
 `expect` 항목은 다음과 같습니다. 숫자는 정확히 일치해야 통과합니다(`_min`으로 끝나는 것은 그 값 이상).
 
@@ -183,7 +183,7 @@ cat /tmp/run1/summary.json
 | `zone_holder_max` | 한 구역에 실제로 동시에 있었던 로봇 수의 최댓값 |
 | `released_without_position_check` | 로봇이 아직 구역을 벗어나지 않았는데 해제된 횟수 |
 | `unheld_zone_pose` | 잠그지 않은 구역에 로봇이 있었던 횟수 |
-| `released_while_off_lane` | `drift`로 보고가 레인 밖인 동안(시작 1초 뒤부터) 그 로봇이 놓은 구역 수 |
+| `released_while_off_lane` | 시나리오 일정으로 판정합니다. `drift` 시작 1초 뒤부터 끝나기 전까지([시작 + 1초, 끝)) 그 로봇이 놓은 구역 수이고, 실제 보고가 어땠는지는 보지 않습니다 |
 | `timed_out` | 제한 시간까지 끝나지 못함. 기본 false이고, 일부러 끝나지 않는 시나리오만 true로 적습니다 |
 | `unexpected_errors` | `events_include`, `event_counts`에 없는 코드의 ERROR 이벤트 수. 기본 0 |
 | `order_results` | 주문별 최종 결과. 예: `{O-001: SHIPPED, O-003: HELD}` |
