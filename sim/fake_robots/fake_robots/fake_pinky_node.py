@@ -51,6 +51,7 @@ class _Goal:
         self.success = False
         self.reason = ""
         self.abort_at: float | None = None
+        self.abort_from = None  # 쓴 고장 일정
         self.end_at = 0.0
         self.start_at = 0.0
         self.error = (0.0, 0.0, 0.0)
@@ -164,7 +165,7 @@ class FakePinkyNode(Node):
     def _end(self, goal: _Goal, success: bool, reason: str = "") -> None:
         if (goal.abort_at is not None and not goal.done.is_set()
                 and reason != MoveTo.Result.REASON_NAV_ABORTED):
-            self._faults.give_back_nav_abort(goal.target_id)  # 대체·취소되면 다음 목표로
+            self._faults.give_back_nav_abort(goal.abort_from)  # 대체·취소되면 다음 목표로
         goal.finish(success, reason)
         if self._active is goal:
             self._rest = (RobotState.STATE_DOCKED if goal.kind == "dock" and success
@@ -190,6 +191,7 @@ class FakePinkyNode(Node):
                 if self._faults.take_nav_abort(t, goal.target_id):
                     eta = self._motion.remaining() / self._cfg.speed_mps
                     goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
+                    goal.abort_from = self._faults.last_taken
             else:
                 self._motion.clear_target()
                 goal.end_at = t + self._dock_cfg.duration_s

@@ -605,3 +605,94 @@ def test_a_holder_freed_from_a_placement_hold_gets_a_path_from_where_it_stands()
     assert again and again[0].target_id == first.target_id
     assert again[0].path[0][:2] == pytest.approx((x, y))
     assert again[0].path[-1][:2] == pytest.approx(first.path[-1][:2])
+
+
+def put_back_before_t2(short=0.19):
+    """특징 지도(F0→T2→T1 150도)에서 r2를 치우고 F0→T2 위 T2 앞 short m에 다시 놓는다.
+
+    r2에게 WORK를 주어 T2→T1로 꺾게 한다. 놓은 틱의 출력과 놓은 자리를 돌려준다.
+    """
+    import math
+    from dataclasses import replace
+
+    import yaml
+    from fleet_core.traffic.controller import TrafficController
+    from fleet_core.traffic.lane_map import LaneMap
+    from test_lane_path import REPO
+
+    data = yaml.safe_load((REPO / "sim/fake_robots/maps/feature_map.yaml").read_text())
+    for wp in data["waypoints"]:
+        if wp["id"] == "F0":
+            wp["x"], wp["y"] = 1.399, 0.928
+    site = LaneMap(data, yaml.safe_dump(data))
+    a, b = site.lane("F0", "T2"), site.lane("T2", "T1")
+    assert math.degrees(math.acos(a.ux * b.ux + a.uy * b.uy)) == pytest.approx(150, abs=0.1)
+    now = [0.0]
+    core = TrafficController(site, replace(load_params(), lane_goal_mode="path"),
+                             ["r1", "r2"], lambda: now[0])
+    n = core.params.release_confirm_samples
+    for robot, node in (("r1", "O"), ("r2", "P-3")):  # r1은 TUN과 겹치지 않는 자리
+        for _ in range(n):
+            core.on_robot_state(robot, *site.waypoint_pose(node), 0.0, "IDLE")
+    core.on_run_mode("RUN")
+    core.tick()
+    assert core.confirm_clear("r2", core.robot_view("r2")["held"], "lifted") is not None
+    core.tick()
+    assert core.reinstate("r2")
+    tx, ty = site.waypoint_pose("T2")
+    x, y = tx - a.ux * short, ty - a.uy * short
+    for _ in range(n):
+        core.on_robot_state("r2", x, y, 0.0, "IDLE")
+    core.on_dispatch(1, "WORK", "r2")
+    out = core.tick()
+    assert core.robot_view("r2")["path"][:2] == ["T2", "T1"]
+    assert site.lane_progress("T2", "T1", x, y)[0] > core.params.arrival_tolerance_m, \
+        "the case: it looks past T2 on T2 to T1"
+    return core, out, (x, y)
+
+
+def test_the_first_path_after_a_reinstate_before_a_sharp_turn_keeps_the_first_waypoint():
+    """예각 첫 지점(T2) 앞에 다시 놓인 로봇의 path는 T2를 건너뛰지 않는다(파트 7 P2)."""
+    from test_lane_path import moves
+
+    core, out, (x, y) = put_back_before_t2()
+    t2 = core.site.waypoint_pose("T2")
+    for _ in range(3):  # 놓인 자리에서 달리기 시작한 보고에도 T2를 지나지 않는다
+        for _ in range(core.params.release_confirm_samples):
+            core.on_robot_state("r2", x, y, 0.0, "MOVING")
+        out += core.tick()
+    sent = moves(out, "r2")
+    assert sent
+    for cmd in sent:
+        assert any(p[:2] == pytest.approx(t2) for p in cmd.path), "T2 is not cut"
+    assert core.robot_view("r2")["waypoint"] == "T2"
+    assert "LANE_ERROR" not in codes(out)
+
+
+def test_a_robot_put_back_short_of_a_waypoint_and_pushed_off_the_lane_in_stops():
+    """N 앞 0.14 m에 다시 놓인 로봇이 진입 레인(P-6→N) 옆으로 lane_error_warn_m보다
+    밀리면 LANE_ERROR로 선다(파트 7 P1). 레인 위는 위 시험이 본다."""
+    from test_lane_path import make as make_path
+
+    core, now = make_path({"r1": "P-6", "r2": "P-5"})
+    assert core.confirm_clear("r2", core.robot_view("r2")["held"], "lifted") is not None
+    core.tick()
+    assert core.reinstate("r2")
+    lane, (nx, ny) = core.site.lane("P-6", "N"), core.site.waypoint_pose("N")
+    x, y = nx - lane.ux * 0.14, ny - lane.uy * 0.14
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("r2", x, y, 0.0, "IDLE")
+    out = core.tick()
+    assert core.robot_view("r2")["on_map"] and core.robot_view("r2")["path"][0] == "N"
+    off = core.params.lane_error_warn_m + 0.1
+    px, py = x - lane.uy * off, y + lane.ux * off
+    assert core.site.lane_progress("N", core.robot_view("r2")["path"][1], px, py)[0] < 0, \
+        "the case: short of N"
+    for _ in range(3):
+        for _ in range(core.params.release_confirm_samples):
+            core.on_robot_state("r2", px, py, 0.0, "MOVING")
+        out += core.tick()
+    errors = [e for e in cmds(out, "EventOut") if e.code == "LANE_ERROR"]
+    assert len(errors) == 1 and errors[0].robot == "r2"
+    assert "P-6 to N" in errors[0].detail
+    assert core.status_view("r2")["fault_reason"] == "OFF_LANE"
