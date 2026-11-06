@@ -149,10 +149,7 @@ class FleetManagerNode(Node):
         self.core.on_order_board(adapters.order_board_mode(msg), adapters.order_board_orders(msg))
 
     def _on_confirm_clear(self, request, response):
-        robot, zone_ids, note = adapters.confirm_clear_args(request)
-        released = self.core.confirm_clear(robot, zone_ids, note)
-        if released is not None:
-            self._goals.forget_lost(robot)  # 치운 로봇의 잃은 결과는 더 묻지 않는다
+        released = self.core.confirm_clear(*adapters.confirm_clear_args(request))
         return adapters.confirm_clear_response(response, released, self.core.last_clear_reason)
 
     # ------------------------------------------------------------------ output loop

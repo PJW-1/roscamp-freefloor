@@ -66,22 +66,23 @@ def test_a_goal_is_canceling_from_the_cancel_until_its_end():
     assert not goals.canceling("k")
 
 
-def test_an_accepted_clear_ends_the_cancels_whose_results_were_lost():
-    """결과를 잃은 취소는 그 로봇을 치울 때 그만둔다. 다른 로봇과 결과를 기다리는 취소는 남는다."""
-    goals = GoalTracker()
-    handle = _Handle()
-    for key in (("pinky1", 7), ("pinky1", 8), ("pinky2", 9)):
-        goals.sent(key)
-        goals.accepted(key, handle)
-        goals.cancel(key, 0.0)
-    goals.lost(("pinky1", 7))
-    goals.lost(("pinky2", 9))
-    goals.forget_lost("pinky1")
-    assert not goals.canceling(("pinky1", 7))
-    assert goals.canceling(("pinky1", 8)) and goals.canceling(("pinky2", 9))
-    goals.finished(("pinky2", 9))
-    goals.forget_lost("pinky2")
-    assert not goals.canceling(("pinky2", 9))
+def test_a_lost_cancel_is_warned_about_once_and_then_dropped():
+    """결과를 잃은 취소는 결과가 다시 오지 않는다. 경고까지만 다시 보내고 그만둔다."""
+    goals, handle = running()
+    goals.cancel("k", 0.0)
+    goals.lost("k")
+    assert [retry(goals, now) for now in (1.0, 2.0, 3.0)] == [[], [], ["k"]]
+    assert handle.cancels == 4
+    assert retry(goals, 4.0) == []
+    assert not goals.canceling("k") and handle.cancels == 4
+
+
+def test_a_goal_not_being_canceled_is_not_kept_as_lost():
+    goals, handle = running()
+    goals.lost("k")
+    goals.cancel("k", 0.0)
+    assert [retry(goals, now) for now in (1.0, 2.0, 3.0, 4.0)] == [[], [], ["k"], []]
+    assert goals.canceling("k")
 
 
 def test_rejected_goal_forgets_its_pending_cancel():

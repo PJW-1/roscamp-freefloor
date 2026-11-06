@@ -642,10 +642,10 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
             waypoint=waypoint,
             called=m.called,
             parked=waypoint in self.site.parking,
-            # 막힘으로 선 로봇은 맡은 호출만 지킨다
+            # 막힘으로 선 로봇은 새 호출을 받지 않고, 대기 줄에서는 뒤 로봇이 앞지르지 않는다
             eligible=(m.available and not m.hold and m.dispatch is None
                       and (m.called or not self._held_for_block(m))),
-            available=m.available,
+            available=m.available and not self._held_for_block(m),
         )
 
     def _committed(self, m: _Mission) -> bool:

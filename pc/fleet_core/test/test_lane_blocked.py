@@ -275,8 +275,11 @@ def test_a_clear_before_the_cancel_result_sends_again_only_after_the_result():
     assert not pilot.events("GOAL_RETRY")
 
 
-def test_a_robot_held_for_a_block_keeps_its_call_but_takes_no_new_one():
-    """표시 중이거나 취소 결과를 기다리는 로봇은 맡은 호출은 지키고 새 호출은 받지 않는다."""
+def test_a_robot_held_for_a_block_takes_no_new_call():
+    """표시 중이거나 취소 결과를 기다리는 로봇은 새 호출을 받지 않는다.
+
+    맡은 호출은 다른 로봇처럼 후보로 남고 선택기가 다시 고른다.
+    """
     pilot = Pilot()
     blocked_on_the_way(pilot)
     pilot.run(MARK_S + 0.2)
@@ -293,6 +296,22 @@ def test_a_robot_held_for_a_block_keeps_its_call_but_takes_no_new_one():
     assert not traffic._robot_info(m).eligible
     pilot.core.on_move_result("pinky1", first_goal(pilot), False, "CANCELED")
     assert traffic._robot_info(m).eligible
+
+
+def test_a_held_robot_ahead_in_the_parking_line_is_not_overtaken():
+    """대기 줄 앞 로봇이 막힘으로 서 있으면 뒤 로봇을 대신 부르지 않는다. 앞지를 수 없다."""
+    pilot = Pilot(starts={"pinky1": "P-6", "pinky2": "P-5"}, orders=())
+    traffic = pilot.core.traffic
+    front = traffic._missions["pinky1"]
+
+    def picked():
+        return traffic.selector.pick(1, [traffic._robot_info(m)
+                                         for m in traffic._missions.values()])
+
+    front.block_cancel = 99
+    assert picked() == set()
+    front.block_cancel = None
+    assert picked() == {"pinky1"}
 
 
 def test_a_lost_link_neither_adds_block_time_nor_clears_it():
