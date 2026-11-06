@@ -60,6 +60,9 @@ class TrafficReinstate:
         for name in sorted(holders):
             held = self._missions[name]
             if held.goal:
+                if held.block:
+                    # 막힘이 열렸으면 _mark_block처럼 취소 결과를 기다린다
+                    held.block_cancel = held.goal.id
                 self._cancel_goal(held)
             # 줄에 남은 요청은 뒤 로봇까지 막는다. 풀리면 _request_next_zone이 다시 청한다.
             self.zones.cancel_all_requests(name)

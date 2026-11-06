@@ -381,6 +381,22 @@ def test_blocked_lasts_past_a_cancel_while_the_obstacle_is_there(harness, tmp_pa
     assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_IDLE, 8.0)
 
 
+def test_a_robot_put_back_does_not_keep_saying_blocked(harness, tmp_path):
+    """막혀 선 로봇을 치웠다 다른 곳에 놓으면 앞 막힘을 잊는다(병합 리뷰 2번)."""
+    p = start(harness, tmp_path, robots=ONE, faults=[
+        {"at_s": 1.0, "robot": "pinky1", "type": "blocked", "duration_s": 8.0},
+        {"at_s": 3.0, "robot": "pinky1", "type": "operator_remove"},
+        {"at_s": 4.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-5"}])
+    assert wait_until(lambda: p.states, 5.0)
+    p.goal("N")
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 8.0)
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] > 0.5, 5.0), "still reporting"
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] < 0.3, 8.0), "never back"
+    mark = time.monotonic()
+    time.sleep(1.0)
+    assert set(states_since(p, mark - 0.3)) == {RobotState.STATE_IDLE}
+
+
 def test_a_robot_says_localizing_until_it_has_a_pose(harness, tmp_path):
     p = start(harness, tmp_path, robots={
         "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0, "localizing_s": 3.0}})

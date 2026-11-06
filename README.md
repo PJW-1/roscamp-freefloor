@@ -156,7 +156,7 @@ cat /tmp/run1/summary.json
 
 ## 시나리오
 
-`sim/fake_robots/scenarios/*.yaml`에 일곱 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
+`sim/fake_robots/scenarios/*.yaml`에 여덟 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
 
 | 이름 | 내용 | 확인하는 것 |
 |---|---|---|

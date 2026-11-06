@@ -366,3 +366,65 @@ def test_a_clear_and_a_reinstate_play_back_the_same(tmp_path):
         ["pinky2", "FULL", "wrong basket"], ["pinky2", "EMPTY", "back"]]
     result = replay.replay(path)
     assert result.same and result.compared, result
+
+
+# ---- 막힘과 함께(병합 리뷰 1번) ----------------------------------------------------------------
+
+
+def blocked_holder_held_by_a_reinstate():
+    """pinky1이 막힘(표시 전) 중에 재투입 충돌로 선다. pilot과 취소한 goal을 돌려준다."""
+    from test_lane_blocked import Pilot, blocked_on_the_way, first_goal
+
+    pilot = Pilot(starts={"pinky1": "P-6", "pinky2": "P-5"})
+    core = pilot.core
+    assert core.confirm_clear("pinky2", core.zones.held_by("pinky2"), "lifted") is not None
+    pilot.silent.add("pinky2")
+    blocked_on_the_way(pilot)
+    goal = first_goal(pilot)
+    pilot.run(1.0)
+    m = pilot.mission()
+    assert m.block and not m.block.marked
+    assert core.reinstate("pinky2", "EMPTY", "back")
+    pilot.pose["pinky2"] = pilot.site.waypoint_pose("N")  # pinky1이 쥔 N에 놓는다
+    pilot.state["pinky2"] = "IDLE"
+    pilot.silent.discard("pinky2")
+    pilot.run(0.2)
+    assert pilot.events("PLACEMENT_CONFLICT")
+    assert [c.goal_id for _, c in pilot.sent("CancelCmd")] == [goal]
+    return pilot, goal
+
+
+def test_a_reinstate_hold_on_a_blocked_holder_waits_for_the_cancel_result():
+    """표시 때 goal이 없어도 재투입 충돌의 취소를 막힘이 기다린다."""
+    pilot, goal = blocked_holder_held_by_a_reinstate()
+    m = pilot.mission()
+    assert m.block_cancel == goal
+    pilot.run(core_params().blocked_mark_s)
+    assert pilot.events("LANE_BLOCKED") and m.block.marked
+    canceled_at = pilot.sent("CancelCmd")[0][0]
+    assert pilot.held() == {"N", "S"}, "nothing is freed before the cancel result"
+    assert not [t for t, _ in pilot.sent("MoveCmd") if t > canceled_at]
+    pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
+    assert m.block_cancel is None
+    pilot.run(0.1 * core_params().release_confirm_samples + 0.2)
+    assert pilot.held() == {"N"}, "the usual block rule frees the zone ahead after the result"
+
+
+def test_a_clear_and_a_placed_robot_before_the_result_send_the_goal_only_after_it():
+    pilot, goal = blocked_holder_held_by_a_reinstate()
+    m = pilot.mission()
+    pilot.state["pinky1"] = "MOVING"  # 물체가 비켰다
+    pilot.pose["pinky2"] = pilot.site.waypoint_pose("P-3")  # 빈 자리로 옮겨 올렸다
+    pilot.run(0.1 * core_params().release_confirm_samples + 0.5)
+    assert m.block is None
+    assert pilot.core.traffic.robot_view("pinky2")["on_map"]
+    canceled_at = pilot.sent("CancelCmd")[0][0]
+    assert not [t for t, _ in pilot.sent("MoveCmd") if t > canceled_at]
+    pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
+    pilot.run(0.3)
+    resent = [c for t, c in pilot.sent("MoveCmd") if t > canceled_at]
+    assert resent and resent[0].target_id == "N" and resent[0].goal_id != goal
+
+
+def core_params():
+    return load_params()

@@ -301,6 +301,9 @@ class FakePinkyNode(Node):
             self._end(goal, False, MoveTo.Result.REASON_NAV_ABORTED)
         self._motion.clear_target()
         self._motion.x, self._motion.y = self._off_course
+        # 앞 물체는 들어낸 자리에 두고 간다
+        self._blocked = False
+        self._stopped_at = self._clear_at = None
 
     def _put_back(self, waypoint) -> None:
         """운영자가 로봇을 이 지점에 다시 놓고 켰다. 바구니는 시나리오가 정한 대로다."""
