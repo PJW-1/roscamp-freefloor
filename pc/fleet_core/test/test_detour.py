@@ -152,12 +152,16 @@ def test_a_robot_waiting_for_its_cancel_result_stands_and_does_not_replan():
 
 
 def queued_behind_a_runner(queued_for):
-    """A(r3)가 F2에서 달리고 B(r2)가 F1에서 그 뒤에 줄 서 BLOCKED를 보고한다. C(r1)는 F0."""
+    """A(r3)가 F1->F2 위 0.3 m 앞에서 달리고 B(r2)가 F1에서 그 뒤에 줄 서 BLOCKED를 보고한다."""
     core, now = make({"r1": "F0", "r2": "F1", "r3": "F2"})
-    core._missions["r3"].goal = _Goal(MOVE, 50, 0)
+    m3 = core._missions["r3"]
+    m3.goal = _Goal(MOVE, 50, 0)
+    (ax, ay), (bx, by) = core.site.waypoint_pose("F1")[:2], core.site.waypoint_pose("F2")[:2]
+    k = 0.3 / math.hypot(bx - ax, by - ay)
+    m3.x, m3.y = ax + k * (bx - ax), ay + k * (by - ay)
     m2 = core._missions["r2"]
     m2.phase, m2.path, m2.idx, m2.dest = "TO_WORK", ["F1", "F2", "W"], 0, "WORK"
-    m2.goal, m2.robot_state, m2.queue_since = _Goal(MOVE, 51, 0), BLOCKED, 0.0
+    m2.goal, m2.robot_state, m2.queue_since = _Goal(MOVE, 51, 1), BLOCKED, 0.0
     now[0] = queued_for
     m1 = core._missions["r1"]
     m1.phase, m1.dest, m1.path, m1.idx = "TO_WORK", "WORK", ["F0", "F1", "F2", "W"], 0
@@ -176,6 +180,20 @@ def test_a_robot_queued_behind_a_runner_stands_for_the_time_it_has_queued():
     assert core._standing_wait_s(m2) == math.inf  # 막힘 기록이 있으면 무한
     m2.block, m2.goal = None, None
     assert core._standing_wait_s(m2) == math.inf  # 목표 없이 BLOCKED도 무한
+
+
+def test_a_queue_past_its_timeout_counts_as_blocked():
+    # 줄 서기도 blocked_timeout_s를 넘기면 막힘 규칙을 쓴다(파트 4). 그 뒤의 시계는 낡았다
+    core, _, m2 = queued_behind_a_runner(PARAMS.blocked_timeout_s + 1.0)
+    assert core._standing_wait_s(m2) == math.inf
+
+
+def test_a_queue_whose_front_robot_has_left_counts_as_blocked():
+    # 앞 로봇이 떠났는데 다음 보고 전이라 시계가 남았다
+    core, _, m2 = queued_behind_a_runner(2.0)
+    m3 = core._missions["r3"]
+    m3.x, m3.y = core.site.waypoint_pose("W")[:2]
+    assert core._standing_wait_s(m2) == math.inf
 
 
 def test_a_robot_that_waits_on_its_retry_stands_for_the_rest_of_it():

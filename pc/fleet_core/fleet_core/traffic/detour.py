@@ -8,6 +8,7 @@
 서 있음과 달림(_standing_wait_s):
   - 무한: 고장(ERROR, OUT_OF_SERVICE), 두절이나 복구 확인, 막힘 기록, BLOCKED 보고.
     막힘 기록 없이 목표를 둔 채 줄 선 BLOCKED(파트 4 줄 서기)는 줄 선 시간이다.
+    줄 서기 시간 초과(blocked_timeout_s)가 지났거나 앞 로봇이 없으면 무한이다.
   - 달린다: 열린 이동이나 도킹 goal이 있다.
   - 구역을 기다린다: 그 구역을 기다린 시간.
   - 재시도나 도착 확인을 기다린다: 남은 시간.
@@ -41,7 +42,9 @@ from fleet_core.traffic.mission import (
 class TrafficDetour:
     def _standing_wait_s(self, m: _Mission) -> float | None:
         """달리면 None, 서 있으면 예상 대기 시간(초). 못 비키면 inf."""
-        queued = m.robot_state == BLOCKED and m.goal is not None and m.queue_since is not None
+        queued = (m.robot_state == BLOCKED and m.goal is not None and m.queue_since is not None
+                  and self._clock() - m.queue_since < self.params.blocked_timeout_s
+                  and self._queued_behind(m))  # 시간 초과나 앞차가 떠난 낡은 시계는 빼고
         if m.fault or m.comm or m.block or (m.robot_state == BLOCKED and not queued):
             return math.inf
         if queued:
