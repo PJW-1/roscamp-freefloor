@@ -1,4 +1,4 @@
-"""The cell layout, converted to lanes, must stay the layout the older tests were written for."""
+"""셀 배치를 레인으로 바꿔도 예전 테스트가 쓰던 배치와 같아야 한다."""
 import pytest
 from fleet_core.traffic.lane_map import LaneMapError
 from grid_map import grid_site
@@ -78,7 +78,7 @@ def test_cell_pose_is_the_centre_of_the_cell(site):
 def test_distance_to_zone_is_zero_inside_and_grows_outside(site):
     x, y = site.waypoint_pose((9, 4))
     assert site.distance_to_zone(x, y, "Q-OUT-1") == 0.0
-    # Centre of (9,3) is half a cell beyond the edge of (9,4).
+    # (9,3)의 중심은 (9,4) 가장자리에서 반 칸 밖이다.
     x, y = site.waypoint_pose((9, 3))
     assert site.distance_to_zone(x, y, "Q-OUT-1") == pytest.approx(0.33 / 2)
 

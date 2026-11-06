@@ -1,4 +1,4 @@
-"""RobotSelector: who is called to the fill dock. Pure, driven by plain robot records."""
+"""RobotSelector: 누가 채움 도크로 불리는가. 순수 함수이고 단순 로봇 기록으로 구동."""
 import pytest
 from fleet_core.common.params import load_params
 from fleet_core.traffic.selector import RobotInfo, RobotSelector
@@ -32,7 +32,7 @@ def test_calls_follow_the_number_of_unbound_orders(selector):
 
 
 def test_shortest_way_along_the_lanes_wins_not_the_straight_line(selector):
-    """(6,3) is one cell from the dock on the grid, but it must drive the whole loop."""
+    """(6,3)은 격자에서 도크와 한 칸이지만 순환 전체를 돌아야 한다."""
     robots = [lane("near_by_grid", (6, 3)), lane("near_by_lane", (2, 0))]
     assert selector.pick(1, robots) == {"near_by_lane"}
 
@@ -43,7 +43,7 @@ def test_only_eligible_robots_are_called(selector):
 
 
 def test_a_called_robot_keeps_the_call_unless_another_is_clearly_closer(selector):
-    far = lane("far", (9, 2), called=True)  # 15 cells from the dock, worth 4.5 minus 4.0
+    far = lane("far", (9, 2), called=True)  # 도크에서 15칸, 4.5 - 4.0의 가치
     assert selector.pick(1, [far, lane("closer", (5, 0))]) == {"far"}, "9 cells, worth 2.7"
     assert selector.pick(1, [far, lane("much_closer", (4, 3))]) == {"much_closer"}, "1 cell"
 
@@ -53,7 +53,7 @@ def test_name_breaks_a_tie_so_a_run_can_be_replayed(selector):
 
 
 def test_waiting_robot_cannot_pass_the_one_ahead(selector):
-    """b is closer than a lane robot only if a goes first, so a is what gets called."""
+    """b는 a가 먼저 갈 때만 레인 로봇보다 가까우므로 a가 불린다."""
     robots = [parked("b", P5), parked("a", P6)]
     assert selector.pick(1, robots) == {"a"}
 

@@ -1,4 +1,4 @@
-"""tools/pressure_sweep.py without ROS: scenario variants, result files, the table."""
+"""tools/pressure_sweep.py를 ROS 없이 검증한다: 시나리오 변형, 결과 파일, 표."""
 import json
 import subprocess
 import sys
@@ -72,7 +72,7 @@ def test_the_table_gives_every_combination_and_what_the_formula_asks_for(tmp_pat
             for tau in (0.0, 0.5)]
     text = sweep.table(rows)
     assert text.count("basic_orders") == 2
-    # r + eps + v * (tau + tick) with r 0.08, v 0.2, tick 0.1
+    # r + eps + v * (tau + tick), r=0.08, v=0.2, tick=0.1
     assert "0.150" in text and "0.250" in text
 
 
@@ -92,7 +92,7 @@ def test_the_robot_network_cannot_be_reached_by_accident():
 
 
 class FakeLaunch:
-    """What subprocess.Popen gives back, for a launch that writes `files` and then ends or not."""
+    """subprocess.Popen이 돌려주는 것. `files`를 쓰고 끝나거나 끝나지 않는 실행을 흉내 낸다."""
 
     def __init__(self, folder, ends=True, files=False):
         self.pid, self._folder, self._ends, self._files = 1, folder, ends, files
@@ -118,7 +118,7 @@ def test_a_run_that_dies_does_not_show_the_last_run_in_that_folder(tmp_path, mon
 
 
 def test_a_run_cut_at_the_wall_is_not_a_result(tmp_path, monkeypatch):
-    """A launch told to stop can still write its files, with the run half done."""
+    """멈추라고 한 실행도 파일을 쓸 수 있고, 그때 실행은 반쯤 끝난 상태다."""
     case = sweep.Case("basic_orders", 0.0, 0.0, 0.2)
     folder = tmp_path / case.name
     folder.mkdir()
@@ -142,6 +142,6 @@ def test_every_combination_is_asked_for_once():
 
 
 def test_a_release_distance_the_core_would_refuse_is_not_run():
-    """It would only spend the whole timeout of the scenario finding that out."""
+    """코어가 거절할 해제 거리는 알아내느라 시나리오 제한 시간만 쓴다."""
     with pytest.raises(ValueError, match="2r"):
         sweep.cases(["a"], [0.0], [0.0], [0.2, 0.16])

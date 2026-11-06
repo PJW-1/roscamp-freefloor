@@ -1,4 +1,4 @@
-"""FleetCore rules checked one at a time, with poses and results written by hand."""
+"""FleetCore 규칙을 손으로 쓴 자세와 결과로 하나씩 검증한다."""
 import math
 from dataclasses import replace
 
@@ -17,7 +17,7 @@ O3 = OrderRecord("O-003", {"D": 2})
 
 
 def started(robots=None, orders=(), params=None):
-    """Robots placed where asked, board published."""
+    """로봇을 지정 위치에 놓고 주문판을 게시한 상태."""
     robots = robots or {"r1": (3, 4), "r2": (3, 5), "r3": (3, 6)}
     core, now = make_core(list(robots), params)
     for name, cell in robots.items():
@@ -69,7 +69,7 @@ def test_move_goes_only_as_far_as_the_granted_zones_allow():
     core, _ = started({"r1": (9, 5)})
     moves = cmds(core.tick(), "MoveCmd")
     assert len(moves) == 1
-    # Q-OUT-2 + Q-OUT-1 are held; Z-OUT is not, so (9,4) is the farthest allowed cell.
+    # Q-OUT-2와 Q-OUT-1은 점유, Z-OUT은 아님: 허용되는 가장 먼 칸은 (9,4).
     assert moves[0].target_id == core.site.waypoint_id((9, 4))
     assert (moves[0].x, moves[0].y) == core.site.waypoint_pose((9, 4))
     assert core.zones.held_by("r1") == ["Q-OUT-2", "Q-OUT-1"]
@@ -77,7 +77,7 @@ def test_move_goes_only_as_far_as_the_granted_zones_allow():
 
 def test_robot_waits_at_the_boundary_when_the_next_zone_is_taken():
     core, _ = started({"r1": (9, 5), "r2": (9, 4)})
-    core.zones.request("x", "Z-OUT")  # blocks r2 from leaving
+    core.zones.request("x", "Z-OUT")  # r2의 출발을 막는다
     first = core.tick()
     assert [m.robot for m in cmds(first, "MoveCmd")] == [], "r1 waits for Q-OUT-1, r2 for Z-OUT"
     assert core.zones.queue("Q-OUT-1") == ("r1",)
@@ -85,16 +85,16 @@ def test_robot_waits_at_the_boundary_when_the_next_zone_is_taken():
 
 
 def test_target_stops_before_a_corner():
-    """Straight-line drivers must not cut a corner, even inside one granted zone."""
+    """직선 주행은 한 구역 안에서도 모서리를 가로지르면 안 된다."""
     core, _ = started({"r1": (9, 2)})
     move = cmds(core.tick(), "MoveCmd")[0]
-    # (9,2), (9,1), (9,0) and (8,0) are all granted, but the path turns at (9,0).
+    # (9,2), (9,1), (9,0), (8,0)이 모두 허가됐지만 경로는 (9,0)에서 꺾인다.
     assert move.target_id == core.site.waypoint_id((9, 0))
     assert move.yaw == math.atan2(-1, 0)
 
 
 def test_next_leg_starts_only_after_the_corner_was_reached():
-    """Standing near the corner is not enough: the running goal must finish first."""
+    """모서리 근처에 서는 것으로는 부족하다. 실행 중 목표가 먼저 끝나야 한다."""
     core, _ = started({"r1": (9, 2)})
     move = cmds(core.tick(), "MoveCmd")[0]
     place(core, "r1", (9, 0))
@@ -141,14 +141,14 @@ def test_zone_is_released_only_by_pose_never_by_result_or_time():
     core.tick()
     assert "Q-OUT-2" in core.zones.held_by("r1"), "goal success alone frees nothing"
 
-    now[0] += core.params.move_retry_wait_s  # the pose never followed, so the move goes again
+    now[0] += core.params.move_retry_wait_s  # 자세가 따라오지 않아 이동을 다시 보낸다
     place(core, "r1", (9, 5))
     core.tick()
     assert "Q-OUT-2" in core.zones.held_by("r1"), "nor does time"
 
     x, y = core.site.waypoint_pose((9, 5))
     distance = core.params.release_distance_m
-    # Along the lane to (9, 4), so y falls. Just under the release distance is still too close.
+    # (9,4)로 가는 레인을 따라 y가 줄어든다. 해제 거리 바로 앞은 아직 가깝다.
     for _ in range(core.params.release_confirm_samples):
         core.on_robot_state("r1", x, y - distance + 0.001, 0.0, "MOVING")
     core.tick()
@@ -161,7 +161,7 @@ def test_zone_is_released_only_by_pose_never_by_result_or_time():
 
 
 def test_release_needs_consecutive_reports_outside_the_margin():
-    """One noisy pose is not enough, and a report back inside starts the count again."""
+    """잡음 자세 하나로는 부족하고, 안쪽으로 돌아온 보고는 횟수를 다시 센다."""
     core, now = started({"r1": (9, 5)})
     move = cmds(core.tick(), "MoveCmd")[0]
     core.on_move_result("r1", move.goal_id, True, "")
@@ -185,7 +185,7 @@ def test_release_needs_consecutive_reports_outside_the_margin():
 
 
 def test_zone_is_kept_while_it_is_on_the_upcoming_path():
-    """A long zone stays held however far along it the robot is."""
+    """긴 구역은 로봇이 얼마나 진행했든 다가올 경로에 있는 동안 유지된다."""
     core, _ = started({"r1": (9, 0)})
     core.tick()
     place(core, "r1", (7, 0))
@@ -226,9 +226,9 @@ def test_rejected_goal_counts_as_a_failed_attempt():
 
 
 def test_long_zone_wait_warns_once_and_names_the_holder():
-    """A robot queued behind a stopped one must not wait in silence."""
+    """멈춘 로봇 뒤에 줄 선 로봇이 말없이 기다려선 안 된다."""
     core, now = started({"r1": (9, 5), "r2": (9, 4)})
-    core._missions["r2"].fault = "ERROR"  # white box: r2 stands still and keeps its zone
+    core._missions["r2"].fault = "ERROR"  # 화이트박스: r2는 서 있고 구역을 유지
     core.tick()
     assert core.zones.holder("Q-OUT-1") == "r2"
     warnings = []
@@ -262,7 +262,7 @@ def test_comm_timeout_cancels_queue_place_but_keeps_held_zones():
 
 
 def test_recovery_releases_only_zones_it_is_outside_of():
-    """Robot reserved Q-OUT-1 but never left Q-OUT-2: the reservation goes back."""
+    """Q-OUT-1을 예약했으나 Q-OUT-2를 벗어난 적 없으면 예약을 돌려준다."""
     core, now = started({"r1": (9, 5)})
     goal = cmds(core.tick(), "MoveCmd")[0]
     assert core.zones.held_by("r1") == ["Q-OUT-2", "Q-OUT-1"]
@@ -301,7 +301,7 @@ def test_recovery_keeps_the_zone_it_is_inside_and_lets_go_of_the_old_one():
 
 
 def test_stop_during_comm_loss_does_not_lose_the_goal_to_cancel():
-    """A cancel sent to a silent robot may never arrive, so it is repeated on recovery."""
+    """무응답 로봇에 보낸 취소는 닿지 않을 수 있어 복구 때 다시 보낸다."""
     core, now = started({"r1": (8, 0)})
     goal = cmds(core.tick(), "MoveCmd")[0]
     now[0] = core.params.comm_timeout_s + 0.1
@@ -314,7 +314,7 @@ def test_stop_during_comm_loss_does_not_lose_the_goal_to_cancel():
 
 
 def test_recovery_finds_the_cell_under_the_pose_on_the_remaining_path():
-    """The robot drove on while silent: its cell comes from the pose, not the last report."""
+    """무응답 중 로봇이 계속 달렸으므로 칸은 마지막 보고가 아닌 자세에서 구한다."""
     core, now = started({"r1": (8, 0)})
     core.tick()
     now[0] = core.params.comm_timeout_s + 0.1
@@ -331,7 +331,7 @@ def test_recovery_finds_the_cell_under_the_pose_on_the_remaining_path():
 
 
 def test_recovery_does_not_hand_over_the_zone_it_is_inside():
-    """A follower queued for its zone must not get it: the robot is physically there."""
+    """구역을 기다리는 뒤차에게 넘기면 안 된다. 로봇이 물리적으로 그 안에 있다."""
     core, now = started({"r1": (9, 4), "r2": (9, 5)})
     core.zones.force_acquire("x", "Z-OUT")
     core.tick()
@@ -366,7 +366,7 @@ def test_comm_lost_robot_loses_its_call_to_another():
 
 
 def test_robot_called_behind_a_waiting_robot_stays_out_of_it_after_recovery():
-    """The robot ahead dropped out and came back: the one behind must not wait on it."""
+    """앞 로봇이 빠졌다 돌아와도 뒤 로봇은 그것을 기다리면 안 된다."""
     core, now = started({"r1": (3, 4), "r2": (3, 5)}, [O1])
     core.tick()
     assert view(core, "r1")["state"] == "TO_WORK"
@@ -405,7 +405,7 @@ def test_recovery_during_filling_stays_at_the_dock_and_keeps_the_order():
 
 def test_recovery_with_a_full_basket_heads_to_outbound():
     core, now = started({"r1": (6, 5)})
-    core._missions["r1"].basket = "FULL"  # white box: on its way out when it went silent
+    core._missions["r1"].basket = "FULL"  # 화이트박스: 무응답이 됐을 때 나가는 중
     core.tick()
     now[0] = core.params.comm_timeout_s + 0.1
     core.tick()
@@ -440,9 +440,9 @@ def test_no_order_is_bound_before_the_dock():
 
 
 def test_first_docked_binds_the_oldest_order_whoever_was_called_first():
-    """r1 got the call first and is far away, r2 gets the later call and docks first."""
+    """r1이 먼저 호출됐지만 멀고, r2는 나중에 호출돼 먼저 도킹한다."""
     core, _ = started({"r1": (8, 0), "r2": (3, 4)})
-    core._missions["r1"].called = True  # white box: it was called before r2 was free
+    core._missions["r1"].called = True  # 화이트박스: r2가 비기 전에 호출됨
     core.on_order_board("RUN", [O1])
     core.tick()
     assert view(core, "r1")["called"] is True and view(core, "r2")["called"] is False
@@ -529,7 +529,7 @@ def test_call_turns_a_robot_on_its_way_to_waiting_back_to_work():
 
 
 def test_retry_target_survives_a_new_destination():
-    """A failed goal's retry drives to the same cell even if the path changed meanwhile."""
+    """실패한 목표의 재시도는 그사이 경로가 바뀌어도 같은 칸으로 간다."""
     core, now = started({"r1": (2, 1)}, [O1])
     core.zones.force_acquire("x", "Q-WORK-2")
     first = cmds(core.tick(), "MoveCmd")[0]
@@ -546,7 +546,7 @@ def test_a_move_awaiting_its_pose_keeps_its_target_when_the_path_changes():
     core, _ = started({"r1": (2, 1)}, [O1])
     core.zones.force_acquire("x", "Q-WORK-2")
     first = cmds(core.tick(), "MoveCmd")[0]
-    core.on_move_result("r1", first.goal_id, True, "")  # the reports have not caught up yet
+    core.on_move_result("r1", first.goal_id, True, "")  # 보고가 아직 따라오지 못함
     core.on_order_board("RUN", [])
     seen = codes(core.tick())
     place(core, "r1", (2, 3))
@@ -557,7 +557,7 @@ def test_a_move_awaiting_its_pose_keeps_its_target_when_the_path_changes():
 
 
 def test_robot_called_then_uncalled_in_a_waiting_cell_does_not_lap():
-    """Losing the call before it left its spot means staying, not a whole lap."""
+    """출발 전에 호출이 취소되면 한 바퀴 돌지 않고 그 자리에 머문다."""
     core, _ = started({"r1": (3, 4)}, [O1])
     core.zones.force_acquire("x", "Q-WORK-2")
     core.tick()
@@ -585,16 +585,16 @@ def test_parked_robot_advances_when_the_cell_ahead_frees_up():
 
 def test_failed_waiting_robot_keeps_those_behind_uncalled():
     core, _ = started({"r1": (3, 4), "r2": (3, 5)})
-    core._missions["r1"].fault = "ERROR"  # white box
+    core._missions["r1"].fault = "ERROR"  # 화이트박스
     core.on_order_board("RUN", [O1])
     core.tick()
     assert view(core, "r2")["called"] is False
 
 
 def test_cleared_waiting_robot_no_longer_blocks_those_behind():
-    """Once the operator took it off the floor the way is free, wherever it stood."""
+    """운영자가 로봇을 치웠으면 어디에 있었든 길이 빈다."""
     core, _ = started({"r1": (3, 4), "r2": (3, 5)})
-    core._missions["r1"].fault = "ERROR"  # white box
+    core._missions["r1"].fault = "ERROR"  # 화이트박스
     core.confirm_clear("r1", ["P-6"])
     core.on_order_board("RUN", [O1])
     place(core, "r2", (3, 5))
@@ -606,7 +606,7 @@ def test_cleared_waiting_robot_no_longer_blocks_those_behind():
 
 
 def filling(orders=(O1,), params=None, robots=None):
-    """One robot docked at WORK and the first FillCmd already sent. Other robots wait aside."""
+    """WORK에 로봇 하나가 도킹했고 첫 FillCmd가 나갔다. 다른 로봇은 비켜서 기다린다."""
     robots = robots or {"r1": (4, 3)}
     core, now = started(robots, orders, params)
     out = serve(core, list(robots), lambda: view(core, "r1")["phase"] == "FILLING")
@@ -797,7 +797,7 @@ def test_reported_order_still_on_a_stale_board_is_not_taken_again():
     core.on_fill_result(fill.goal_id, True, {}, {"A": 1, "C": 1})
     place(core, "r1", WORK_DOCK)
     assert cmds(core.tick(), "ReportOrderCmd")
-    core.on_order_board("RUN", [O1])  # central has not processed the report yet
+    core.on_order_board("RUN", [O1])  # 중앙이 아직 보고를 처리하지 못함
     place(core, "r1", WORK_DOCK)
     out = core.tick()
     assert "ORDER_BOUND" not in codes(out)
@@ -808,7 +808,7 @@ def test_reported_order_still_on_a_stale_board_is_not_taken_again():
 
 
 def swapping(orders=(O1,), placed=None, missing=None, robots=None):
-    """A robot docked at OUTBOUND with a full basket and the first SwapCmd already sent."""
+    """OUTBOUND에 가득 찬 바구니로 도킹한 로봇, 첫 SwapCmd가 나간 상태."""
     core, now, fill = filling(orders, robots=robots)
     placed = placed if placed is not None else dict(fill.items)
     core.on_fill_result(fill.goal_id, True, placed, missing or {})
@@ -996,7 +996,7 @@ def test_a_late_swap_result_ships_once_and_the_clear_does_not_put_the_order_back
 
 
 def test_arm_gets_the_cancel_wait_to_stop_not_the_shorter_recovery_check():
-    """A real arm cannot stop in recover_check_s, and the wait is what it gets on a timeout."""
+    """실제 팔은 recover_check_s 안에 멈출 수 없어, 시간 초과 시 취소 대기 시간을 받는다."""
     assert load_params().arm_cancel_wait_s > load_params().recover_check_s
     core, now, fill = filling()
     advance(core, now, core.params.fill_timeout_s + 0.1)
@@ -1025,7 +1025,7 @@ def test_cancel_wait_comes_from_the_params():
 
 
 def test_timed_out_job_answering_canceled_uses_up_an_attempt():
-    """Otherwise an arm that hangs but can be canceled would be retried forever."""
+    """그렇지 않으면 멈추지만 취소는 되는 팔을 끝없이 재시도한다."""
     core, now, fill = filling()
     for _ in range(core.params.move_retry_limit + 1):
         advance(core, now, core.params.fill_timeout_s + 0.1)
@@ -1083,7 +1083,7 @@ def test_stop_with_a_silent_arm_ends_in_arm_no_result():
 
 
 def test_stop_with_a_slow_arm_is_not_an_error():
-    """Stopping takes a real arm longer than recover_check_s. Every STOP must not end in ERROR."""
+    """실제 팔은 멈추는 데 recover_check_s보다 걸린다. STOP이 ERROR로 끝나면 안 된다."""
     core, now, fill = filling()
     core.on_order_board("STOP", [O1])
     place(core, "r1", WORK_DOCK)
@@ -1117,7 +1117,7 @@ def test_pause_lets_the_fill_finish_but_sends_nothing_new():
 
 
 def clear_mid_fill():
-    """pinky1 is lifted off mid-fill, pinky2 docks while the workcell is still stopping."""
+    """pinky1을 들어내는 중에 pinky2가 도킹하고 작업셀은 아직 멈추는 중이다."""
     core, now = make_core(["pinky1", "pinky2"])
     place(core, "pinky1", core.site.parking[5])
     place(core, "pinky2", core.site.parking[4])
@@ -1214,7 +1214,7 @@ def test_next_robot_goes_ahead_when_the_canceled_goal_never_answers():
 
 
 def test_busy_workcell_rejections_spread_over_the_retry_wait():
-    """The sequence that broke the demo: three rejections in 0.3 s put pinky2 in ERROR."""
+    """데모를 깨뜨린 순서: 0.3초 안의 거절 세 번으로 pinky2가 ERROR가 됐다."""
     core, now, _ = clear_mid_fill()
     now[0] += core.params.arm_cancel_wait_s
     started_at = now[0]
@@ -1333,7 +1333,7 @@ def test_confirm_clear_releases_listed_zones_and_marks_out_of_service():
 
 
 def test_confirm_clear_for_an_unknown_robot_changes_nothing():
-    """A typo at the operator's console must not take the fleet manager down."""
+    """운영자 콘솔의 오타로 플릿 매니저가 죽으면 안 된다."""
     core, _ = make_core(["r1"])
     place(core, "r1", (9, 5))
     assert core.confirm_clear("pinky9", ["Q-OUT-2"], note="typo") is None
@@ -1342,7 +1342,7 @@ def test_confirm_clear_for_an_unknown_robot_changes_nothing():
 
 
 def test_confirm_clear_with_a_zone_that_does_not_exist_changes_nothing():
-    """A typo in one name must not take the fleet manager down or half clear the robot."""
+    """이름 하나의 오타로 매니저가 죽거나 로봇이 반만 풀리면 안 된다."""
     core, _ = started({"r1": (9, 5), "r2": (3, 4)})
     core.tick()
     held = core.zones.held_by("r1")
@@ -1355,7 +1355,7 @@ def test_confirm_clear_with_a_zone_that_does_not_exist_changes_nothing():
 
 
 def test_confirm_clear_with_no_zones_is_refused_while_the_robot_holds_some():
-    """Nothing would ever free them: an out of service robot releases nothing by pose."""
+    """풀어 줄 것이 없다. 서비스 제외 로봇은 자세로 아무것도 놓지 않는다."""
     core, _ = started({"r1": (9, 5), "r2": (3, 4)})
     core.tick()
     held = core.zones.held_by("r1")
@@ -1367,7 +1367,7 @@ def test_confirm_clear_with_no_zones_is_refused_while_the_robot_holds_some():
 
 
 def test_confirm_clear_with_some_of_the_zones_warns_and_another_call_frees_the_rest():
-    """The operator may mean it, so it stands, but what stays locked has to be said."""
+    """운영자의 뜻일 수 있어 받아들이되, 잠긴 채 남는 것을 경고해야 한다."""
     core, _ = started({"r1": (9, 5), "r2": (3, 4)})
     core.tick()
     held = core.zones.held_by("r1")
@@ -1477,16 +1477,16 @@ def test_out_of_service_robot_is_left_out_of_the_assignments():
 
 
 def test_map_too_small_for_the_release_distance_is_refused():
-    """A robot stopped at the end of a lane shorter than that would never release the zone."""
+    """그보다 짧은 레인 끝에 선 로봇은 구역을 놓지 못한다."""
     with pytest.raises(ValueError, match="release distance"):
         FleetCore(grid_site(), replace(load_params(), release_distance_m=0.33), ["r1"],
                   lambda: 0.0)
 
 
 def test_nothing_moves_until_every_robot_has_reported():
-    """A robot that has not reported may be standing in the zone another would take."""
+    """보고 안 한 로봇이 다른 로봇이 들어갈 구역에 서 있을 수 있다."""
     core, _ = make_core(["r1", "r2"])
-    place(core, "r1", (3, 5))  # P-5, with r2 still silent on P-6 ahead of it
+    place(core, "r1", (3, 5))  # P-5, 앞의 P-6에는 r2가 아직 무응답
     core.on_order_board("RUN", [O1, O2])
     assert not cmds(core.tick(), "MoveCmd")
     assert core.zones.held_by("r1") == ["P-5"]
@@ -1515,7 +1515,7 @@ def test_robot_that_never_reports_raises_one_error_and_keeps_everyone_still():
 
 
 def test_a_silent_robot_taken_out_of_service_no_longer_holds_everyone_back():
-    """Otherwise one robot broken from the start stops the fleet with no way out."""
+    """그렇지 않으면 처음부터 고장 난 로봇 하나가 빠져나갈 길 없이 플릿을 세운다."""
     core, _ = make_core(["r1", "r2"])
     place(core, "r1", (9, 5))
     core.on_order_board("RUN", [O1])

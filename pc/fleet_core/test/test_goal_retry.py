@@ -1,7 +1,7 @@
-"""A failed move or dock waits before it goes again, and a success has to be where it says.
+"""실패한 이동이나 도킹은 대기 후 다시 가며, 성공은 말한 위치에 있어야 한다.
 
-One robot on the default map, one tick per 0.1 s, and the robot's answers given as a function:
-what comes back for a goal, right after the tick that sent it, as the node passes them on.
+기본 지도에서 로봇 하나, 0.1초 틱. 로봇의 응답은 함수로 준다: 목표를 보낸 틱 직후
+돌아오는 것을 노드가 그대로 전한다.
 """
 import sys
 from pathlib import Path
@@ -35,7 +35,7 @@ class Run:
         if write:
             self.core.record_to(write)
         self.pose = self.core.site.waypoint_pose(start)
-        self.sent = []  # (time, command)
+        self.sent = []  # (시간, 명령)
         self.events = []
         self.report()
         self.core.on_order_board("RUN", [ORDER])
@@ -84,7 +84,7 @@ def is_move(command):
 
 
 def arrive(run, command):
-    """The robot drives there, reports it, and says so."""
+    """로봇이 달려가 도착을 보고하고 알린다."""
     run.pose = (command.x, command.y)
     run.report()
     run.core.on_move_result(command.robot, command.goal_id, True, "")
@@ -118,7 +118,7 @@ def says_success_without_moving(run, command):
 
 
 def to_the_dock(answer_dock):
-    """Drive to the fill dock for real, and answer docks with `answer_dock`."""
+    """채움 도크까지 실제로 가고, 도킹에는 `answer_dock`으로 답한다."""
     def answer(run, command):
         if is_move(command):
             arrive(run, command)
@@ -197,7 +197,7 @@ def test_a_result_for_a_goal_it_no_longer_runs_does_not_start_a_wait():
     goal = run.sent[0][1]
     run.core.on_move_result(ROBOT, goal.goal_id + 100, False, "CANCELED")
     arrive(run, goal)
-    run.run(1.0)  # long enough to leave the zone behind, well short of the wait
+    run.run(1.0)  # 구역을 벗어나기에 충분하고 대기 시간보다 훨씬 짧게
     assert len(run.times()) == 2
     assert run.view()["attempts"] == 0
 
@@ -256,7 +256,7 @@ def test_extending_a_goal_that_is_still_running_does_not_wait():
     core.on_run_mode("RUN")
     core.on_dispatch(1, "OUTBOUND", "r1")
     assert [c.target_id for c in cmds(core.tick(), "MoveCmd")] == ["A"]
-    core._missions["r1"].retry_at = now[0] + 100.0  # white box: only a goal not running waits
+    core._missions["r1"].retry_at = now[0] + 100.0  # 화이트박스: 실행 중이 아닌 목표만 대기한다
     for _ in range(core.params.release_confirm_samples):
         core.on_robot_state("r1", x + 0.5, y, 0.0, "MOVING")
     assert [c.target_id for c in cmds(core.tick(), "MoveCmd")] == ["O"]
@@ -314,7 +314,7 @@ def test_a_goal_that_is_not_the_current_one_is_ignored_when_not_sent():
 def test_the_warning_comes_again_after_a_goal_reached_the_server():
     run = Run()
     run.tick(not_sent)
-    run.run(WAIT_S)  # this one went out and nothing came back for it, so it is running
+    run.run(WAIT_S)  # 이 목표는 나갔는데 응답이 없으므로 실행 중이다
     run.tick()
     goal = run.core.traffic._missions[ROBOT].goal
     assert goal is not None
@@ -403,11 +403,11 @@ def test_a_stop_past_the_tolerance_goes_again_to_the_same_node_and_then_on():
 
 
 def test_a_report_that_lags_behind_the_result_is_not_a_failed_attempt():
-    """The result can overtake the report that shows the arrival."""
+    """결과가 도착 보고를 앞지를 수 있다."""
     def result_first(run, command):
         if is_move(command):
             run.core.on_move_result(command.robot, command.goal_id, True, "")
-            run.pose = (command.x, command.y)  # reported on the next tick
+            run.pose = (command.x, command.y)  # 다음 틱에 보고
         else:
             run.core.on_dock_result(command.robot, command.goal_id, True)
 
@@ -441,13 +441,14 @@ def test_losing_comm_while_the_pose_is_awaited_leaves_the_judgement_to_recovery(
 
 
 def test_with_no_report_after_the_success_the_old_pose_costs_no_attempt():
-    """Reports that stop as a move ends say nothing about where it ended. Two real failures
-    before it, so an attempt counted on the old pose would end in GOAL_FAILED, not COMM_LOST."""
+    """이동이 끝나며 보고가 끊기면 끝난 위치를 알 수 없다. 앞서 실제 실패가 두 번 있어,
+    옛 자세로 시도를 세면 COMM_LOST가 아닌 GOAL_FAILED로 끝난다.
+    """
     run = Run()
     run.run_until(lambda: run.view()["attempts"] == 2, 20.0, nav_aborts)
     run.run_until(lambda: len(run.sent) == 3, 20.0)
     goal = run.sent[-1][1]
-    run.core.on_move_result(goal.robot, goal.goal_id, True, "")  # and no report from now on
+    run.core.on_move_result(goal.robot, goal.goal_id, True, "")  # 이후 보고 없음
     for _ in range(round((run.core.params.comm_timeout_s + 0.5) / 0.1)):
         run.now[0] = round(run.now[0] + 0.1, 6)
         out = run.core.tick()
@@ -459,16 +460,16 @@ def test_with_no_report_after_the_success_the_old_pose_costs_no_attempt():
 
 
 def test_a_report_after_the_success_still_judges_the_arrival_when_the_window_is_over():
-    """Waiting for a report must not make a robot that stopped short look arrived."""
+    """보고를 기다린다고 짧게 멈춘 로봇이 도착한 것처럼 보이면 안 된다."""
     run = Run()
     run.tick(says_success_without_moving)
-    run.run(SETTLE_S + 0.1)  # reports keep coming from the old place
+    run.run(SETTLE_S + 0.1)  # 보고는 옛 위치에서 계속 온다
     assert run.view()["attempts"] == 1
     assert "NOT_AT_TARGET" in [e.detail.split(": ")[-1] for e in run.events]
 
 
 def test_on_the_default_map_a_robot_counted_as_arrived_can_release_the_zone_behind_it():
-    """A whole tolerance short on the shortest lane still has to leave s > d."""
+    """가장 짧은 레인에서 허용 오차만큼 짧아도 s > d가 남아야 한다."""
     margin = load_lane_map().shortest_exit_lane() - load_params().release_distance_m
     assert TOLERANCE_M < margin
 
@@ -484,7 +485,7 @@ def test_the_attempts_start_over_after_a_real_arrival():
 
 
 def test_a_success_while_the_robot_is_silent_is_not_checked_against_the_old_pose():
-    """The pose is stale then, and recovery judges the position anyway."""
+    """그때 자세는 낡았고, 위치는 복구가 어차피 판단한다."""
     run = Run()
     run.tick()
     goal = run.sent[0][1]

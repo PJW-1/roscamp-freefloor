@@ -1,4 +1,4 @@
-"""Compare a contract with what a running system exposes. Plain data in, problems out."""
+"""계약과 실행 중인 시스템이 노출한 것을 비교한다. 입력은 데이터, 출력은 문제 목록."""
 from pathlib import Path
 
 import pytest
@@ -15,7 +15,7 @@ def contract():
 
 
 def healthy(contract):
-    """An observed graph that matches the contract exactly (real-only entries left out)."""
+    """계약과 정확히 일치하는 관측 그래프(실제에만 있는 항목은 뺌)."""
     observed = {"topics": {}, "actions": {}, "services": {}}
     for e in contract.expanded(include_real_only=False):
         if e.kind == "topic":
@@ -63,8 +63,7 @@ def test_best_effort_publisher_with_reliable_subscriber_is_an_error(contract):
 
 
 def test_best_effort_publisher_is_reported_even_when_contract_subscriber_absent(contract):
-    """The contract says reliable, so a best_effort publisher can never reach a contract-conform
-    subscriber, whatever subscribers are currently attached."""
+    """계약이 reliable이라 best_effort 발행자는 어떤 구독자가 붙어 있어도 닿지 못한다."""
     obs = healthy(contract)
     obs["topics"]["/fleet/zones"]["publishers"] = [STATE]
     obs["topics"]["/fleet/zones"]["subscribers"] = []
@@ -78,7 +77,7 @@ def test_durability_mismatch_on_publisher(contract):
 
 
 def test_incompatible_subscriber_is_reported(contract):
-    """A reliable subscriber of a best_effort topic gets nothing."""
+    """best_effort 토픽의 reliable 구독자는 아무것도 받지 못한다."""
     obs = healthy(contract)
     obs["topics"]["/pinky1/state"]["subscribers"] = [QosSpec("reliable", "volatile", 5)]
     assert ("qos", "/pinky1/state") in kinds(compare(contract, obs))

@@ -1,4 +1,4 @@
-"""Seeded random fault schedules. The world checks its invariants at every step."""
+"""시드 기반 무작위 장애 일정. 세계가 매 단계 불변식을 검사한다."""
 import random
 
 import pytest
@@ -23,9 +23,9 @@ def random_orders(rng):
 
 
 def random_faults(rng, horizon_s=200.0):
-    """Faults the fleet recovers from by itself, so every order must still ship."""
+    """플릿이 스스로 복구하는 장애. 모든 주문이 그래도 출고돼야 한다."""
     faults = []
-    once = set()  # the same fault twice in a row could rightly use up the retry budget
+    once = set()  # 같은 장애가 연속하면 재시도 한도가 다할 수 있다
     for _ in range(rng.randint(1, 5)):
         at = round(rng.uniform(1.0, horizon_s), 1)
         robot = rng.choice(ROBOTS)
@@ -72,7 +72,7 @@ def test_random_faults_never_lose_an_order_or_break_an_invariant(seed):
 
 @pytest.mark.parametrize("seed", range(20, 50))
 def test_random_faults_on_the_default_map_with_its_avenue_and_crossing(seed):
-    """Same faults on the map where robots meet. The world checks its invariants at every step."""
+    """로봇이 마주치는 지도에서 같은 장애를 준다."""
     rng = random.Random(seed)
     orders = random_orders(rng)
     world = SimWorld(seed=seed, orders=orders, faults=random_faults(rng), site=load_lane_map())

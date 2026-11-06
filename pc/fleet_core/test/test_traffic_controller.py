@@ -1,4 +1,4 @@
-"""TrafficController alone, driven only through the internal dispatch API. No orders exist here."""
+"""TrafficController 단독: 내부 디스패치 API로만 구동. 주문은 없다."""
 from core_helpers import cmds, codes
 from fleet_core.common.commands import DispatchFeedback, DispatchResult
 from fleet_core.common.params import load_params
@@ -27,7 +27,7 @@ def report(core, robot, cell):
 
 
 def drive(core, robot, until, limit=300):
-    """Tick, completing the robot's moves and docks at once, until `until()` holds."""
+    """틱하며 로봇의 이동과 도킹을 즉시 끝낸다. `until()`이 참일 때까지."""
     seen = []
     for _ in range(limit):
         seen += core.tick()
@@ -231,7 +231,7 @@ def test_priority_uses_only_the_station_and_the_named_dispatch():
 
 
 def test_a_second_named_dispatch_is_refused_while_one_is_open():
-    """The first one's answer would otherwise never come, and its asker would wait for ever."""
+    """첫 요청의 답이 오지 않아 요청자가 영원히 기다리게 된다."""
     core, _ = make({"r1": (5, 3)})
     core.on_dispatch(7, "OUTBOUND", "r1")
     core.on_dispatch(8, "OUTBOUND", "r1")

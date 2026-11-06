@@ -1,4 +1,4 @@
-"""FleetManager keeps a record of what came in and what came of it. tools/replay.py replays it."""
+"""FleetManager는 들어온 것과 그 결과를 기록하고, tools/replay.py가 재생한다."""
 import inspect
 import itertools
 import json
@@ -28,7 +28,7 @@ FAULTS = [
 
 @pytest.fixture(scope="module")
 def run(tmp_path_factory):
-    """A whole run of the real map on the virtual warehouse, with faults in it."""
+    """실제 지도 전체를 가상 창고에서 장애와 함께 돌린다."""
     world = SimWorld(seed=3, site=load_lane_map(), orders=six_orders(), faults=FAULTS)
     lines = []
     world.core.record_to(lines.append)
@@ -45,7 +45,7 @@ def run_tool(path):
 
 
 def changed(path, tmp_path, change):
-    """Write a copy of the record with one entry changed."""
+    """항목 하나를 바꾼 기록 사본을 쓴다."""
     lines = path.read_text(encoding="utf-8").splitlines()
     for number, line in enumerate(lines[1:], start=1):
         entry = json.loads(line)
@@ -72,7 +72,7 @@ def test_a_run_plays_back_to_the_same_commands(run):
 
 
 def test_every_way_into_the_core_is_recorded():
-    """A new on_ method with no record would make playback quietly wrong."""
+    """기록 없는 새 on_ 메서드가 있으면 재생이 조용히 틀어진다."""
     calls = {
         "on_robot_state": ("r1", 1.0, 2.0, 0.5, "IDLE", 90.0),
         "on_order_board": ("RUN", [OrderRecord("O-1", {"A": 1})]),
@@ -101,7 +101,7 @@ def test_every_way_into_the_core_is_recorded():
 
 
 def test_one_call_sees_one_time_live_as_well():
-    """Otherwise a run could turn out differently from its record by a few microseconds."""
+    """그렇지 않으면 실행이 기록과 몇 마이크로초 다르게 나올 수 있다."""
     ticks = itertools.count(1.0, 0.25)
     site = load_lane_map()
     core = FleetManager(site, load_params(), ["r1"], lambda: next(ticks))
@@ -147,8 +147,9 @@ def test_a_line_left_out_is_found(run, tmp_path):
 
 
 def test_a_record_that_just_ends_is_no_difference(run, tmp_path):
-    """A process that was killed stops writing anywhere. Only what the last input caused can be
-    past the end, and the tool says how much of that it could not compare."""
+    """죽은 프로세스는 어디에도 더 쓰지 않는다. 마지막 입력의 결과만 끝을 넘을 수 있고,
+    도구는 그중 비교하지 못한 양을 알려 준다.
+    """
     lines = run[0].read_text(encoding="utf-8").splitlines()
     position = next(n for n, line in enumerate(lines) if '"out"' in line)
     copy = tmp_path / "cut.jsonl"
@@ -166,7 +167,7 @@ def test_a_whole_record_has_nothing_left_to_compare(run):
 
 
 def test_half_a_line_at_the_end_is_left_out(run, tmp_path):
-    """Killed in the middle of a write."""
+    """쓰던 도중 죽은 경우."""
     text = run[0].read_text(encoding="utf-8")
     copy = tmp_path / "half.jsonl"
     copy.write_text(text[:-5], encoding="utf-8")
@@ -273,7 +274,7 @@ def test_parameters_this_code_does_not_know_are_refused(run, tmp_path):
 
 
 def test_a_record_has_to_start_before_the_first_input():
-    """Nothing in the first line says what the core had been through by then."""
+    """첫 줄만으로는 그때까지 코어가 겪은 일을 알 수 없다."""
     core = FleetManager(load_lane_map(), load_params(), ["pinky1"], lambda: 0.0)
     core.tick()
     with pytest.raises(RuntimeError, match="first input"):
@@ -281,7 +282,7 @@ def test_a_record_has_to_start_before_the_first_input():
 
 
 def test_a_map_with_no_text_cannot_be_recorded():
-    """A replay builds the map from the text in the first line."""
+    """재생은 첫 줄의 텍스트로 지도를 만든다."""
     site = LaneMap(yaml.safe_load(load_lane_map().source_text))
     core = FleetManager(site, load_params(), ["pinky1"], lambda: 0.0)
     with pytest.raises(ValueError, match="text"):
@@ -290,7 +291,7 @@ def test_a_map_with_no_text_cannot_be_recorded():
 
 @pytest.mark.parametrize("bundle", [True, False])
 def test_a_two_way_setting_given_in_code_comes_back_in_the_replay(bundle):
-    """The map file says one thing and the call another: the record has what was really used."""
+    """지도 파일과 호출 인자가 다르면 실제로 쓴 값이 기록에 남는다."""
     site = load_lane_map(bundle_two_way=bundle)
     lines = []
     FleetManager(site, load_params(), ["pinky1"], lambda: 0.0).record_to(lines.append)
@@ -299,8 +300,7 @@ def test_a_two_way_setting_given_in_code_comes_back_in_the_replay(bundle):
 
 
 def test_a_record_of_inputs_alone_just_runs(run, tmp_path):
-    """What a converted bag will be: a first line that does not claim to be a record, and the
-    inputs. There is nothing to compare."""
+    """변환한 bag의 모습: 기록이라 주장하지 않는 첫 줄과 입력들. 비교할 것이 없다."""
     lines = run[0].read_text(encoding="utf-8").splitlines()
     head = json.loads(lines[0])
     del head["recorded"]
@@ -316,7 +316,7 @@ def test_a_record_of_inputs_alone_just_runs(run, tmp_path):
 
 @pytest.mark.parametrize("seed", ["1", "2"])
 def test_it_plays_back_the_same_in_another_process(run, seed):
-    """Another process hashes strings differently, so an order taken from a set would show."""
+    """다른 프로세스는 문자열 해시가 달라 set에서 꺼낸 순서가 드러난다."""
     done = subprocess.run(
         [sys.executable, str(REPO / "tools" / "replay.py"), str(run[0])],
         env=dict(os.environ, PYTHONHASHSEED=seed, PYTHONDONTWRITEBYTECODE="1"),

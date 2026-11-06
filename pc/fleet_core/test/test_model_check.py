@@ -1,20 +1,20 @@
-"""Exhaustive check of the cell layout's one-way lanes and zone locks for three robots.
+"""세 로봇에 대해 셀 배치의 일방통행 레인과 구역 잠금을 모두 탐색한다.
 
-Ported from zone_model_check.py. It works on the lock graph alone, every placement of it, and
-tools/model_check.py is what drives the real core. A move has two phases, as in the real
-protocol: acquire (a robot in zone A reserves zone B and keeps A) and complete (it left A, A is
-freed).
+zone_model_check.py에서 옮겼다. 잠금 그래프만 보고 모든 배치를 탐색하며,
+실제 코어는 tools/model_check.py가 돌린다. 이동은 실제 프로토콜처럼 두 단계다:
+acquire(구역 A의 로봇이 B를 예약하고 A를 유지)와 complete(A를 떠나 A를 놓음).
 
-What this shows and what it does not:
-  - It explores all placements, not only those a real assignment policy reaches.
-  - "No deadlock" means some robot can always move; "no starvation" means a robot can
-    always move again under some ordering. Fairness comes from the FIFO queue in zones.py.
-  - A move in progress is assumed to finish. A robot stopping mid-move is only covered by
-    the frozen robot table, which checks route cells against the zone the robot holds.
-  - Geometry, Nav2 paths and timing are not modelled.
-  - A robot changing its mind at a stop counts as a move, so a robot at a stop is never stuck.
-  - No FIFO, a passed zone is freed at once, and a route changes only at a stop. So this is a
-    quick regression test of the lock graph. tools/model_check.py is the evidence.
+보이는 것과 보이지 않는 것:
+  - 실제 배정 정책이 닿는 배치만이 아니라 모든 배치를 탐색한다.
+  - "교착 없음"은 어떤 로봇은 항상 움직일 수 있다는 뜻이고, "기아 없음"은
+    어떤 순서에서든 로봇이 다시 움직일 수 있다는 뜻이다. 공정성은 zones.py의
+    FIFO 큐가 준다.
+  - 진행 중인 이동은 끝난다고 가정한다. 이동 중 멈춤은 고정 로봇 표만 다루며,
+    경로 칸을 로봇이 쥔 구역과 대조한다.
+  - 기하, Nav2 경로, 시간은 모델링하지 않는다.
+  - 정차 중 마음을 바꾸는 것도 이동으로 센다. 정차한 로봇은 막히지 않는다.
+  - FIFO 없음, 지난 구역은 즉시 놓음, 경로는 정차 때만 바뀐다. 그래서 잠금
+    그래프의 빠른 회귀 테스트일 뿐이고, 근거는 tools/model_check.py다.
 """
 import itertools
 from collections import defaultdict
@@ -26,14 +26,14 @@ from grid_map import grid_site
 ROBOTS = 3
 WORK, OUTBOUND = (5, 3), (9, 3)
 
-# Sanity control: the return drives back along the outbound lane, so two robots can meet
-# head-on. The checker must report deadlocks here or "none" for the design means nothing.
-CONTROL = (33480, 66, 8304)  # measured
-CLEARANCE, RELEASE = 0.16, 0.2  # 2r and d
+# 대조군: 복귀가 출고 레인을 거슬러 가므로 두 로봇이 정면으로 마주칠 수 있다.
+# 검사기가 여기서 교착을 보고하지 못하면 설계의 "없음"은 의미가 없다.
+CONTROL = (33480, 66, 8304)  # 실측
+CLEARANCE, RELEASE = 0.16, 0.2  # 2r, d
 
 
 def design_graph(site):
-    """A node is (cell, lane name). A cell here has one lane through it, so the name is empty."""
+    """그래프의 점은 (칸, 레인 이름)이다. 여기서 칸에는 레인이 하나라 이름은 비어 있다."""
     succ = defaultdict(set)
     for a, b in site.lanes:
         succ[(a, "")].add((b, ""))
@@ -41,7 +41,7 @@ def design_graph(site):
 
 
 def head_on_graph(site):
-    """The outbound lane driven in both directions, as separate tracks over the same cells."""
+    """출고 레인을 양방향으로 달리게 한다. 같은 칸 위의 별개 트랙이다."""
     out = site.plan(WORK, OUTBOUND)
     succ = defaultdict(set)
 
@@ -56,9 +56,9 @@ def head_on_graph(site):
 
 
 def route_graph(site):
-    """A node is (node, stop). Between stops a robot keeps to the route the planner gives it,
-    so unlike design_graph it cannot dodge a robot coming the other way. At a stop it can be sent
-    to any other."""
+    """점은 (지점, 정차)다. 정차 사이에는 계획기가 준 경로만 따르므로 design_graph와
+    달리 반대편에서 오는 로봇을 피할 수 없다. 정차 때는 다른 곳으로 보낼 수 있다.
+    """
     stops = {name: station.dock for name, station in site.stations.items()}
     stops["PARK"] = site.parking[-1]
     free_to_turn = set(stops.values()) | set(site.parking)
@@ -73,12 +73,12 @@ def route_graph(site):
 
 
 def check(site, succ, robots=ROBOTS, conflicts=()):
-    """Return (states, deadlocks, starved robot states) over every placement."""
+    """모든 배치에 대해 (상태 수, 교착, 굶는 로봇 상태)를 돌려준다."""
     zone_of = site.zone_of
     nodes = set(succ) | {v for vs in succ.values() for v in vs}
     single = [(n,) for n in sorted(nodes, key=str)]
     single += [(u, v) for u in sorted(succ, key=str) for v in sorted(succ[u], key=str)]
-    near = defaultdict(set)  # a zone and the zones it is a conflict pair with
+    near = defaultdict(set)  # 구역과 충돌 쌍인 구역들
     for pair in conflicts:
         one, other = tuple(pair)
         near[one].add(other)
@@ -97,7 +97,7 @@ def check(site, succ, robots=ROBOTS, conflicts=()):
     for state in states:
         per_robot = []
         for i, me in enumerate(state):
-            if len(me) == 2:  # in transit: leaving the old cell needs no permission
+            if len(me) == 2:  # 이동 중: 옛 칸을 떠나는 데 허가가 필요 없다
                 per_robot.append([state[:i] + ((me[1],),) + state[i + 1:]])
                 continue
             busy = set().union(*(blocks[s] for j, s in enumerate(state) if j != i))
@@ -109,7 +109,7 @@ def check(site, succ, robots=ROBOTS, conflicts=()):
         if not any(per_robot):
             deadlocks += 1
 
-    # Robot i is starved in a state if no sequence of moves ever lets i move again.
+    # 로봇 i는 어떤 이동 순서로도 i가 다시 움직일 수 없으면 그 상태에서 굶는다.
     reverse = defaultdict(list)
     for state, per_robot in forward.items():
         for targets in per_robot:
@@ -129,7 +129,7 @@ def check(site, succ, robots=ROBOTS, conflicts=()):
 
 
 def frozen_robot_table(site):
-    """For each stop cell, does the WORK-OUTBOUND loop stay free of blocked route cells?"""
+    """각 정차 칸에서 WORK-OUTBOUND 순환에 막힌 경로 칸이 없는가?"""
     loop = set(site.plan(WORK, OUTBOUND)) | set(site.plan(OUTBOUND, WORK))
     rows = defaultdict(list)
     for cell in sorted(site.zone_of):
@@ -143,7 +143,7 @@ def site():
 
 
 def test_design_has_no_deadlock_and_no_starvation(site):
-    """The same number as before the map became lanes, so the conversion kept the graph."""
+    """지도를 레인으로 바꾸기 전과 같은 수. 변환이 그래프를 보존했다."""
     assert check(site, design_graph(site)) == (149238, 0, 0)
 
 
@@ -162,8 +162,9 @@ def test_frozen_robot_table(site):
 
 # ---- the default map --------------------------------------------------------------------
 #
-# Only the lock graph and the routes the planner gives. tools/model_check.py drives the real core
-# on this map over every order of calls, and is too slow to run here with three robots.
+# 잠금 그래프와 계획기가 주는 경로만 다룬다.
+# tools/model_check.py가 이 지도에서 모든 호출 순서로 실제 코어를 돌리지만,
+# 로봇 셋으로는 여기서 돌리기엔 너무 느리다.
 
 
 def _pairs(site):

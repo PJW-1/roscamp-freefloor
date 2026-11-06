@@ -1,4 +1,4 @@
-"""The lane map: free-direction segments, lock units, conflict pairs and the two-way bundle."""
+"""레인 지도: 자유 방향 구간, 잠금 단위, 충돌 쌍, 양방향 묶음."""
 import math
 
 import pytest
@@ -29,7 +29,7 @@ STRAIGHT = {"a": (0, 0), "b": (1, 0), "c": (2, 0)}
 
 
 def test_lanes_written_against_each_other_have_to_be_declared_two_way():
-    """Otherwise a file can have a two-way road nobody decided to lock as one, by a typo."""
+    """그렇지 않으면 오타로, 아무도 정하지 않은 양방향 도로가 파일에 생긴다."""
     with pytest.raises(LaneMapError, match="two_way"):
         build({"a": (0, 0), "b": (1, 0)}, [("a", "b"), ("b", "a")])
 
@@ -118,7 +118,7 @@ def test_each_node_is_a_unit_of_its_own_by_default():
 
 
 def test_lanes_into_one_node_share_its_unit():
-    """They end at the same point, so they could not be used together anyway."""
+    """같은 지점에서 끝나므로 어차피 함께 쓸 수 없다."""
     site = build({"a": (0, 1), "b": (0, -1), "m": (1, 0)}, [("a", "m"), ("b", "m")])
     assert site.lanes_of_zone("m") == {("a", "m"), ("b", "m")}
 
@@ -188,7 +188,7 @@ def test_a_straight_chain_has_no_conflict_or_nobody_could_follow():
 
 
 def _turn(degrees):
-    """a -> b -> c, with the angle between the lanes at b measured inside the corner."""
+    """a -> b -> c, b에서 두 레인이 이루는 각을 모서리 안쪽으로 잰다."""
     angle = math.radians(degrees)
     return build({"a": (1, 0), "b": (0, 0), "c": (math.cos(angle), math.sin(angle))},
                  [("a", "b"), ("b", "c")])
@@ -216,7 +216,7 @@ def test_merging_lanes_are_one_unit_so_they_are_never_a_pair():
 
 
 def test_a_road_drawn_twice_with_separate_nodes_is_still_a_pair():
-    """The two_way check only compares node names. Geometry catches the same road under others."""
+    """two_way 검사는 지점 이름만 비교한다. 기하로 이름만 다른 같은 도로를 잡는다."""
     site = build({"a": (0, 0), "b": (1, 0), "c": (1, 0.02), "d": (0, 0.02)},
                  [("a", "b"), ("c", "d")])
     assert site.conflict_pairs(CLEARANCE, RELEASE) == {frozenset({"b", "d"})}
@@ -227,7 +227,7 @@ def test_a_bundled_two_way_lane_is_not_a_pair_with_itself():
 
 
 def test_with_the_bundle_off_the_two_directions_are_not_paired_either():
-    """Off means the naive rule. That is what the bundle's comparison measures."""
+    """꺼진 상태는 단순 규칙이다. 묶음 비교가 재는 기준이 이것이다."""
     data = {"half_width_m": 0.05, "lane_entry_m": 0.2, "origin_m": [0, 0],
             "waypoints": waypoints(**STRAIGHT), "lanes": lanes(("b", "c")),
             "two_way": {"ROAD": ["a", "b"]}, "stations": {}, "parking": []}

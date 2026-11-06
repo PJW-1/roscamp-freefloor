@@ -1,10 +1,8 @@
-"""Deterministic virtual warehouse that drives a FleetCore with a fake clock.
+"""가짜 시계로 FleetCore를 구동하는 결정적 가상 창고.
 
-Robots drive straight lines at their speed and report noisy poses. Docks take time, the fill
-server takes seconds per item and draws from a stock, the swap arm takes and puts baskets. A
-central stand-in keeps the order board and drops an order one step after its final report. A
-fault schedule injects comm loss, nav aborts, dock failures, stuck robots, failing and silent
-arms. Every step checks the safety invariants, so any test that runs the world tests them.
+로봇은 직선으로 달리며 잡음 섞인 자세를 보고한다. 가짜 중앙 서버가 주문판을 관리한다.
+장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 팔 실패와 무응답을 넣는다.
+매 단계 안전 불변식을 검사하므로 이 세계를 쓰는 테스트는 모두 불변식도 검증한다.
 """
 from __future__ import annotations
 
@@ -55,14 +53,14 @@ class VirtualRobot:
     speed: float
     noise: float
     goal_id: int | None = None
-    goal_kind: str = ""  # move or dock
+    goal_kind: str = ""  # 이동 또는 도킹
     target: tuple[float, float] | None = None
     goal_elapsed: float = 0.0
     dock_left: float = 0.0
     docked_at: str = ""
     dock_station: str = ""
     has_basket: bool = True
-    basket: dict = field(default_factory=dict)  # what is really in it
+    basket: dict = field(default_factory=dict)  # 실제로 들어 있는 것
     comm_up: bool = True
     removed: bool = False
     stuck: bool = False
@@ -74,16 +72,16 @@ class VirtualRobot:
 class ArmJob:
     cmd: object
     next_at: float
-    left: list = field(default_factory=list)  # fill: items still to try
+    left: list = field(default_factory=list)  # 담기: 아직 시도할 품목
     placed: dict = field(default_factory=dict)
     missing: dict = field(default_factory=dict)
-    fail_after: int | None = None  # fill: stop with a failure after placing this many
-    steps: list = field(default_factory=list)  # swap: "take", "put" still to do
+    fail_after: int | None = None  # 담기: 이만큼 놓은 뒤 실패
+    steps: list = field(default_factory=list)  # 교환: 남은 "take", "put" 단계
     took_full: bool = False
     put_empty_done: bool = False
-    fail_after_take: bool = False  # swap: the put step fails
-    fail_now: bool = False  # swap: fails before doing anything
-    silent: bool = False  # never reports, and does not hear a cancel
+    fail_after_take: bool = False  # 교환: put 단계가 실패
+    fail_now: bool = False  # 교환: 시작 전에 실패
+    silent: bool = False  # 응답이 없고 취소도 듣지 못함
 
 
 @dataclass
@@ -98,8 +96,8 @@ class SimWorld:
     swap_step_s: float = 2.0
     dock_s: float = 2.0
     params: object = None
-    gaussian_noise: bool = False  # unbounded noise, as a real localizer and the ROS fake give
-    site: object = None  # the older tests stay on the cell layout
+    gaussian_noise: bool = False  # 한계 없는 잡음. 실제 위치추정과 ROS 가짜 노드가 그렇다
+    site: object = None  # 예전 테스트는 셀 배치를 쓴다
 
     def __post_init__(self):
         self.t = 0.0
@@ -153,7 +151,7 @@ class SimWorld:
             self.step()
 
     def run_until(self, predicate, timeout_s=1500.0):
-        """Step until the predicate holds. Returns False on timeout."""
+        """조건이 참이 될 때까지 진행한다. 시간이 넘으면 False."""
         for _ in range(round(timeout_s / DT)):
             self.step()
             if predicate():
@@ -161,7 +159,7 @@ class SimWorld:
         return False
 
     def confirm_clear(self, robot, zone_ids, note="operator"):
-        """The operator physically removes the robot and clears its locks."""
+        """운영자가 로봇을 치우고 잠금을 푼다."""
         self.virtual[robot].removed = True
         return self.core.confirm_clear(robot, zone_ids, note)
 
@@ -182,7 +180,7 @@ class SimWorld:
         return {r.order_id: r.status for r in self.reports}
 
     def bound_order(self):
-        """Order ids in ORDER_BOUND order, which every run must keep equal to registration."""
+        """ORDER_BOUND 순서의 주문 id. 모든 실행에서 등록 순서와 같아야 한다."""
         return [e.detail for e in self.events if e.code == "ORDER_BOUND"]
 
     def shipped_order(self):
@@ -241,7 +239,7 @@ class SimWorld:
     def _deliver_queued_results(self):
         queued, self._queued_results = self._queued_results, []
         for robot, fn, args in queued:
-            if robot is None or self.virtual[robot].comm_up:  # an arm has its own link
+            if robot is None or self.virtual[robot].comm_up:  # 팔은 자기 링크가 따로 있다
                 fn(*args)
 
     def _move_robots(self):
@@ -382,7 +380,7 @@ class SimWorld:
             raise AssertionError(f"unknown output {item!r}")
 
     def _preempt(self, r):
-        """A running goal that gets replaced still reports back, as a ROS action would."""
+        """교체되는 실행 중 목표도 ROS 액션처럼 결과를 보고한다."""
         if r.goal_id is None:
             return
         old = r.goal_id
@@ -501,8 +499,9 @@ class SimWorld:
     # ---- invariants ---------------------------------------------------------------------
 
     def _check_releases(self, before):
-        """A zone only leaves its holder with the reported pose 2r from the zone's centre lines:
-        a robot on those lines cannot touch it."""
+        """구역은 보고된 자세가 구역 중심선에서 2r 밖일 때만 점유자를 떠난다.
+        그 선 위의 로봇은 구역에 닿을 수 있기 때문이다.
+        """
         after = self.core.zones.snapshot()
         least = 2 * self.params.robot_radius_m
         for zone, old in before.items():

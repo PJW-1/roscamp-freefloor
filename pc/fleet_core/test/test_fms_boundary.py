@@ -1,7 +1,7 @@
-"""The traffic package must stay usable without orders: it knows lanes and robots, not baskets.
+"""traffic 패키지는 orders 없이 쓸 수 있어야 한다. 레인과 로봇만 알고 바구니는 모른다.
 
-Modules are named by their dotted path inside fleet_core: `traffic.controller`,
-`orders.orchestrator`, `common.commands`, `manager`.
+모듈 이름은 fleet_core 안의 점 경로다: `traffic.controller`, `orders.orchestrator`,
+`common.commands`, `manager`.
 """
 import ast
 from pathlib import Path
@@ -16,7 +16,7 @@ ORDER_SIDE_NAMES = {
     "OrderOrchestrator", "FleetManager",
 }
 ORDER_SIDE_ATTRIBUTES = {"basket", "order", "orders", "placed_items", "last_order_id", "arm"}
-# What traffic may take from commands.py. An allow list, so a new shared name is a decision.
+# traffic이 commands.py에서 가져올 수 있는 이름. 허용 목록이라 추가는 결정 사항이다.
 TRAFFIC_VOCABULARY = {
     "CancelCmd", "DispatchFeedback", "DispatchResult", "DockCmd", "EventOut", "MoveCmd",
     "NO_ROBOT", "ZoneView",
@@ -24,7 +24,7 @@ TRAFFIC_VOCABULARY = {
 
 
 def _path(name):
-    """The file of a fleet_core module, or the __init__.py of a package; None if neither."""
+    """fleet_core 모듈의 파일, 패키지면 __init__.py. 둘 다 없으면 None."""
     base = PACKAGE / name.replace(".", "/")
     for path in (base.with_suffix(".py"), base / "__init__.py"):
         if path.is_file():
@@ -45,9 +45,9 @@ def _tree(module):
 
 
 def _imports_of(tree, here=""):
-    """fleet_core modules a parsed file imports, absolute or relative, and the names it takes.
+    """파싱한 파일이 임포트하는 fleet_core 모듈(절대/상대)과 가져오는 이름.
 
-    `here` is the importing module, needed to resolve a relative import.
+    `here`는 상대 임포트를 풀 때 쓰는, 임포트하는 쪽 모듈.
     """
     modules, names = set(), set()
     for node in ast.walk(tree):
@@ -55,7 +55,7 @@ def _imports_of(tree, here=""):
             if node.level:
                 parts = here.split(".") if here else []
                 if _is_module(here) and _path(here).name == "__init__.py":
-                    parts.append("__init__")  # inside a package, `.` is the package itself
+                    parts.append("__init__")  # 패키지 안에서 `.`은 패키지 자신
                 parts = parts[:-node.level]
                 base = ".".join(parts + ([node.module] if node.module else []))
             elif (node.module or "").startswith("fleet_core."):
@@ -82,7 +82,7 @@ def _package_imports(module):
 
 
 def _closure(*modules):
-    """Every fleet_core module reachable from `modules`, themselves included."""
+    """`modules`에서 닿는 모든 fleet_core 모듈(자신 포함)."""
     seen, stack = set(), list(modules)
     while stack:
         current = stack.pop()
@@ -116,7 +116,7 @@ def test_traffic_takes_only_its_own_vocabulary_from_commands():
 
 
 def test_traffic_has_no_order_or_basket_field():
-    for module in _closure(*TRAFFIC) - {"common.commands"}:  # shared vocabulary
+    for module in _closure(*TRAFFIC) - {"common.commands"}:  # 공유 어휘
         tree = _tree(module)
         used = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
         used |= {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
@@ -126,7 +126,7 @@ def test_traffic_has_no_order_or_basket_field():
 
 
 def test_the_checks_above_can_fail():
-    """The orchestrator is the counterexample: it does reach those names and fields."""
+    """반례는 orchestrator다. 그 이름과 필드에 실제로 닿는다."""
     assert "basket" in {n.attr for n in ast.walk(_tree("orders.orchestrator"))
                         if isinstance(n, ast.Attribute)}
     assert _package_imports("orders.orchestrator")[1] & ORDER_SIDE_NAMES
@@ -142,9 +142,9 @@ def test_every_spelling_of_an_import_is_seen():
         ("from ..orders.orchestrator import OrderOrchestrator", "traffic.controller",
          "orders.orchestrator"),
         ("from ..orders import orchestrator", "traffic.controller", "orders.orchestrator"),
-        ("from .manager import FleetManager", "probe", "manager"),  # a top-level module
+        ("from .manager import FleetManager", "probe", "manager"),  # 최상위 모듈
         ("from . import manager", "probe", "manager"),
-        ("from fleet_core import orders", "", "orders"),  # the package itself
+        ("from fleet_core import orders", "", "orders"),  # 패키지 자체
         ("from .. import orders", "traffic.controller", "orders"),
         ("import fleet_core.orders", "", "orders"),
     ):
@@ -155,10 +155,10 @@ def test_every_spelling_of_an_import_is_seen():
 
 def test_a_package_import_counts_as_the_order_side_and_can_be_followed():
     assert _order_side("orders") and not _order_side("traffic")
-    assert "orders" in _closure("orders")  # read through its __init__.py, not orders.py
+    assert "orders" in _closure("orders")  # `orders.py`가 아니라 `__init__.py`를 통해 읽는다
     assert "traffic.controller" in _imports_of(ast.parse("from . import controller"), "traffic")[0]
 
 
 def test_orders_do_not_import_traffic():
-    """The two talk only through commands that FleetManager carries across."""
+    """둘은 FleetManager가 실어 나르는 명령으로만 대화한다."""
     assert not {m for m in _closure("orders.orchestrator") if m.startswith("traffic.")}

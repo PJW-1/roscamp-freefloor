@@ -1,4 +1,4 @@
-"""Zone lock records: one holder per zone, FIFO queue, nothing else may change them."""
+"""구역 잠금 기록: 구역당 점유자 하나, FIFO 큐. 다른 경로로 바꿀 수 없다."""
 import pytest
 from fleet_core.traffic.zones import ZoneLocks
 
@@ -14,7 +14,7 @@ def zones(now):
 
 
 def test_t04_two_robots_requesting_one_zone(zones):
-    """T-04: the first requester holds the zone and the second waits."""
+    """T-04: 먼저 요청한 쪽이 점유하고 둘째는 기다린다."""
     assert zones.request("r1", "A") is True
     assert zones.request("r2", "A") is False
     assert zones.holder("A") == "r1"
@@ -22,7 +22,7 @@ def test_t04_two_robots_requesting_one_zone(zones):
 
 
 def test_t04_fifo_order_on_release(zones):
-    """T-04: a freed zone goes to the head of the queue, not to whoever asks first."""
+    """T-04: 풀린 구역은 대기열 맨 앞에 가고, 먼저 묻는 쪽에 가지 않는다."""
     zones.request("r1", "A")
     zones.request("r2", "A")
     zones.request("r3", "A")
@@ -35,7 +35,7 @@ def test_t04_fifo_order_on_release(zones):
 
 
 def test_t04_request_is_idempotent(zones):
-    """T-04: repeating a request neither duplicates the queue entry nor loses the place."""
+    """T-04: 요청을 반복해도 큐 항목이 늘거나 순번을 잃지 않는다."""
     assert zones.request("r1", "A") is True
     assert zones.request("r1", "A") is True
     zones.request("r2", "A")
@@ -44,7 +44,7 @@ def test_t04_request_is_idempotent(zones):
 
 
 def test_t04_release_by_non_holder_is_refused(zones):
-    """T-04: only the holder can release."""
+    """T-04: 점유자만 놓을 수 있다."""
     zones.request("r1", "A")
     assert zones.release("r2", "A") is False
     assert zones.holder("A") == "r1"
@@ -141,7 +141,7 @@ def test_one_robot_may_hold_both_zones_of_a_pair():
 
 
 def test_first_come_first_served_holds_across_a_pair():
-    """Otherwise a robot at a crossing waits for as long as the other road stays busy."""
+    """그렇지 않으면 교차로의 로봇은 다른 길이 붙잡힌 만큼 기다린다."""
     zones = paired()
     assert zones.request("r1", "A")
     assert not zones.request("r2", "B"), "first in line for the crossing"

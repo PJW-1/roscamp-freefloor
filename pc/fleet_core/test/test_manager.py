@@ -1,4 +1,4 @@
-"""FleetManager wires the two cores: inside calls stay inside, and the old outputs come out."""
+"""FleetManager는 두 코어를 잇는다: 내부 호출은 안에 머물고 옛 출력은 그대로 나온다."""
 from core_helpers import cmds
 from fleet_core.common.commands import (
     CancelDispatchCmd,
@@ -133,7 +133,7 @@ def test_a_robot_faulted_by_the_arm_stops_being_available_to_traffic():
 
 
 def _filled_and_leaving(robot="r1"):
-    """A basket filled through the real results, on its way out, no white box."""
+    """실제 결과로 채워지고 나가는 중인 바구니. 화이트박스 없음."""
     core, now = make({robot: (4, 3)}, [O1])
     out = drive(core, robot, lambda: core.robot_view(robot)["order"] == "O-001")
     core.on_fill_result(cmds(out, "FillCmd")[0].goal_id, True, {"A": 1}, {}, "")
@@ -150,7 +150,7 @@ def test_a_real_fill_opens_the_trip_out_by_name():
 
 
 def test_recovery_after_a_real_fill_still_heads_to_outbound():
-    """test_fleet_unit forces the same story through legacy_core; this one uses real inputs."""
+    """test_fleet_unit은 legacy_core로 같은 상황을 강제하고, 여기서는 실제 입력을 쓴다."""
     core, now = _filled_and_leaving()
     now[0] += core.params.comm_timeout_s + 0.1
     core.tick()
@@ -166,7 +166,7 @@ def test_recovery_after_a_real_fill_still_heads_to_outbound():
 
 
 def test_a_robot_at_a_station_is_never_in_a_wait_cycle():
-    """Why the retreat choice ignores cargo at a station: no request, so no place in a cycle."""
+    """후퇴 선택이 스테이션의 적재를 무시하는 이유: 요청이 없어 순환에 낄 수 없다."""
     core, _ = make({"r1": (4, 3), "r2": (3, 3)}, [O1])
     drive(core, "r1", lambda: core.traffic.robot_view("r1")["phase"] == "AT_STATION")
     assert "r1" not in [r for z in core.zones.snapshot().values() for r in z["queue"]]
@@ -239,7 +239,7 @@ def test_a_waiting_robot_shows_the_zone_and_who_is_in_the_way():
 
 
 def test_sr17_every_robot_state_can_be_told_apart():
-    """대기, 이동, 도킹, 담기 대기, 출고 대기, 오류 + 원인. The table is in the worklog."""
+    """대기, 이동, 도킹, 담기 대기, 출고 대기, 오류 + 원인. 표는 worklog에 있다."""
     core, _ = make({"r1": (4, 3), "r2": (2, 0)})
     assert status(core, "r1").task_type == "WAIT"
     core.on_order_board("RUN", [O1])

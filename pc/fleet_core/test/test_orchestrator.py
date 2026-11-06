@@ -1,4 +1,4 @@
-"""OrderOrchestrator alone: it asks for robots and arms, it never sees a lane or a pose."""
+"""OrderOrchestrator 단독: 로봇과 팔을 요청할 뿐 레인이나 자세는 모른다."""
 from core_helpers import cmds, codes
 from fleet_core.common.commands import (
     CancelDispatchCmd,
@@ -31,12 +31,12 @@ def only(out, kind):
 
 
 def open_calls(core, out):
-    """Goal ids of the unnamed WORK dispatches the output left open."""
+    """출력이 열어 둔 이름 없는 WORK 디스패치의 목표 id."""
     return [c.goal_id for c in only(out, DispatchCmd) if not c.robot_id]
 
 
 def bound(core, robot="r1"):
-    """Bind the oldest order to a robot through a WORK result."""
+    """가장 오래된 주문을 WORK 결과로 로봇에 묶는다."""
     goal = core._open_calls[0]
     core.on_dispatch_result(goal, True, robot)
     return core.take_output()
@@ -52,7 +52,7 @@ def filling(orders=(O1,), robot="r1"):
 
 
 def outbound_goal(core, robot="r1"):
-    """The named dispatch a finished fill just sent."""
+    """채움이 끝나며 방금 보낸 이름 있는 디스패치."""
     core.step(robot)
     return [c for c in only(core.take_output(), DispatchCmd) if c.robot_id == robot][0]
 
@@ -235,7 +235,7 @@ def test_a_failed_outbound_dispatch_keeps_the_order_for_the_operator():
 
 
 def test_a_fill_the_server_canceled_by_itself_counts_as_an_attempt_with_the_retry_wait():
-    """Nobody here asked. Without the count it would be sent again on every tick, with no limit."""
+    """여기선 아무도 요청하지 않았다. 세지 않으면 틱마다 한없이 다시 보낸다."""
     core, now, fill = filling()
     core.on_fill_result(fill.goal_id, False, {"A": 1}, {}, "CANCELED")
     assert "FILL_RETRY" in codes(core.take_output())
@@ -283,7 +283,7 @@ def test_a_cancel_this_fms_asked_for_stays_harmless():
 
 
 def lose_result(core, now, limit):
-    """Let the running arm job time out and its cancel go unanswered."""
+    """실행 중인 팔 작업을 시간 초과시키고 취소에 응답하지 않게 한다."""
     now[0] += limit + 0.1
     core.check_arm_timeouts(now[0])
     core.take_output()
@@ -418,7 +418,7 @@ def test_a_late_put_after_the_order_was_reported_only_says_so():
 
 
 def test_a_fill_the_clear_canceled_that_still_placed_something_warns_of_a_second_fill():
-    """The operator knew the job was running, not what it did after: only its result says."""
+    """운영자는 작업이 실행 중임을 알았지 그 뒤 무엇을 했는지는 모른다. 결과만 알려 준다."""
     core, _, fill = filling()
     core.on_robot_removed("r1")
     core.take_output()
@@ -465,7 +465,7 @@ def test_a_job_the_clear_canceled_is_reported_once():
 
 
 def test_the_cancel_warning_waits_as_long_as_the_core_waits_for_an_arm():
-    """CANCEL_UNCONFIRMED from the node must not call an arm late that the core still waits for."""
+    """노드의 CANCEL_UNCONFIRMED는 코어가 아직 기다리는 팔을 일찍 부르면 안 된다."""
     params = load_params()
     assert params.cancel_warn_after * params.cancel_retry_s >= params.arm_cancel_wait_s
 

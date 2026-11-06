@@ -1,4 +1,4 @@
-"""tools/model_check.py on a map small enough for a test. The big numbers are in the worklog."""
+"""tools/model_check.py를 테스트용 작은 지도에서 돌린다. 큰 수치는 worklog에 있다."""
 import sys
 from pathlib import Path
 
@@ -12,7 +12,7 @@ sys.path.insert(0, str(REPO / "tools"))
 import model_check  # noqa: E402
 from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
 
-# The trip out and the trip back share one two-way lane, A to G.
+# 가는 길과 오는 길이 양방향 레인 하나(A~G)를 공유한다.
 SMALL_MAP = """
 half_width_m: 0.05
 lane_entry_m: 0.25
@@ -87,7 +87,7 @@ def test_the_example_it_prints_really_ends_in_a_wait_cycle(small_map, unbundled)
 
 
 def test_calls_that_change_nothing_can_be_left_out(small_map, bundled):
-    """events() leaves out a second dispatch and a release with nothing to release."""
+    """events()는 두 번째 dispatch와 놓을 것 없는 release를 뺀다."""
 
     class EveryCall(model_check.Model):
         def events(self, state):
@@ -105,7 +105,7 @@ def test_calls_that_change_nothing_can_be_left_out(small_map, bundled):
 
 
 def test_no_step_of_the_search_fails_a_goal_so_a_state_needs_no_retry_time(small_map, bundled):
-    """A retry time would be search state, and with time standing still it would never end."""
+    """재시도 시간은 탐색 상태가 되고, 시간이 멈추면 끝나지 않는다."""
 
     class Watched(model_check.Model):
         def apply(self, event):
@@ -120,7 +120,7 @@ def test_no_step_of_the_search_fails_a_goal_so_a_state_needs_no_retry_time(small
 
 
 def test_a_robot_queues_for_one_zone_at_a_time(small_map, unbundled):
-    """wait_zone on /fleet/robots can name one zone only because of this."""
+    """/fleet/robots의 wait_zone이 구역 하나만 말할 수 있는 근거다."""
 
     class OneQueue(model_check.Model):
         def capture(self):
@@ -153,7 +153,7 @@ def test_with_three_reports_a_zone_is_freed_on_the_third(small_map):
 
 
 def test_with_three_reports_the_same_way_still_ends_in_a_wait_cycle(small_map, unbundled):
-    """Searching all of it takes minutes, so that comparison is in the worklog."""
+    """전체 탐색에 몇 분 걸려 그 비교는 worklog에 있다."""
     model = model_check.Model(load_lane_map(small_map, bundle_two_way=False), 2, confirm=3)
     model.restore(model.initial)
     for step in unbundled.example:

@@ -1,4 +1,4 @@
-"""Whole-run scenarios on the virtual warehouse. sim_world checks the invariants each step."""
+"""가상 창고에서 도는 전체 시나리오. sim_world가 매 단계 불변식을 검사한다."""
 import math
 from dataclasses import replace
 
@@ -50,7 +50,7 @@ def test_six_orders_ship_in_order_and_every_robot_ends_up_waiting(seed):
 
 
 def test_no_orders_sends_every_robot_to_waiting():
-    """A robot left on the lane drives through the docks and over the link."""
+    """레인에 남은 로봇이 도크를 지나 링크 너머로 달린다."""
     robots = {"pinky1": {"start": "Z-R1", "speed_mps": 0.2, "pose_noise_m": 0.03},
               "pinky2": {"start": "Q-OUT-2", "speed_mps": 0.2, "pose_noise_m": 0.03},
               "pinky3": {"start": "Z-WORK", "speed_mps": 0.2, "pose_noise_m": 0.03}}
@@ -61,7 +61,7 @@ def test_no_orders_sends_every_robot_to_waiting():
 
 
 def test_waiting_keeps_the_entrance_clear():
-    """Waiting robots take the deepest cells, so the first waiting cells stay free."""
+    """대기 로봇은 가장 깊은 칸부터 차지해 입구 쪽 칸이 비어 있다."""
     world = SimWorld()
     assert world.run_until(world.done)
     cells = {world.core.robot_view(n)["waypoint"] for n in world.robots}
@@ -114,7 +114,7 @@ def test_order_burst_keeps_every_robot_working_without_waiting():
 def test_dock_order_follows_arrival_at_outbound():
     world = SimWorld(seed=11)
     assert world.run_until(world.done)
-    queue_cell = world.site.stations["OUTBOUND"].queue[-1][0]  # the node next to the dock
+    queue_cell = world.site.stations["OUTBOUND"].queue[-1][0]  # 도크 옆 칸
     arrivals = [name for _, name, cell, basket in world.visits
                 if cell == queue_cell and basket == "FULL"]
     docks = [c.robot for c in world.commands_of(DockCmd) if c.dock_id == "OUTBOUND"]
@@ -123,12 +123,12 @@ def test_dock_order_follows_arrival_at_outbound():
 
 
 def test_fifo_bind_with_robots_arriving_out_of_call_order():
-    """pinky1 is called first and far away. pinky2 is called later and docks first."""
+    """pinky1이 먼저 호출됐지만 멀고, 나중에 호출된 pinky2가 먼저 도킹한다."""
     robots = two_robots("Z-R1", "P-6")
     robots["pinky1"]["cell"] = (8, 0)
     orders = [order("O-001", A=1), order("O-002", at_s=1.0, B=1)]
     world = SimWorld(robots=robots, orders=orders)
-    world.core._missions["pinky1"].called = True  # it kept the call from before pinky2 was free
+    world.core._missions["pinky1"].called = True  # pinky2가 비기 전의 호출이 남아 있다
     assert world.run_until(world.done)
     assert_clean_finish(world)
     bound = [(e.detail, e.robot) for e in world.events if e.code == "ORDER_BOUND"]
@@ -189,7 +189,7 @@ def test_without_ship_partial_a_partial_basket_stops_the_robot_for_the_operator(
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_comm_loss_mid_trip(seed):
-    """Zones stay, others take the work, it recovers, nothing is lost."""
+    """구역은 유지되고 다른 로봇이 일을 맡으며, 복구 뒤 유실이 없다."""
     faults = [{"at_s": 40, "robot": "pinky2", "type": "comm_loss", "duration_s": 20}]
     world = SimWorld(seed=seed, faults=faults)
     world.run(40)
@@ -208,7 +208,7 @@ def test_comm_loss_mid_trip(seed):
 
 
 def test_comm_restored_cancels_waits_and_keeps_the_zone_it_is_in():
-    """CancelCmd first, no new goal during the check, then only outside zones go."""
+    """먼저 CancelCmd, 확인 중엔 새 목표 없음, 그다음 구역 밖의 것만 놓는다."""
     faults = [{"at_s": 12, "robot": "pinky1", "type": "comm_loss", "duration_s": 8}]
     world = SimWorld(faults=faults)
     assert world.run_until(lambda: world.virtual["pinky1"].comm_up and world.t > 12)
@@ -253,7 +253,7 @@ def test_nav_abort_twice_then_success():
 
 
 def test_robot_failing_on_the_way_does_not_lose_the_order():
-    """It holds no order yet, so after the operator clears it the next robot takes the order."""
+    """아직 주문이 없으므로 운영자가 치운 뒤 다음 로봇이 주문을 맡는다."""
     faults = [{"at_s": 0.0, "robot": "pinky1", "type": "nav_abort", "count": 3}]
     world = SimWorld(faults=faults, orders=[order("O-001", A=1)], robots=two_robots())
     assert world.run_until(lambda: world.state("pinky1") == "ERROR", 60)
@@ -279,7 +279,7 @@ def test_robot_failing_on_the_way_does_not_lose_the_order():
 
 
 def test_robot_stuck_on_the_lane_blocks_those_behind_and_they_warn():
-    """One ring: a robot stopped outside the waiting cells stops the rest, loudly."""
+    """링 하나에서 대기 칸 밖에 멈춘 로봇이 나머지를 세우고 경고한다."""
     params = replace(load_params(), zone_wait_warn_s=5.0)
     faults = [{"at_s": 12, "robot": "pinky1", "type": "stuck"}]
     world = SimWorld(faults=faults, params=params)
@@ -297,7 +297,7 @@ def test_robot_stuck_on_the_lane_blocks_those_behind_and_they_warn():
 
 
 def test_dock_failure_retries_then_error():
-    """Dock failures use the same retry budget as moves."""
+    """도킹 실패도 이동과 같은 재시도 횟수를 쓴다."""
     world = SimWorld(orders=[order("O-001", A=1)],
                      faults=[{"at_s": 0.0, "robot": "pinky1", "type": "dock_fail", "count": 2}])
     assert world.run_until(world.done)
@@ -326,7 +326,7 @@ def test_fill_retry_sends_only_what_remains():
 
 
 def test_arm_failing_three_times_then_operator_recovery_finishes_every_order():
-    """The operator_recovery scenario: the order comes back and every order ships."""
+    """operator_recovery 시나리오: 주문이 돌아오고 모든 주문이 출고된다."""
     orders = [order("O-001", A=2, C=2), order("O-002", B=1), order("O-003", D=1)]
     robots = two_robots("P-6", "P-5")
     world = SimWorld(orders=orders, robots=robots,
@@ -443,7 +443,7 @@ def test_stop_cancels_goals_and_arm_jobs_and_run_resumes():
 
 
 def test_shared_lane_failure_scenario():
-    """Comm loss, then two nav aborts, as in the shared_lane_failure scenario."""
+    """shared_lane_failure 시나리오: 통신 두절 뒤 내비 중단 두 번."""
     faults = [
         {"at_s": 40, "robot": "pinky2", "type": "comm_loss", "duration_s": 20},
         {"at_s": 75, "robot": "pinky1", "type": "nav_abort", "count": 2},
@@ -455,7 +455,7 @@ def test_shared_lane_failure_scenario():
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_noisy_pose_does_not_release_a_zone_the_robot_is_still_next_to(seed):
-    """A lone noisy report must not free a zone while the robot's body is still at its edge."""
+    """잡음 섞인 보고 하나로 몸체가 아직 가장자리에 있는 구역을 놓으면 안 된다."""
     world = SimWorld(seed=seed, gaussian_noise=True)
     assert world.run_until(world.done)
     assert_clean_finish(world)

@@ -1,4 +1,4 @@
-"""The contract file is the single source of truth for names, types and QoS."""
+"""이름, 타입, QoS의 기준은 계약 파일 하나다."""
 from pathlib import Path
 
 import pytest

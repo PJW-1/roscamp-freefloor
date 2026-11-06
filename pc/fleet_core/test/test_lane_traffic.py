@@ -1,4 +1,4 @@
-"""Traffic on the default map: diagonal lanes, a two-way avenue, and a crossing with no node."""
+"""기본 지도의 교통: 대각선 레인, 양방향 대로, 지점 없는 교차."""
 from dataclasses import replace
 
 import pytest
@@ -19,7 +19,7 @@ def make(where):
 
 
 def place(core, robot, node, along=0.0, to=None):
-    """Report a pose on a node, or `along` metres down the lane to the node `to`."""
+    """지점 위 자세를 보고하거나, 지점 `to`로 가는 레인을 `along` m 간 자세를 보고한다."""
     x, y = core.site.waypoint_pose(node)
     if to is not None:
         lane = core.site.lane(node, to)
@@ -50,7 +50,7 @@ def test_a_move_goes_straight_to_the_end_of_a_diagonal_lane():
 
 
 def test_one_move_per_lane_when_the_direction_changes():
-    """Lane compliance belongs to traffic: Nav2 only ever gets the end of the next straight."""
+    """레인 준수는 traffic의 몫이다. Nav2는 다음 직선의 끝만 받는다."""
     core, _ = make({"r1": "W"})
     send(core, "r1", "OUTBOUND")
     move = move_of(core.tick(), "r1")[0]
@@ -116,7 +116,7 @@ def test_a_robot_far_off_its_lane_is_reported_once():
 
 
 def test_a_robot_off_its_lane_on_the_next_goal_is_reported_again():
-    """The next goal can go out with no report in between, so nothing else marks the new goal."""
+    """사이에 보고 없이 다음 목표가 나갈 수 있어, 새 목표를 알리는 것은 이것뿐이다."""
     core, _ = make({"r1": "W"})
     send(core, "r1", "OUTBOUND")
     first = move_of(core.tick(), "r1")[-1]
@@ -132,7 +132,7 @@ def test_a_robot_off_its_lane_on_the_next_goal_is_reported_again():
     report_beside("W", first.target_id)
     assert codes(core.tick()).count("LANE_ERROR") == 1
 
-    # Past the node it left, so the next zone can be asked for and the goal after this one sent.
+    # 떠난 지점을 지났으므로 다음 구역을 요청하고 그다음 목표를 보낼 수 있다.
     place(core, "r1", "W", core.params.release_distance_m + 0.05, first.target_id)
     core.tick()
     place(core, "r1", first.target_id)
@@ -233,7 +233,7 @@ def test_before_the_commit_unit_a_robot_can_still_turn_off():
 
 
 def test_a_noisy_first_report_does_not_put_a_robot_on_the_next_node():
-    """7 cm off a node is noise. Taking it for the lane ahead hands out locks nobody stands in."""
+    """지점에서 7cm 벗어난 것은 잡음이다. 이를 앞 레인으로 보면 아무도 없는 잠금을 내준다."""
     site = load_lane_map()
     core = TrafficController(site, load_params(), ["a", "b"], lambda: 0.0)
     x, y = site.waypoint_pose("P-5")
@@ -254,8 +254,9 @@ def test_a_robot_placed_well_along_a_lane_belongs_to_the_node_it_leads_to():
 
 
 def test_recovery_trusts_a_noisy_report_only_as_far_as_what_the_robot_holds():
-    """Stopped just past d with the zone behind already freed: a noisy report may look short of
-    d, and that must not send it back into a zone another robot may have by now."""
+    """d를 막 지났고 구역은 이미 풀렸다. 잡음 보고가 d보다 짧아 보여도
+    그 사이 다른 로봇이 얻었을 구역으로 돌려보내면 안 된다.
+    """
     now = [0.0]
     site = load_lane_map()
     params = load_params()
@@ -294,7 +295,7 @@ def test_recovery_on_a_node_is_not_thrown_by_a_noisy_report():
 
 
 def test_a_robot_placed_across_a_conflict_pair_from_another_is_refused():
-    """Holding AVENUE and S together would let two robots drive through the crossing at once."""
+    """AVENUE와 S를 함께 쥐면 두 로봇이 교차로를 동시에 지나게 된다."""
     site = load_lane_map()
     core = TrafficController(site, load_params(), ["a", "b"], lambda: 0.0)
     x, y = site.waypoint_pose("A")
@@ -310,7 +311,7 @@ def test_a_robot_placed_across_a_conflict_pair_from_another_is_refused():
 
 
 def refused_on_the_crossing():
-    """a holds AVENUE, b stands on the lane that crosses it. Nobody has been told to move yet."""
+    """a는 AVENUE를 쥐고 b는 그것과 교차하는 레인에 서 있다. 아직 이동 지시는 없다."""
     now = [0.0]
     core = TrafficController(load_lane_map(), load_params(), ["a", "b"], lambda: now[0])
     place(core, "a", "A")
@@ -321,7 +322,7 @@ def refused_on_the_crossing():
 
 
 def test_nothing_moves_while_a_placement_is_refused():
-    """The robot holds no lock and is still standing there, so nobody may be sent past it."""
+    """로봇은 잠금이 없고 아직 서 있으므로 아무도 그 앞을 지나게 하면 안 된다."""
     core, _ = refused_on_the_crossing()
     send(core, "a", "OUTBOUND")
     for _ in range(3):
@@ -374,8 +375,7 @@ def found_along_a_lane(robot, node, to, along):
 
 
 def test_a_robot_found_along_a_lane_drives_to_its_end_first():
-    """A new FMS finds robots wherever they stopped. A straight line from there to the next
-    node is no lane."""
+    """새 FMS는 로봇을 멈춘 곳에서 찾는다. 거기서 다음 지점까지의 직선은 레인이 아니다."""
     core = found_along_a_lane("r1", "W", "A", 0.28)
     send(core, "r1", "OUTBOUND")
     move = move_of(core.tick(), "r1")[0]
@@ -412,8 +412,9 @@ def test_a_robot_found_on_the_lane_into_a_parking_spot_finishes_that_lane():
 
 @pytest.mark.parametrize("state", ["MOVING", "DOCKING"])
 def test_a_robot_still_on_somebodys_goal_goes_on_the_map_when_it_has_stopped(state):
-    """A goal of the FMS before this one, one that came late or a robot still braking: the new FMS
-    knows nothing of it, so it waits, and so does everybody else."""
+    """이전 FMS의 목표(늦게 온 것, 아직 제동 중인 로봇)를 새 FMS는 모르므로
+    그 로봇도 다른 모두도 기다린다.
+    """
     site = load_lane_map()
     core = TrafficController(site, load_params(), ["r1"], lambda: 0.0)
     x, y = site.waypoint_pose("W")
@@ -441,8 +442,9 @@ def test_a_robot_that_keeps_moving_is_called_out_like_a_silent_one():
 
 @pytest.mark.parametrize("d", [0.1, 0.16])
 def test_a_release_distance_within_two_radii_is_refused(d):
-    """Every pair of lanes meeting at a node turns into a conflict pair, and all that shows is
-    robots refused at the start: the waiting line cannot hold them next to each other."""
+    """한 지점에서 만나는 레인 쌍은 모두 충돌 쌍이 되어, 시작에서 거절되는 로봇만 드러난다.
+    대기줄이 서로 붙은 로봇을 담지 못한다.
+    """
     with pytest.raises(ValueError, match="twice the robot radius"):
         TrafficController(load_lane_map(), replace(load_params(), release_distance_m=d), ["r1"],
                     lambda: 0.0)

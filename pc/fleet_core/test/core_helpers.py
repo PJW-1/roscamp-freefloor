@@ -1,25 +1,25 @@
-"""Small builders shared by the FleetCore unit tests."""
+"""테스트용 FleetCore 보조 함수."""
 from fleet_core.common.params import load_params
 from grid_map import grid_site
 from legacy_core import FleetCore
 
 
 def make_core(robots, params=None):
-    """Return a core and a one-element list holding the fake time."""
+    """코어와 가짜 시간(원소 하나짜리 리스트)을 돌려준다."""
     now = [0.0]
     core = FleetCore(grid_site(), params or load_params(), list(robots), lambda: now[0])
     return core, now
 
 
 def place(core, robot, cell, yaw=0.0, state="IDLE"):
-    """Report a pose at the centre of a cell, often enough for a release to count."""
+    """셀 중심에 자세를 보고한다. 해제로 인정될 만큼 여러 번 보낸다."""
     x, y = core.site.waypoint_pose(cell)
     for _ in range(core.params.release_confirm_samples):
         core.on_robot_state(robot, x, y, yaw, state)
 
 
 def cmds(out, name):
-    """Filter tick output by class name, so tests read as what they check."""
+    """틱 출력을 클래스 이름으로 거른다."""
     return [c for c in out if type(c).__name__ == name]
 
 
@@ -28,11 +28,11 @@ def codes(out):
 
 
 def serve(core, robots, until, limit=300):
-    """Tick, finishing every running move and dock at once, until `until()` holds.
+    """`until()`이 참이 될 때까지 틱한다. 실행 중인 이동과 도킹은 즉시 끝낸다.
 
-    Arm commands are left unanswered, so a robot stops at them. Time does not advance.
-    Goals are read from the missions, so one sent by a tick before this call counts too.
-    Returns everything the ticks put out.
+    팔 명령은 응답하지 않아 로봇이 거기서 멈춘다. 시간은 흐르지 않는다.
+    목표는 미션에서 읽으므로 이 호출 전에 틱이 보낸 목표도 처리된다.
+    틱이 낸 출력을 모두 돌려준다.
     """
     seen = []
     for _ in range(limit):

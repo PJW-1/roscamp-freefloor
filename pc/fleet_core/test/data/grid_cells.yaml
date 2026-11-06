@@ -1,7 +1,7 @@
-# The old 12 x 7 cell map as a lane map. One node per cell, 0.33 m lanes, one-way, its
-# zones kept as lock units. Made by tools/convert_grid_map.py for the older tests.
-half_width_m: 0.165  # half a cell: a robot belongs to the nearer cell, as before
-lane_entry_m: 0.33  # a zone is its cells, not the lanes leading to them
+# 옛 12 x 7 셀 지도를 레인 지도로 옮긴 것. 셀마다 지점 하나, 0.33 m 일방통행 레인,
+# 구역은 잠금 단위로 유지. 예전 테스트용으로 tools/convert_grid_map.py가 만들었다.
+half_width_m: 0.165  # 반 칸: 로봇은 가까운 셀에 속한다(예전과 같음)
+lane_entry_m: 0.33  # 구역은 셀뿐이고 거기로 이어지는 레인은 아니다
 origin_m: [0.0, 0.0]
 waypoints:
   - {id: [2,0], x: 0.825, y: 0.165}

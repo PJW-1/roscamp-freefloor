@@ -1,7 +1,7 @@
-"""The old one-class FleetCore's private names, mapped onto FleetManager.
+"""옛 단일 FleetCore의 비공개 이름을 FleetManager에 대응시킨다.
 
-Only for the older tests, which force and read fields of what used to be one mission record.
-Keeping them unchanged is what shows the split kept the behaviour. New tests use the cores.
+예전 테스트가 필드를 직접 바꾸고 읽을 때만 쓴다. 분리 후에도 동작이 같음을
+보이려고 그대로 둔다. 새 테스트는 각 코어를 쓴다.
 """
 from fleet_core.manager import FleetManager
 
@@ -9,7 +9,7 @@ _ORCHESTRATOR_FIELDS = {"basket", "order", "arm", "arm_retry_at", "last_order_id
 
 
 class _Mission:
-    """One robot's old record: the fields now live in one core or the other."""
+    """로봇 하나의 옛 기록. 필드는 이제 두 코어에 나뉘어 있다."""
 
     def __init__(self, core, name):
         object.__setattr__(self, "_core", core)
@@ -26,7 +26,7 @@ class _Mission:
     def __setattr__(self, field, value):
         setattr(self._home(field), field, value)
         if field == "basket" and value == "FULL":
-            # A full basket used to mean heading out by itself. Now somebody has to say so.
+            # 예전에는 바구니가 차면 스스로 나갔다. 지금은 누가 지시해야 한다.
             self._core.orchestrator._send_to_outbound(self._home(field))
             self._core._pump()
 
