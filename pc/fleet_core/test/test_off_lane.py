@@ -420,7 +420,8 @@ def test_a_robot_on_a_detour_is_watched_and_resumed_on_its_new_lane():
     # path 모드(파트 7)는 꺾여도 쥔 데까지 묶어 T2를 지나 T1까지 간다
     target = "T1" if core.params.lane_goal_mode == "path" else "T2"
     assert [c.target_id for c in first] == [target]
-    beside_on(core, "r1", "F0", "T2", 0.05, OFF)
+    # 동쪽으로 밀면 들어오는 레인 O→F0 위라 F0로 오는 중으로 본다. 서쪽으로 민다
+    beside_on(core, "r1", "F0", "T2", 0.05, -OFF)
     out = core.tick()
     (warned,) = [e for e in events(out, "LANE_ERROR") if e.robot == "r1"]
     assert "F0 to T2" in warned.detail
@@ -494,3 +495,48 @@ def test_an_off_lane_timeout_puts_the_order_back_through_the_manager():
     view = core.robot_view("r1")
     assert (view["state"], view["order"]) == ("ERROR", None)
     assert core.traffic.status_view("r1")["fault_reason"] == "OFF_LANE"
+
+
+# ---- 재투입과 함께(파트 6 병합) ------------------------------------------------------------
+
+
+def test_a_reinstated_robot_starts_with_no_off_lane_state():
+    core, now, _, _ = stopped()
+    assert core.confirm_clear("r1", core.robot_view("r1")["held"], "lifted") is not None
+    core.tick()
+    assert core.reinstate("r1")
+    m = core._missions["r1"]
+    assert (m.off_lane_since, m.off_lane_at, m.back_on_lane) == (None, None, 0)
+    assert (m.off_lane, m.off_lane_warned, m.lane_ref) == (0, False, None)
+    x, y = core.site.waypoint_pose("P-3")
+    for _ in range(N):
+        core.on_robot_state("r1", x, y, 0.0, "IDLE")
+    core.tick()
+    assert core.robot_view("r1")["on_map"] and status(core) == ("NONE", "")
+
+
+def test_a_holder_back_on_its_lane_stays_put_while_a_reinstate_holds_it():
+    """이탈 중에 재투입 충돌로 세운 주인은 돌아와도 풀릴 때까지 목표를 받지 않는다."""
+    core, now = make({"r1": "W", "r2": "P-6"})
+    assert core.confirm_clear("r2", core.robot_view("r2")["held"], "lifted") is not None
+    first = start(core)
+    beside(core, "W", "A", 0.1, OFF)
+    core.tick()
+    assert status(core) == ("RECOVERING", "OFF_LANE")
+    assert core.reinstate("r2")
+    x, y = core.site.waypoint_pose("W")  # r1이 쥔 W에 놓았다
+    for _ in range(N):
+        core.on_robot_state("r2", x, y, 0.0, "IDLE")
+    out = core.tick()
+    assert events(out, "PLACEMENT_CONFLICT") and not core.available("r1")
+    half = core.site.half_width
+    beside(core, "W", "A", 0.1, half - 0.01)
+    out = core.tick()
+    assert events(out, "BACK_ON_LANE")
+    assert not cmds(out, "MoveCmd"), "held for the placement"
+    x, y = core.site.waypoint_pose("P-3")  # r2를 빈 자리로 옮겼다
+    for _ in range(N):
+        core.on_robot_state("r2", x, y, 0.0, "IDLE")
+    beside(core, "W", "A", 0.1, half - 0.01, 1)
+    out = core.tick()
+    assert [c.target_id for c in cmds(out, "MoveCmd") if c.robot == "r1"] == [first.target_id]

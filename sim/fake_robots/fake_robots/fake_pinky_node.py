@@ -51,6 +51,7 @@ class _Goal:
         self.success = False
         self.reason = ""
         self.abort_at: float | None = None
+        self.abort_from = None  # 쓴 고장 일정
         self.end_at = 0.0
         self.start_at = 0.0
         self.error = (0.0, 0.0, 0.0)
@@ -81,6 +82,7 @@ class FakePinkyNode(Node):
         self._motion = Motion(x, y)
         self._reports = DelayLine(cfg.report_delay_s)
         self._off_course = (site.origin[0] - OFF_COURSE_M, site.origin[1] - OFF_COURSE_M)
+        self._site = site
         self._removed = False
         self._stopped_at: float | None = None  # 물체 앞에서 선 시각
         self._clear_at: float | None = None  # 물체가 사라진 시각
@@ -163,7 +165,7 @@ class FakePinkyNode(Node):
     def _end(self, goal: _Goal, success: bool, reason: str = "") -> None:
         if (goal.abort_at is not None and not goal.done.is_set()
                 and reason != MoveTo.Result.REASON_NAV_ABORTED):
-            self._faults.give_back_nav_abort(goal.target_id)  # 대체·취소되면 다음 목표로
+            self._faults.give_back_nav_abort(goal.abort_from)  # 대체·취소되면 다음 목표로
         goal.finish(success, reason)
         if self._active is goal:
             self._rest = (RobotState.STATE_DOCKED if goal.kind == "dock" and success
@@ -189,6 +191,7 @@ class FakePinkyNode(Node):
                 if self._faults.take_nav_abort(t, goal.target_id):
                     eta = self._motion.remaining() / self._cfg.speed_mps
                     goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
+                    goal.abort_from = self._faults.last_taken
             else:
                 self._motion.clear_target()
                 goal.end_at = t + self._dock_cfg.duration_s
@@ -250,6 +253,8 @@ class FakePinkyNode(Node):
             if self._faults.removed(t):
                 self._remove(goal)
                 return
+            if self._removed:
+                self._put_back(self._faults.put_back(t))
             held = self._watch_obstacle(t, goal)
             if dt <= 0 or goal is None or goal.done.is_set() or self._faults.stuck(t):
                 return
@@ -304,6 +309,17 @@ class FakePinkyNode(Node):
             self._end(goal, False, MoveTo.Result.REASON_NAV_ABORTED)
         self._motion.clear_target()
         self._motion.x, self._motion.y = self._off_course
+        # 앞 물체는 들어낸 자리에 두고 간다
+        self._blocked = False
+        self._stopped_at = self._clear_at = None
+
+    def _put_back(self, waypoint) -> None:
+        """운영자가 로봇을 이 지점에 다시 놓고 켰다. 바구니는 시나리오가 정한 대로다."""
+        self._removed = False
+        self._motion.clear_target()
+        self._motion.x, self._motion.y = self._site.waypoint_pose(waypoint)
+        self._rest = RobotState.STATE_IDLE
+        self._reports.clear()
 
     def _publish_state(self) -> None:
         with self._lock:

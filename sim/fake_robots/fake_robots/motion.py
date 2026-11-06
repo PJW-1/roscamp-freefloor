@@ -134,21 +134,44 @@ class FaultSchedule:
     def __init__(self, faults, robot: str):
         self._own = [f for f in faults if f.robot == robot]
         self._abort_left = {id(f): f.count for f in self._own if f.type == "nav_abort"}
+        self.last_taken = None
 
     def comms_down(self, t: float) -> bool:
         return any(f.type == "comm_loss" and f.at_s <= t < f.at_s + f.duration_s
                    for f in self._own)
 
     def obstacle(self, t: float) -> bool:
-        """경로 앞에 물체가 있다(blocked 고장). 보고와 통신은 정상이다."""
+        """경로 앞에 물체가 있다(blocked 고장). 보고와 통신은 정상이다.
+
+        물체는 그 자리에 있으므로 로봇을 치우면 그 뒤로는 따라오지 않는다.
+        """
         return any(f.type == "blocked" and f.at_s <= t < f.at_s + f.duration_s
+                   and not any(g.type == "operator_remove" and f.at_s < g.at_s <= t
+                               for g in self._own)
                    for f in self._own)
 
     def stuck(self, t: float) -> bool:
-        return any(f.type == "stuck" and t >= f.at_s for f in self._own)
+        """그 뒤 다시 투입되기 전까지 멈춘다. 운영자가 고쳐 넣은 것으로 본다."""
+        return any(f.type == "stuck" and t >= f.at_s
+                   and not any(g.type == "operator_reinstate" and f.at_s < g.at_s <= t
+                               for g in self._own)
+                   for f in self._own)
 
     def removed(self, t: float) -> bool:
-        return any(f.type == "operator_remove" and t >= f.at_s for f in self._own)
+        """치웠고 그 뒤 다시 투입하지 않았다."""
+        last = self._last(t)
+        return last is not None and last.type == "operator_remove"
+
+    def put_back(self, t: float):
+        """지금 다시 투입된 상태면 놓인 지점, 아니면 None."""
+        last = self._last(t)
+        return last.start if last is not None and last.type == "operator_reinstate" else None
+
+    def _last(self, t: float):
+        """t까지 일어난 마지막 치우기나 다시 투입. 같은 시각이면 파일 뒤쪽."""
+        done = [f for f in self._own
+                if f.type in ("operator_remove", "operator_reinstate") and f.at_s <= t]
+        return sorted(done, key=lambda f: f.at_s)[-1] if done else None
 
     def drift(self, t: float) -> float:
         """이 시각 보고를 옆으로 미는 거리. 실제 위치는 그대로다."""
@@ -156,21 +179,23 @@ class FaultSchedule:
                    if f.type == "drift" and f.at_s <= t < f.at_s + f.duration_s)
 
     def take_nav_abort(self, t: float, target_id: str = "") -> bool:
-        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다. target이면 그 지점만."""
+        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다. target이면 그 지점만.
+
+        쓴 일정은 last_taken에 남는다(돌려줄 때 그 일정에).
+        """
+        self.last_taken = None
         for f in self._own:
             if (f.type == "nav_abort" and t >= f.at_s and self._abort_left[id(f)] > 0
                     and f.target in ("", target_id)):
                 self._abort_left[id(f)] -= 1
+                self.last_taken = f
                 return True
         return False
 
-    def give_back_nav_abort(self, target_id: str = "") -> None:
-        """중단이 나기 전에 끝난 목표의 고장 횟수를 돌려준다."""
-        for f in self._own:
-            if (f.type == "nav_abort" and self._abort_left[id(f)] < f.count
-                    and f.target in ("", target_id)):
-                self._abort_left[id(f)] += 1
-                return
+    def give_back_nav_abort(self, taken) -> None:
+        """중단이 나기 전에 끝난 목표의 고장 횟수를 그 목표가 쓴 일정에 돌려준다."""
+        if taken is not None and self._abort_left[id(taken)] < taken.count:
+            self._abort_left[id(taken)] += 1
 
 
 class ArmFaults:

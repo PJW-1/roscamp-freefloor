@@ -11,7 +11,7 @@ from conftest import CONTRACT, wait_until, write_scenario  # noqa: E402
 from fleet_core.common.contract import load_contract, to_ros_qos  # noqa: E402
 from fleet_interfaces.action import FillBasket, SwapBasket  # noqa: E402
 from fleet_interfaces.msg import FleetEvent, OrderItem, ZoneState, ZoneStateArray  # noqa: E402
-from fleet_interfaces.srv import ConfirmClear, ReportOrder  # noqa: E402
+from fleet_interfaces.srv import ConfirmClear, Reinstate, ReportOrder  # noqa: E402
 from rclpy.action import ActionClient  # noqa: E402
 
 C = load_contract(CONTRACT)
@@ -155,3 +155,87 @@ def test_confirm_clear_waits_until_the_robot_is_off_the_course(harness, tmp_path
     monitor.judge.truth["pinky1"] = monitor.judge.site.waypoint_pose("P-6")
     assert wait_until(lambda: calls, 8.0)  # 가짜가 제거를 알렸을 때만 호출된다
     assert monitor.judge.off_course("pinky1")
+
+
+def test_operator_reinstate_calls_reinstate_once_the_robot_is_back(harness, tmp_path):
+    monitor, probe = start(
+        harness, tmp_path, orders=ONE_ORDER, timeout_s=60,
+        expect={"orders_shipped_min": 1},
+        faults=[{"at_s": 0.5, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-6",
+                 "basket": "NONE"}])
+    calls = []
+
+    def clear(request, response):
+        calls.append(("clear", request.robot_id))
+        response.accepted = True
+        return response
+
+    def back(request, response):
+        calls.append(("reinstate", request.robot_id, request.basket, request.note))
+        response.accepted = True
+        return response
+
+    probe.create_service(ConfirmClear, C.name("confirm_clear"), clear)
+    probe.create_service(Reinstate, C.name("reinstate"), back)
+    assert wait_until(lambda: len(calls) >= 2, 10.0), calls
+    time.sleep(0.5)
+    assert calls == [("clear", "pinky1"), ("reinstate", "pinky1", "NONE", "operator_reinstate")]
+    assert not monitor.judge.off_course("pinky1")
+
+
+def _serve_both(probe, calls, clear_ok=True):
+    def clear(request, response):
+        calls.append(("clear", request.robot_id))
+        response.accepted = clear_ok
+        return response
+
+    def back(request, response):
+        calls.append(("reinstate", request.robot_id))
+        response.accepted = True
+        return response
+
+    probe.create_service(ConfirmClear, C.name("confirm_clear"), clear)
+    probe.create_service(Reinstate, C.name("reinstate"), back)
+
+
+def test_a_later_second_removal_does_not_hold_back_the_first_reinstate(harness, tmp_path):
+    """리뷰 3번: 앞으로 올 치우기는 지금의 재투입과 상관없다."""
+    _, probe = start(
+        harness, tmp_path, orders=ONE_ORDER, timeout_s=60,
+        expect={"orders_shipped_min": 1},
+        faults=[{"at_s": 0.5, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-6"},
+                {"at_s": 50.0, "robot": "pinky1", "type": "operator_remove"}])
+    calls = []
+    _serve_both(probe, calls)
+    assert wait_until(lambda: ("reinstate", "pinky1") in calls, 10.0), calls
+
+
+def test_no_reinstate_after_a_refused_clear(harness, tmp_path):
+    _, probe = start(
+        harness, tmp_path, orders=ONE_ORDER, timeout_s=60,
+        expect={"orders_shipped_min": 1},
+        faults=[{"at_s": 0.5, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-6"}])
+    calls = []
+    _serve_both(probe, calls, clear_ok=False)
+    assert wait_until(lambda: ("clear", "pinky1") in calls, 8.0)
+    time.sleep(3.0)
+    assert ("reinstate", "pinky1") not in calls
+
+
+def test_a_reinstate_not_ready_does_not_hold_back_another_robot(harness, tmp_path):
+    """2차 리뷰 5번: pinky2의 치우기가 끝나지 않아도 pinky1은 다시 넣는다."""
+    robots = {**ONE_ROBOT, "pinky2": {"start": "P-5", "speed_mps": 1.0, "pose_noise_m": 0.0}}
+    _, probe = start(
+        harness, tmp_path, orders=ONE_ORDER, timeout_s=60, robots=robots,
+        expect={"orders_shipped_min": 1},
+        faults=[{"at_s": 0.3, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 0.5, "robot": "pinky2", "type": "operator_remove"},
+                {"at_s": 1.0, "robot": "pinky2", "type": "operator_reinstate", "start": "P-5"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-6"}])
+    calls = []
+    _serve_both(probe, calls)
+    assert wait_until(lambda: ("reinstate", "pinky1") in calls, 10.0), calls
+    assert ("reinstate", "pinky2") not in calls

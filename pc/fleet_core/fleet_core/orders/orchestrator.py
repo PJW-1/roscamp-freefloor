@@ -79,6 +79,7 @@ class _LostJob:
     kind: str  # FILL 또는 SWAP
     order_id: str  # 포기할 때 묶여 있던 주문, 이미 보고했으면 빈 값
     cleared: bool = False  # 운영자가 로봇을 해제해서 취소됨
+    bound: int = 0  # 그때 주문을 묶은 차례. 같은 주문을 다시 묶으면 다른 값이다
     isolated: bool = False  # 자동 격리로 취소됨(cleared도 참)
 
 
@@ -101,6 +102,7 @@ class _Robot:
     arm: _ArmJob | None = None
     arm_retry_at: float = 0.0  # 실패나 거절 뒤 이 시각 전에는 새 팔 goal 없음
     attempts: int = 0
+    bound: int = 0  # 지금 주문을 묶은 차례(_bind_seq)
     isolated: str = ""  # 격리 이유. 해제(confirm_clear)로 지운다
 
 
@@ -113,6 +115,7 @@ class OrderOrchestrator:
         self._next_goal_id = next_goal_id or self._own_goal_id
         self._goal_seq = 0
         self._dispatch_seq = 0
+        self._bind_seq = 0
         self._robots = {name: _Robot(name) for name in robots}
         self._out: list = []
         self._run_mode: str | None = None
@@ -210,6 +213,11 @@ class OrderOrchestrator:
         r.outbound_goal = None
         self._sync_calls()
 
+    def on_robot_reinstated(self, robot, basket) -> None:
+        """운영자가 로봇을 다시 넣었다. 바구니는 운영자가 본 값, 주문 없음, 재시도 0."""
+        if robot in self._robots:
+            self._robots[robot] = _Robot(robot, basket=basket)
+
     def on_robot_isolated(self, robot, reason) -> None:
         """교통이 로봇을 격리했다(지시서 5.5). 주문은 사람 없이 대기로 돌아간다.
 
@@ -258,7 +266,7 @@ class OrderOrchestrator:
                 # 바구니 내용을 알 수 없으니 운영자가 확인해야 한다.
                 r.arm = None
                 self._lost_jobs[job.goal_id] = _LostJob(r.name, job.server, job.kind,
-                                                        self.order_of(r.name))
+                                                        self.order_of(r.name), bound=r.bound)
                 reason = f"{job.server} goal {job.goal_id} never reported"
                 self._fail(r, reason)
                 self._event("ERROR", "ARM_NO_RESULT", reason, r.name)
@@ -272,6 +280,9 @@ class OrderOrchestrator:
             self._step_filling(r)
         elif r.stage == SWAPPING:
             self._step_swapping(r)
+        elif r.basket == NONE and not r.order and r.outbound_goal is None:
+            # 바구니 없이 다시 투입됐다. 주문을 받기 전에 출고대에서 빈 바구니를 받는다.
+            self._send_to_outbound(r)
 
     def take_output(self) -> list:
         out, self._out = self._out, []
@@ -343,7 +354,7 @@ class OrderOrchestrator:
             r.arm.goal_id, self._clock() + self.params.arm_cancel_wait_s)
         self._lost_jobs[r.arm.goal_id] = _LostJob(r.name, r.arm.server, r.arm.kind,
                                                   self.order_of(r.name), cleared=True,
-                                                  isolated=isolated)
+                                                  isolated=isolated, bound=r.bound)
         r.arm = None
 
     def _result_still_due(self, r: _Robot) -> bool:
@@ -392,8 +403,9 @@ class OrderOrchestrator:
         return self._lost_jobs.pop(goal_id)
 
     def _still_bound(self, lost: _LostJob) -> bool:
-        """고장 중에는 해제나 격리만 주문을 떼어 간다."""
-        return bool(lost.order_id) and self.order_of(lost.robot) == lost.order_id
+        """고장 중에는 해제나 격리만 주문을 떼어 간다. 해제 뒤 다시 묶인 같은 주문은 다른 일이다."""
+        return (bool(lost.order_id) and self.order_of(lost.robot) == lost.order_id
+                and self._robots[lost.robot].bound == lost.bound)
 
     def _late_event(self, goal_id: int, lost: _LostJob, reported: str) -> None:
         if not lost.order_id:
@@ -438,6 +450,8 @@ class OrderOrchestrator:
             return
         record = pending[0]
         r.order = _BoundOrder(record.order_id, dict(record.items))
+        self._bind_seq += 1
+        r.bound = self._bind_seq
         r.last_order_id = record.order_id
         r.stage = FILLING
         self._event("INFO", "ORDER_BOUND", record.order_id, r.name)

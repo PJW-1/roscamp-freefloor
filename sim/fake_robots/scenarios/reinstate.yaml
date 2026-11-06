@@ -1,0 +1,40 @@
+# operator_recovery처럼 운영자가 로봇을 치운 뒤, 다시 투입한다(11-06 6번).
+# pinky2를 40초에 들어내 confirm_clear로 푼다. 쥐고 있던 주문이 있으면 맨 앞으로 돌아간다.
+# 나머지 둘이 앞 주문을 끝내고 대기한 뒤 160초에 pinky2를 빈 바구니와 함께 P-3에 다시 놓는다.
+# 심판이 reinstate를 부르고, 플릿 매니저는 다음 위치 보고로 pinky2를 맵에 올린다.
+# 200초에 주문 넷이 한꺼번에 와서 세 대 모두 불린다. pinky2도 주문을 받아 끝내야 한다.
+seed: 31
+speed_factor: 5.0
+timeout_s: 900
+stock: {arm1: {A: 8, B: 8}, arm2: {C: 8, D: 8}}
+orders:
+  - {at_s: 0, id: O-001, items: {A: 1, C: 1}}
+  - {at_s: 0, id: O-002, items: {B: 1, D: 1}}
+  - {at_s: 10, id: O-003, items: {A: 1}}
+  - {at_s: 200, id: O-004, items: {C: 1, D: 1}}
+  - {at_s: 200, id: O-005, items: {B: 1}}
+  - {at_s: 200, id: O-006, items: {A: 1, D: 1}}
+  - {at_s: 200, id: O-007, items: {C: 1}}
+robots:
+  pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 1.0, error_cm: 1.0}
+faults:
+  - {at_s: 40, robot: pinky2, type: operator_remove}
+  - {at_s: 160, robot: pinky2, type: operator_reinstate, start: P-3, basket: EMPTY}
+expect:
+  all_orders_finished: true
+  orders_shipped: 7
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  bound_after_reinstate_min: 1
+  events_include: [ZONES_CLEARED, ROBOT_REINSTATED]
+  event_counts: {ZONES_CLEARED: 1, ROBOT_REINSTATED: 1, INPUT_REJECTED: 0, PLACEMENT_CONFLICT: 0, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED, O-007: SHIPPED}

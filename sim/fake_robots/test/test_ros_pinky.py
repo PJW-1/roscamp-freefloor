@@ -262,6 +262,21 @@ def test_operator_remove_takes_the_robot_off_the_course_for_good(harness, tmp_pa
     assert not p.goal("QO").accepted
 
 
+def test_operator_reinstate_puts_the_robot_back_and_it_reports_again(harness, tmp_path):
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}},
+        faults=[{"at_s": 0.5, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-5"}])
+    assert wait_until(lambda: p.states, 5.0)
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] > 0.5, 5.0), "still reporting"
+    x, y = SITE.waypoint_pose(next(iter(SITE.zones["P-5"])))
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] < 0.3
+                      and (p.states[-1][1].pose.x, p.states[-1][1].pose.y)
+                      == pytest.approx((x, y), abs=1e-6), 8.0), "never back on P-5"
+    assert p.states[-1][1].state == RobotState.STATE_IDLE
+    assert p.goal("QO").accepted
+
+
 def test_dock_reports_phase_and_error(harness, tmp_path):
     p = start(harness, tmp_path)
     phases = []
@@ -411,6 +426,41 @@ def test_blocked_lasts_past_a_cancel_while_the_obstacle_is_there(harness, tmp_pa
     time.sleep(0.5)
     assert set(states_since(p, mark)) == {RobotState.STATE_BLOCKED}
     assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_IDLE, 8.0)
+
+
+def test_a_robot_put_back_does_not_keep_saying_blocked(harness, tmp_path):
+    """막혀 선 로봇을 치웠다 다른 곳에 놓으면 앞 막힘을 잊는다(병합 리뷰 2번)."""
+    began = time.monotonic()
+    p = start(harness, tmp_path, robots=ONE, faults=[
+        {"at_s": 1.0, "robot": "pinky1", "type": "blocked", "duration_s": 20.0},
+        {"at_s": 3.0, "robot": "pinky1", "type": "operator_remove"},
+        {"at_s": 4.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-5"}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    p.goal("N")
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 8.0)
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] > 0.5, 5.0), "still reporting"
+    assert wait_until(lambda: time.monotonic() - p.states[-1][0] < 0.3, 8.0), "never back"
+    mark = time.monotonic()
+    time.sleep(1.0)
+    assert set(states_since(p, mark - 0.3)) == {RobotState.STATE_IDLE}
+    # 물체는 들어낸 자리에 남았다. 다시 달려도 막히지 않는다(물체 구간은 21초까지)
+    assert wait_until(lambda: truth, 2.0)
+    x0, y0 = truth[-1][1], truth[-1][2]
+    px, py = SITE.waypoint_pose("P-5")
+    assert ((x0 - px) ** 2 + (y0 - py) ** 2) ** 0.5 < 0.1, "not yet back on P-5"
+    assert time.monotonic() - began < 14.0, "too late: the goal must start well inside the window"
+    mark = time.monotonic()
+    assert p.goal("P-3").accepted
+
+    def moved():
+        return max((((x - x0) ** 2 + (y - y0) ** 2) ** 0.5
+                    for when, x, y in list(truth) if when >= mark), default=0.0)
+
+    assert wait_until(lambda: moved() > 0.2, 5.0), f"it moved only {moved():.2f} m"
+    seen = set(states_since(p, mark))
+    assert RobotState.STATE_BLOCKED not in seen, seen  # 도착 뒤 IDLE은 괜찮다
+    assert time.monotonic() - began < 20.0, "the watch must end inside the obstacle window"
 
 
 def test_a_robot_says_localizing_until_it_has_a_pose(harness, tmp_path):

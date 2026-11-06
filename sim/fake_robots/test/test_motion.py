@@ -137,8 +137,20 @@ def test_a_nav_abort_given_back_is_taken_by_the_next_goal():
     """중단 전에 대체되거나 취소된 목표는 고장 횟수를 돌려준다."""
     s = FaultSchedule(faults(), "pinky2")
     assert [s.take_nav_abort(80.0) for _ in range(2)] == [True, True]
-    s.give_back_nav_abort()
+    s.give_back_nav_abort(s.last_taken)
     assert [s.take_nav_abort(81.0) for _ in range(2)] == [True, False]
+
+
+def test_a_nav_abort_is_given_back_to_the_schedule_that_goal_used():
+    """일정이 겹치면 조건에 맞는 첫 일정이 아니라 그 목표가 쓴 일정에 돌려준다(Codex 5)."""
+    s = FaultSchedule([Fault(at_s=0, robot="pinky1", type="nav_abort", count=1),
+                       Fault(at_s=0, robot="pinky1", type="nav_abort", count=1, target="F2")],
+                      "pinky1")
+    assert s.take_nav_abort(1.0, "F2") is True  # 첫 일정(대상 없음)
+    assert s.take_nav_abort(2.0, "F2") is True  # F2 일정
+    s.give_back_nav_abort(s.last_taken)  # 두 번째 목표가 대체됐다
+    assert s.take_nav_abort(3.0, "W") is False, "the plain schedule was used up"
+    assert s.take_nav_abort(4.0, "F2") is True
 
 
 def test_nav_abort_with_a_target_hits_only_goals_to_that_waypoint():
@@ -169,11 +181,48 @@ def test_an_obstacle_is_there_for_its_window_and_only_for_its_robot():
     assert not other.obstacle(10.0)
 
 
+def test_an_obstacle_stays_where_the_robot_was_taken_off_the_course():
+    """치운 뒤에는 앞 물체가 따라오지 않는다(수정 리뷰)."""
+    block = Fault(at_s=8, robot="pinky1", type="blocked", duration_s=15)
+    removed = FaultSchedule([block, Fault(at_s=10, robot="pinky1", type="operator_remove")],
+                            "pinky1")
+    assert [removed.obstacle(t) for t in (9.0, 10.0, 12.0)] == [True, False, False]
+    assert FaultSchedule([block], "pinky1").obstacle(12.0)
+    later = FaultSchedule([Fault(at_s=5, robot="pinky1", type="operator_remove"), block],
+                          "pinky1")
+    assert later.obstacle(12.0), "a block after the removal still counts"
+
+
 def test_operator_remove_is_per_robot_and_lasts():
     s = FaultSchedule([Fault(at_s=60, robot="pinky1", type="operator_remove")], "pinky1")
     assert not s.removed(59.9) and s.removed(60.0) and s.removed(1e6)
     other = FaultSchedule([Fault(at_s=60, robot="pinky1", type="operator_remove")], "pinky2")
     assert not other.removed(1e6)
+
+
+def test_operator_reinstate_ends_a_removal_until_the_next_one():
+    own = [Fault(at_s=60, robot="pinky1", type="operator_remove"),
+           Fault(at_s=100, robot="pinky1", type="operator_reinstate", start=(3, 4)),
+           Fault(at_s=200, robot="pinky1", type="operator_remove")]
+    s = FaultSchedule(own, "pinky1")
+    assert s.removed(60.0) and s.removed(99.9)
+    assert not s.removed(100.0) and not s.removed(199.9)
+    assert s.removed(200.0) and s.removed(1e6)
+    assert s.put_back(99.9) is None and s.put_back(100.0) == (3, 4)
+    assert s.put_back(150.0) == (3, 4) and s.put_back(200.0) is None
+    assert FaultSchedule(own, "pinky2").put_back(150.0) is None
+
+
+def test_a_reinstate_ends_a_stuck_before_it_and_not_one_after_it():
+    """운영자가 고쳐 다시 넣었다. 그 뒤의 stuck은 다시 멈춘다(리뷰 5번)."""
+    own = [Fault(at_s=5, robot="pinky1", type="stuck"),
+           Fault(at_s=10, robot="pinky1", type="operator_remove"),
+           Fault(at_s=20, robot="pinky1", type="operator_reinstate", start=(3, 4)),
+           Fault(at_s=30, robot="pinky1", type="stuck")]
+    s = FaultSchedule(own, "pinky1")
+    assert s.stuck(5.0) and s.stuck(19.9)
+    assert not s.stuck(20.0) and not s.stuck(29.9)
+    assert s.stuck(30.0)
 
 
 def test_arm_fail_counts_down_per_arm_after_its_start_time():

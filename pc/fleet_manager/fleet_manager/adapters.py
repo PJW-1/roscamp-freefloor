@@ -131,6 +131,16 @@ def confirm_clear_response(response, released: list[str] | None, reason: str = "
     return response
 
 
+def reinstate_args(request) -> tuple[str, str, str]:
+    return request.robot_id, request.basket, request.note
+
+
+def reinstate_response(response, accepted: bool, reason: str = ""):
+    response.accepted = bool(accepted)
+    response.reason = "" if accepted else str(reason)
+    return response
+
+
 def order_board_mode(msg: OrderBoard) -> str:
     return msg.run_mode
 

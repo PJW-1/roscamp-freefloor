@@ -61,13 +61,14 @@ from fleet_core.traffic.mission import (
 )
 from fleet_core.traffic.off_lane import TrafficOffLane
 from fleet_core.traffic.recovery import TrafficRecovery
+from fleet_core.traffic.reinstate import TrafficReinstate
 from fleet_core.traffic.release_floor import TrafficReleaseFloor
 from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
 class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, TrafficDetour,
-                        TrafficIsolation, TrafficPath, TrafficReleaseFloor):
+                        TrafficIsolation, TrafficPath, TrafficReleaseFloor, TrafficReinstate):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -102,6 +103,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         self._missing_reported = False
         self._no_robot_warned = False
         self.clear_reason = ""  # 마지막 confirm_clear 거부 이유, 받아들이면 빈 값
+        self._joining: set[str] = set()  # 다시 투입했고 아직 맵에 안 오른 로봇(reinstate.py)
+        self._blocking: dict[str, set[str]] = {}  # 재투입 로봇 -> 그 때문에 세운 구역 주인
 
     # ---- inputs -------------------------------------------------------------------------
 
@@ -155,7 +158,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         if m is None:
             self._out.append(DispatchResult(goal_id, False, robot_id, "NO_SUCH_ROBOT"))
             return
-        if not m.available:
+        if not self.available(robot_id):  # 재투입 때문에 세운 로봇도 새 배차를 받지 않는다
             self._out.append(DispatchResult(goal_id, False, robot_id, "NOT_AVAILABLE"))
             return
         if m.dispatch:
@@ -263,7 +266,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
                     f"{m.dest} error x={error_x_cm} y={error_y_cm} yaw={error_yaw_deg}", robot)
         self._finish_dispatch(m, error_x_cm, error_y_cm, error_yaw_deg)
 
-    # 운영자 입력 confirm_clear는 recovery.py에 있다.
+    # 운영자 입력 confirm_clear는 recovery.py, reinstate는 reinstate.py에 있다.
 
     # ---- outputs ------------------------------------------------------------------------
 
@@ -281,7 +284,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
 
     def available(self, robot) -> bool:
         m = self._missions.get(robot)
-        return m.available if m else False
+        return m.available and not self._held_for_placement(robot) if m else False
 
     def tick(self) -> list:
         """한 주기 전체. 단계 사이에 할 일이 없는 호출자용."""
@@ -330,7 +333,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         self._warn_if_no_robot()
         called = self.selector.pick(len(self._open_calls), infos)
         for m in self._missions.values():
-            if m.available:
+            if self.available(m.name):
                 m.called = m.name in called
                 m.await_pick = False
                 self._redirect(m)
@@ -403,8 +406,9 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         return self._goal_seq
 
     def _not_placed(self) -> list[_Mission]:
+        """시작 때 기다리는 로봇. 다시 투입한 로봇은 기다리지 않는다."""
         return [m for m in self._missions.values()
-                if not m.placed and m.fault != OUT_OF_SERVICE]
+                if not m.placed and m.fault != OUT_OF_SERVICE and m.name not in self._joining]
 
     def _everyone_reported(self, now: float) -> bool:
         missing = self._not_placed()
@@ -438,13 +442,15 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         zone = self._zone(waypoint)
         in_the_way = self.zones.holders_around(zone, m.name)
         if not self.zones.force_acquire(m.name, zone):
+            stopped = self._placement_blocked(m, in_the_way)
             if m.fault_reason != PLACEMENT_CONFLICT:
                 m.fault = ERROR
                 m.fault_reason = PLACEMENT_CONFLICT
                 self._event("ERROR", PLACEMENT_CONFLICT,
-                            f"{m.name} cannot take {zone}, held: {in_the_way}", m.name)
+                            f"{m.name} cannot take {zone}, held: {in_the_way}{stopped}", m.name)
             return
         m.placed = True
+        self._joined(m)
         m.path = [waypoint]
         m.idx = 0
         m.phase = PARKED if waypoint in self.site.parking else IDLE
@@ -648,10 +654,11 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             waypoint=waypoint,
             called=m.called,
             parked=waypoint in self.site.parking,
-            # 막힘으로 선 로봇은 새 호출을 받지 않고, 대기 줄에서는 뒤 로봇이 앞지르지 않는다
-            eligible=(m.available and not m.hold and m.dispatch is None
+            # 막힘으로 선 로봇은 새 호출을 받지 않고, 대기 줄에서는 뒤 로봇이 앞지르지 않는다.
+            # 재투입 때문에 세운 로봇은 available(robot)이 거짓이라 호출도 앞지르기도 없다
+            eligible=(self.available(m.name) and not m.hold and m.dispatch is None
                       and (m.called or not self._held_for_block(m))),
-            available=m.available and not self._held_for_block(m),
+            available=self.available(m.name) and not self._held_for_block(m),
         )
 
     def _committed(self, m: _Mission) -> bool:

@@ -136,12 +136,12 @@ flowchart TB
 
 | 노드 | 맡은 일 |
 |---|---|
-| `fake_pinky_node` | `/{pinky}/state`, `move_to`, `dock`. 고장 `comm_loss`, `nav_abort`, `stuck`, `operator_remove` |
+| `fake_pinky_node` | `/{pinky}/state`, `move_to`, `dock`. 고장 `comm_loss`, `nav_abort`, `stuck`, `operator_remove`, `operator_reinstate` |
 | `fake_workcell_node` | `/workcell/fill_basket`, `/arm1/state`, `/arm2/state`. 고장 `arm_fail`, `arm.fail_rate` |
 | `fake_arm_node` | arm3만. `/arm3/swap_basket`, `/arm3/state`. 고장 `swap_partial`, `arm.fail_rate` |
 | `fake_vision_node` | `/arm1/vision/items`, `/arm2/vision/items`. 실제 재고를 보여 주고 집어 간 만큼 줄어듭니다 |
 | `fake_central_node` | 재고 기록과 주문 목록, `/central/orders`, `submit_order`, `report_order`, `set_run_mode`, 중앙 이벤트 코드 |
-| `scenario_monitor_node` | 심판. 결과 파일을 쓰고 launch를 끝내며, `operator_remove` 때 관리자 대신 `confirm_clear`를 부릅니다 |
+| `scenario_monitor_node` | 심판. 결과 파일을 쓰고 launch를 끝내며, `operator_remove` 때 관리자 대신 `confirm_clear`를, `operator_reinstate` 때 `reinstate`를 부릅니다 |
 
 ## 실행
 
@@ -171,7 +171,7 @@ cat /tmp/run1/summary.json
 
 ## 시나리오
 
-`sim/fake_robots/scenarios/*.yaml`에 열두 개가 있습니다(기본 지도 9개, 특징 지도 3개). 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
+`sim/fake_robots/scenarios/*.yaml`에 열세 개가 있습니다(기본 지도 10개, 특징 지도 3개). 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
 
 | 이름 | 내용 | 확인하는 것 |
 |---|---|---|
@@ -187,6 +187,7 @@ cat /tmp/run1/summary.json
 | `feature_basic_orders` | `basic_orders`와 같고 특징 지도(`feature_map`)와 출발 칸만 다름 | 특징 지도에서 전부 출고(파트 5) |
 | `feature_blocked_lane` | `blocked_lane`과 같고 특징 지도, 출발 칸, 물체 시각(46초부터 30초)이 다름 | 막힌 레인을 다른 로봇이 돌아감(`DETOUR`), 전부 출고(파트 5) |
 | `feature_auto_isolation` | 특징 지도. 느린 pinky1(0.04 m/s)의 F2로 가는 이동이 3회 중단(`nav_abort`의 `target: F2`)돼 F1, F2를 쥔 채 레인 위에서 ERROR. 400초에 관리자가 치움 | 판정: 격리 로봇을 피한 `DETOUR`(`detours_around_isolated` 1 이상), 격리 뒤 관리자 전 출고(`shipped_before_operator` 4 이상), 전부 출고. 실행 기록: 6판 모두 좁은 통로로 돌아가 6건 모두 관리자 전에 출고(5.5번) |
+| `reinstate` | 관리자가 로봇 하나를 치우고 나중에 빈 바구니와 함께 다시 투입 | 다시 오른 로봇도 주문을 받아 7건 모두 출고 |
 
 `expect` 항목은 다음과 같습니다. 숫자는 정확히 일치해야 통과합니다(`_min`으로 끝나는 것은 그 값 이상).
 

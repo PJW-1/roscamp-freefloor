@@ -83,6 +83,7 @@ def test_every_way_into_the_core_is_recorded():
         "on_fill_result": (7, True, {"A": 1}, {}, ""),
         "on_swap_result": (7, True, True, True, ""),
         "confirm_clear": ("r1", ["P-6"], "lifted off"),
+        "reinstate": ("r1", "EMPTY", "back on the floor"),
         "tick": (),
     }
     public = {name for name, _ in inspect.getmembers(FleetManager, inspect.isfunction)

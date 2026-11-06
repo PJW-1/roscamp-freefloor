@@ -72,6 +72,9 @@ class ScenarioJudge:
         self._unheld_counted: set[tuple[str, str]] = set()
         self._over: set[tuple[str, ...]] = set()
         self._left_start: set[str] = set()
+        self._put_back: dict[str, tuple] = {}  # 다시 투입한 로봇 -> (놓인 지점, 면제 끝 시각)
+        self._reinstated: set[str] = set()
+        self.bound_after_reinstate = 0
         # 주문
         self.registered: list[str] = list(scenario.order_ids)
         self.final: dict[str, str] = {}
@@ -148,7 +151,11 @@ class ScenarioJudge:
         order = order_id_of(detail)
         if code == "ORDER_ACCEPTED" and order not in self.registered:
             self.registered.append(order)  # 시나리오 주문은 처음부터 등록돼 있다
+        elif code == "ROBOT_REINSTATED":
+            self._reinstated.add(source)
         elif code == "ORDER_BOUND":
+            if source in self._reinstated:
+                self.bound_after_reinstate += 1
             self.bound_log.append(order)
             self.order_log.append(("BOUND", order))
             self._bound_now.add(order)
@@ -166,6 +173,22 @@ class ScenarioJudge:
     def note(self, t: float, source: str, code: str, detail: str) -> None:
         """events.csv에 남기되 플릿 이벤트로 세면 안 되는 것을 기록한다."""
         self.event_rows.append((t, "NOTE", source, code, detail))
+
+    def put_back(self, t: float, robot: str, waypoint) -> None:
+        """관리자가 로봇을 이 지점에 다시 놓았다. 매니저가 잡을 grace_s 동안만 면제한다.
+
+        시작 칸 면제는 더 쓰지 않는다. 못 잡으면 유예가 끝나는 시각에 바로 센다.
+        """
+        self._put_back[robot] = (waypoint, t, t + self.grace_s)
+        self._left_start.add(robot)
+
+    def _put_back_spot(self, robot: str, x: float, y: float):
+        """놓인 지점에 아직 서 있으면 (지점, 놓은 시각, 유예 끝), 떠났으면 지우고 None."""
+        spot = self._put_back.get(robot)
+        if spot is not None and self.site.nearest_waypoint(x, y) != spot[0]:
+            del self._put_back[robot]
+            return None
+        return spot
 
     def on_board(self, order_ids: list[str]) -> None:
         self.board = list(order_ids)
@@ -293,14 +316,20 @@ class ScenarioJudge:
     def _check_unheld(self, t: float) -> None:
         current = set()
         for robot, (x, y) in self._positions().items():
-            if self._still_on_start_cell(robot, x, y):
+            spot = self._put_back_spot(robot, x, y)
+            if spot is None and self._still_on_start_cell(robot, x, y):
                 continue
             zone = self._zone_of_pose(x, y)
+            if self.holders.get(zone) == robot and spot is not None:
+                del self._put_back[robot]  # 잡았다
             if self.site.distance_to_zone(x, y, zone) > EPS or self.holders.get(zone) == robot:
+                continue
+            if spot is not None and t < spot[2]:
                 continue
             key = (robot, zone)
             current.add(key)
-            since = self._unheld_since.setdefault(key, t)
+            # 놓인 뒤 계속 못 잡았으면 놓은 시각부터 잰다
+            since = self._unheld_since.setdefault(key, spot[1] if spot is not None else t)
             if t - since >= self.grace_s and key not in self._unheld_counted:
                 self._unheld_counted.add(key)
                 self.unheld_violations += 1
@@ -432,6 +461,8 @@ class ScenarioJudge:
             "detours_around_isolated": at_least(self.detours_around_isolated,
                                                 ex.detours_around_isolated_min),
             "timed_out": exact(timed_out, ex.timed_out),
+            "bound_after_reinstate_min": at_least(self.bound_after_reinstate,
+                                                  ex.bound_after_reinstate_min),
             "unexpected_errors": {"value": len(unexpected), "expected": ex.unexpected_errors,
                                   "codes": unexpected,
                                   "ok": len(unexpected) == ex.unexpected_errors},

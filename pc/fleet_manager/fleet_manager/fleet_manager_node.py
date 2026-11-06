@@ -34,7 +34,7 @@ from fleet_interfaces.msg import (
     RobotStatusArray,
     ZoneStateArray,
 )
-from fleet_interfaces.srv import ConfirmClear, ReportOrder
+from fleet_interfaces.srv import ConfirmClear, Reinstate, ReportOrder
 from rclpy.action import ActionClient
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
@@ -130,6 +130,7 @@ class FleetManagerNode(Node):
                     self, SwapBasket, name("swap_basket", arm=station.server))
         self._report_client = self.create_client(ReportOrder, name("report_order"))
         self.create_service(ConfirmClear, name("confirm_clear"), self._on_confirm_clear)
+        self.create_service(Reinstate, name("reinstate"), self._on_reinstate)
 
     # ------------------------------------------------------------------ inputs
     def _on_robot_state(self, robot, msg: RobotState) -> None:
@@ -151,6 +152,10 @@ class FleetManagerNode(Node):
     def _on_confirm_clear(self, request, response):
         released = self.core.confirm_clear(*adapters.confirm_clear_args(request))
         return adapters.confirm_clear_response(response, released, self.core.last_clear_reason)
+
+    def _on_reinstate(self, request, response):
+        accepted = self.core.reinstate(*adapters.reinstate_args(request))
+        return adapters.reinstate_response(response, accepted, self.core.last_reinstate_reason)
 
     # ------------------------------------------------------------------ output loop
     def _on_tick(self) -> None:

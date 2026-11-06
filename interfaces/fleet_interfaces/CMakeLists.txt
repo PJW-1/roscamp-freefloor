@@ -26,6 +26,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
       "srv/ReportOrder.srv"
       "srv/SubmitOrder.srv"
       "srv/ConfirmClear.srv"
+      "srv/Reinstate.srv"
       DEPENDENCIES geometry_msgs builtin_interfaces)
 install(FILES contract.yaml DESTINATION share/${PROJECT_NAME})
 ament_export_dependencies(rosidl_default_runtime)

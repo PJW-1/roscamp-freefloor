@@ -4,7 +4,7 @@
 fake 모드(CI, 시뮬레이션)는 실물 로봇에만 있는 항목을 건너뛰고, real 모드는 그것도 검사한다.
 제공자를 일부러 띄우지 않은 항목은 key나 이름으로 건너뛴다.
 
-  check_interfaces.py --mode fake --wait-s 5 --skip zones,assignments,robots,heartbeat,confirm_clear
+  check_interfaces.py --mode fake --skip zones,assignments,robots,heartbeat,confirm_clear,reinstate
 
 오류가 없으면 종료 코드 0(경고는 출력), 있으면 1.
 """
