@@ -156,7 +156,7 @@ cat /tmp/run1/summary.json
 
 ## 시나리오
 
-`sim/fake_robots/scenarios/*.yaml`에 일곱 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
+`sim/fake_robots/scenarios/*.yaml`에 여덟 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
 
 | 이름 | 내용 | 확인하는 것 |
 |---|---|---|
@@ -167,6 +167,7 @@ cat /tmp/run1/summary.json
 | `stuck_robot` | 돌아오던 로봇이 대로(양방향 구간)에서 영구 정지 | 뒤따르는 로봇이 막히고 `COMM_LOST`, `ZONE_WAIT_LONG`이 남 |
 | `operator_recovery` | 팔 고장 3회로 ERROR, 관리자가 로봇을 치움. 다음 로봇도 담는 도중 치움(팔 취소가 느림) | `ORDER_REQUEUED` 후 앞으로 되돌아가고, 세 번째 로봇이 앞 작업의 취소 결과를 기다렸다가 전부 끝냄 |
 | `blocked_lane` | `basic_orders`에 pinky1 앞 물체(8초부터 15초 동안), pinky3은 처음 2초 `LOCALIZING` | 5초에 `LANE_BLOCKED`와 목표 취소, 물체가 사라지면 `LANE_CLEARED` 뒤 같은 목표로 이어 가 전부 출고 |
+| `off_lane` | `basic_orders`에 pinky1의 보고 위치만 레인 옆으로 0.3 m 밀림(7초부터 8초 동안) | `LANE_ERROR`와 목표 취소, 구역 유지, 뒤 로봇은 그 구역 앞에서 대기, 보고가 돌아오면 `BACK_ON_LANE` 뒤 같은 목표로 이어 가 전부 출고, 이탈 중 해제 0 |
 
 `expect` 항목은 다음과 같습니다. 숫자는 정확히 일치해야 통과합니다(`_min`으로 끝나는 것은 그 값 이상).
 
@@ -182,6 +183,7 @@ cat /tmp/run1/summary.json
 | `zone_holder_max` | 한 구역에 실제로 동시에 있었던 로봇 수의 최댓값 |
 | `released_without_position_check` | 로봇이 아직 구역을 벗어나지 않았는데 해제된 횟수 |
 | `unheld_zone_pose` | 잠그지 않은 구역에 로봇이 있었던 횟수 |
+| `released_while_off_lane` | `drift`로 보고가 레인 밖인 동안(시작 1초 뒤부터) 그 로봇이 놓은 구역 수 |
 | `timed_out` | 제한 시간까지 끝나지 못함. 기본 false이고, 일부러 끝나지 않는 시나리오만 true로 적습니다 |
 | `unexpected_errors` | `events_include`, `event_counts`에 없는 코드의 ERROR 이벤트 수. 기본 0 |
 | `order_results` | 주문별 최종 결과. 예: `{O-001: SHIPPED, O-003: HELD}` |

@@ -263,6 +263,42 @@ def test_blocked_again_after_coming_back_opens_the_block_again():
     assert status(core) == ("NONE", "BLOCKED")
 
 
+def test_blocked_again_within_the_rejoin_time_marks_at_the_remaining_time():
+    """이탈로 닫은 막힘의 시간은 돌아와 같은 레인에서 다시 막히면 이어 센다(rejoin)."""
+    core, now = make({"r1": "W"})
+    start(core)
+    before = 2.0
+    assert before < PARAMS.blocked_mark_s
+
+    def step(off, state="BLOCKED"):
+        now[0] = round(now[0] + 0.1, 6)
+        if state == "BLOCKED":
+            blocked_beside(core, 0.1, off, 1)
+        else:
+            beside(core, "W", "A", 0.1, off, 1)
+        return core.tick()
+
+    for _ in range(round(before / 0.1)):
+        step(0.0)
+    for _ in range(N):
+        step(OFF)  # 이탈로 서며 막힘을 닫는다
+    assert core._missions["r1"].block is None
+    for _ in range(N):
+        out = step(0.0, "MOVING")
+    assert events(out, "BACK_ON_LANE")
+    again_at = now[0]
+    out, marked_at = [], None
+    for _ in range(round(2 * PARAMS.blocked_mark_s / 0.1)):
+        out = step(0.0)
+        if events(out, "LANE_BLOCKED"):
+            marked_at = now[0]
+            break
+    assert marked_at is not None
+    waited = marked_at - again_at
+    assert waited < PARAMS.blocked_mark_s - 1.0, "the clock went on, not from zero"
+    assert abs(waited - (PARAMS.blocked_mark_s - before)) <= 0.5
+
+
 def test_a_marked_block_has_no_goal_so_lane_error_does_not_watch():
     """표시 뒤에는 목표가 취소되어 이탈을 재지 않는다. 그동안 놓는 것은 막힘 쪽 규칙만 한다."""
     core, now = make({"r1": "W"})
