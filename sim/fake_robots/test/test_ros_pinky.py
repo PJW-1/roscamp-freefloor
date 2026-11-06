@@ -400,14 +400,19 @@ def test_a_robot_put_back_does_not_keep_saying_blocked(harness, tmp_path):
     # 물체는 들어낸 자리에 남았다. 다시 달려도 막히지 않는다(물체 구간은 21초까지)
     assert wait_until(lambda: truth, 2.0)
     x0, y0 = truth[-1][1], truth[-1][2]
+    px, py = SITE.waypoint_pose("P-5")
+    assert ((x0 - px) ** 2 + (y0 - py) ** 2) ** 0.5 < 0.1, "not yet back on P-5"
     assert time.monotonic() - began < 14.0, "too late: the goal must start well inside the window"
     mark = time.monotonic()
     assert p.goal("P-3").accepted
-    time.sleep(2.5)
+
+    def moved():
+        return max((((x - x0) ** 2 + (y - y0) ** 2) ** 0.5
+                    for when, x, y in list(truth) if when >= mark), default=0.0)
+
+    assert wait_until(lambda: moved() > 0.2, 5.0), f"it moved only {moved():.2f} m"
     seen = set(states_since(p, mark))
     assert RobotState.STATE_BLOCKED not in seen, seen  # 도착 뒤 IDLE은 괜찮다
-    moved = max(((x - x0) ** 2 + (y - y0) ** 2) ** 0.5 for when, x, y in truth if when >= mark)
-    assert moved > 0.2, f"it moved only {moved:.2f} m"
     assert time.monotonic() - began < 20.0, "the watch must end inside the obstacle window"
 
 
