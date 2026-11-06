@@ -183,3 +183,39 @@ def test_one_robot_alone_finishes_every_shipped_map(path):
     result = model_check.check(load_lane_map(path), robots=1)
     assert result.complete
     assert (result.deadlocks, result.starved) == (0, 0)
+
+
+# ---- 레인 막힘과 우회(지시서 5번) ---------------------------------------------------------------
+
+
+def test_block_events_need_one_report_per_zone(small_map):
+    with pytest.raises(ValueError, match="one report"):
+        model_check.Model(load_lane_map(small_map), 2, confirm=3, blocks=True)
+
+
+def test_without_the_flag_there_are_no_block_events(small_map):
+    model = model_check.Model(load_lane_map(small_map), 2)
+    model.restore(model.initial)
+    model.apply(("open call",))
+    state = model.capture()
+    model.restore(state)
+    assert not [e for e in model.events(state) if e[0] in ("block", "unblock")]
+
+
+def test_a_blocked_robot_stops_and_drives_again_when_it_clears(small_map):
+    model = model_check.Model(load_lane_map(small_map), 2, blocks=True)
+    model.restore(model.initial)
+    model.apply(("open call",))
+    state = model.capture()
+    model.restore(state)
+    (event,) = [e for e in model.events(state) if e[0] == "block"]
+    name = event[1]
+    model.apply(event)
+    blocked = model.capture()
+    model.restore(blocked)
+    m = model.core._missions[name]
+    assert m.block and m.block.marked and m.goal is None
+    assert ("unblock", name) in model.events(blocked)
+    model.apply(("unblock", name))
+    m = model.core._missions[name]
+    assert m.block is None and m.goal is not None

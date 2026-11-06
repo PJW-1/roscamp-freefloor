@@ -292,6 +292,13 @@ class LaneMap:
 
     def plan(self, start, goal) -> list:
         """레인을 따라가는 최단 경로(미터 기준). 양 끝 지점을 포함한다."""
+        found = self.cheapest(start, goal, lambda lane: lane.length)
+        if found is None:
+            raise LaneMapError(f"no path along the lanes from {start} to {goal}")
+        return found[1]
+
+    def cheapest(self, start, goal, lane_cost) -> tuple[float, list] | None:
+        """lane_cost(레인)의 합이 가장 작은 (비용, 경로). inf인 레인은 못 지난다. 없으면 None."""
         best = {start: 0.0}
         prev: dict = {start: None}
         seen = 0  # 힙에서 지점을 비교하지 않고 동점을 가른다
@@ -303,16 +310,19 @@ class LaneMap:
                 while waypoint is not None:
                     path.append(waypoint)
                     waypoint = prev[waypoint]
-                return path[::-1]
+                return cost, path[::-1]
             if cost > best[waypoint]:
                 continue
             for lane in self._out.get(waypoint, ()):
-                total = cost + lane.length
+                step = lane_cost(lane)
+                if step == math.inf:
+                    continue
+                total = cost + step
                 if total < best.get(lane.b, math.inf):
                     best[lane.b], prev[lane.b] = total, waypoint
                     seen += 1
                     heapq.heappush(heap, (total, seen, lane.b))
-        raise LaneMapError(f"no path along the lanes from {start} to {goal}")
+        return None
 
 
 def load_lane_map(path=None, bundle_two_way: bool | None = None) -> LaneMap:
