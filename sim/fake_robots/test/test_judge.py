@@ -960,3 +960,17 @@ def test_detours_around_isolated_count_only_detours_naming_an_isolated_robot():
 def test_detours_around_isolated_is_not_checked_by_default():
     j = judge()
     assert check(j, "detours_around_isolated") == {"value": 0, "minimum": 0, "ok": True}
+
+
+def test_detours_around_isolated_see_every_holder_once_per_event():
+    j = judge(detours_around_isolated_min=1, all_orders_finished=False)
+    j.on_event(1.0, "ERROR", "pinky1", "ROBOT_ISOLATED", "NAV_ABORTED: stopped where it is")
+    j.on_event(2.0, "INFO", "pinky2", "DETOUR",
+               "avoids F1 held by pinky3, standing 16 s; "
+               "F2 held by pinky1, standing inf s; new path")
+    assert check(j, "detours_around_isolated")["value"] == 1
+    j.on_event(3.0, "ERROR", "pinky3", "ROBOT_ISOLATED", "NAV_ABORTED: stopped where it is")
+    j.on_event(4.0, "INFO", "pinky2", "DETOUR",
+               "avoids F1 held by pinky3, standing inf s; "
+               "F2 held by pinky1, standing inf s; new path")
+    assert check(j, "detours_around_isolated")["value"] == 2

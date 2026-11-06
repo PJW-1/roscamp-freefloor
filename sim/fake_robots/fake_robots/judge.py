@@ -142,8 +142,8 @@ class ScenarioJudge:
             self._operator_came = True
             self._standing_isolated.discard(source)
         elif code == "DETOUR":
-            held = re.search(r"held by ([^,;\s]+)", detail)
-            if held and held.group(1) in self._standing_isolated:
+            holders = set(re.findall(r"held by ([^,;\s]+)", detail))
+            if holders & self._standing_isolated:  # 이벤트 하나는 한 번
                 self.detours_around_isolated += 1
         order = order_id_of(detail)
         if code == "ORDER_ACCEPTED" and order not in self.registered:
