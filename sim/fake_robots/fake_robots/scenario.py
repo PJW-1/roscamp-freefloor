@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 ORDER_RESULTS = ("SHIPPED", "PARTIAL", "HELD")
-ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "blocked",
+ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "blocked", "drift",
                 "operator_reinstate")
 ARM_FAULTS = ("arm_fail", "swap_partial")
 FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
@@ -35,6 +35,7 @@ EXPECT_DEFAULTS = {
     "event_counts": {},  # 코드: 정확히 몇 번 나와야 하는지
     "shipped_before_operator_min": 0,  # 격리 뒤 confirm_clear 전 출고(지시서 5.5)
     "detours_around_isolated_min": 0,  # 격리된 로봇을 피한 DETOUR(치우기 전)
+    "released_while_off_lane": 0,  # drift로 레인 밖이라 보고하는 동안 그 로봇이 놓은 구역 수
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
                   "arm", "dock", "faults", "expect", "map"}
@@ -99,6 +100,7 @@ class Fault:
     start: tuple | None = None  # operator_reinstate: 로봇을 다시 놓는 지점
     basket: str = "EMPTY"  # operator_reinstate: 관리자가 알리는 바구니
     target: str = ""  # nav_abort: 이 지점으로 가는 목표만 중단. 비면 모든 목표
+    offset_m: float = 0.0  # drift: 보고 위치를 진행 방향 왼쪽으로 미는 거리(음수면 오른쪽)
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,7 @@ class Expect:
     event_counts: dict = field(default_factory=dict)
     shipped_before_operator_min: int = 0
     detours_around_isolated_min: int = 0
+    released_while_off_lane: int = 0
 
 
 @dataclass(frozen=True)
@@ -255,13 +258,16 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
         start = _resolve_start(raw["start"], lane_map)
         if basket not in REINSTATE_BASKETS:
             raise ScenarioError(f"operator_reinstate basket must be one of {REINSTATE_BASKETS}")
+    if kind == "drift" and not (raw.get("duration_s", 0) > 0 and raw.get("offset_m", 0) != 0):
+        raise ScenarioError(f"drift needs a positive duration_s and a nonzero offset_m: {raw}")
     target = str(raw.get("target", ""))
     if target and (kind != "nav_abort" or target not in lane_map.zone_of):
         raise ScenarioError(f"target needs nav_abort and a waypoint of the map in {raw}")
     return Fault(float(raw["at_s"]), raw.get("robot", ""), kind,
                  float(raw.get("duration_s", 0.0)), int(raw.get("count", 1)),
                  raw.get("arm", ""), int(raw.get("after_items", 0)),
-                 start=start, basket=basket, target=target)
+                 start=start, basket=basket, target=target,
+                 offset_m=float(raw.get("offset_m", 0.0)))
 
 
 def _check_reinstates(faults: list) -> None:

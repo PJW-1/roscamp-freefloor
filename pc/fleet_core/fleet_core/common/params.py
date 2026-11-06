@@ -54,6 +54,7 @@ class FleetParams:
     detour_enabled: bool = False
     station_wait_estimate_s: float = 30.0
     detour_speed_mps: float = 0.2
+    off_lane_timeout_s: float = 20.0
 
 
 def load_params(path=None) -> FleetParams:
