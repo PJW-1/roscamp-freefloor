@@ -18,6 +18,21 @@ def shown(value) -> str:
         return f"<{type(value).__name__}>"
 
 
+def text(value) -> str:
+    """문구, 출처 키, 저장에 쓸 글자. str 하위 클래스는 내용만 남긴 str로 바꾼다."""
+    if isinstance(value, str):
+        return str.__str__(value)
+    return shown(value)
+
+
+def checked(check, *args) -> str:
+    """검사기를 부른다. 비교·해시·repr이 실패하는 값으로 예외가 나면 그것을 거부 이유로 돌려준다."""
+    try:
+        return check(*args)
+    except Exception as error:
+        return f"the input could not be checked ({type(error).__name__})"
+
+
 def _number(value) -> bool:
     return isinstance(value, Real) and not isinstance(value, bool)
 
@@ -62,5 +77,5 @@ def clear_problem(robot, zone_ids, robots, zone_exists) -> str:
         return f"zone_ids is a {type(zone_ids).__name__}, not a list"
     unknown = [z for z in zone_ids if not isinstance(z, str) or not zone_exists(z)]
     if unknown:
-        return f"no such zone {unknown}"
+        return "no such zone " + ", ".join(shown(z) for z in unknown)
     return ""

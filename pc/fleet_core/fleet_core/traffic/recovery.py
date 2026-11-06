@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from fleet_core.common.commands import DispatchResult
-from fleet_core.common.validate import clear_problem
+from fleet_core.common.validate import checked, clear_problem, text
 from fleet_core.traffic.deadlock import choose_retreat, find_cycle, priority, wait_graph
 from fleet_core.traffic.mission import (
     AT_STATION,
@@ -29,11 +29,13 @@ class TrafficRecovery:
         빈 목록이 맞다. 일부 구역만 주면 의도로 보고 경고하며, 나머지는 다시 불러 푼다.
         거부 이유는 clear_reason에 남는다(받아들이면 빈 값).
         """
-        problem = clear_problem(robot, zone_ids, self._missions, self.zones.exists)
+        note = text(note)
+        problem = checked(clear_problem, robot, zone_ids, self._missions, self.zones.exists)
         if problem:
             # 없는 이름은 잘못된 입력이다. 이 로봇에 대한 판단이 아니다.
             self.clear_reason = problem
-            known = robot if isinstance(robot, str) and robot in self._missions else ""
+            name = text(robot) if isinstance(robot, str) else ""
+            known = name if name in self._missions else ""
             self._event("WARN", "INPUT_REJECTED", f"confirm_clear refused: {problem}: {note}",
                         known)
             return None

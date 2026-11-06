@@ -27,11 +27,12 @@ from fleet_core.common.commands import (
     ZoneView,
 )
 from fleet_core.common.validate import (
+    checked,
     pose_problem,
     reported_id_problem,
     robot_problem,
     run_mode_problem,
-    shown,
+    text,
 )
 from fleet_core.orders.orchestrator import FILL, FILLING, SWAP, SWAPPING, OrderOrchestrator
 from fleet_core.orders.validate import orders_problem
@@ -108,15 +109,18 @@ class FleetManager:
     def on_robot_state(self, robot, x, y, yaw, state, battery=0.0, robot_id="") -> None:
         """robot은 토픽의 로봇, robot_id는 메시지에 적힌 이름(빈 값 가능)."""
         # 받은 그대로 기록한다. robot_id가 없던 기록도 똑같이 읽힌다.
+        no_id = isinstance(robot_id, str) and text(robot_id) == ""
         self._input("on_robot_state", robot, x, y, yaw, state, battery,
-                    *([robot_id] if robot_id != "" else []))
-        problem = (robot_problem(robot, self.traffic.robots)
-                   or reported_id_problem(robot, robot_id)
-                   or pose_problem(x, y, yaw, self._bounds, self.params.input_pose_margin_m))
-        source = ("robot_state", robot if isinstance(robot, str) else shown(robot))
-        if self._topic_rejected(source, problem, "robot state dropped", robot):
+                    *([] if no_id else [robot_id]))
+        problem = checked(lambda: robot_problem(robot, self.traffic.robots)
+                          or reported_id_problem(robot, robot_id)
+                          or pose_problem(x, y, yaw, self._bounds,
+                                          self.params.input_pose_margin_m))
+        if self._topic_rejected(("robot_state", text(robot)), problem, "robot state dropped",
+                                robot):
             return
-        self.traffic.on_robot_state(robot, x, y, yaw, state, battery)
+        # state는 판단에 쓰므로 글자로 바꿔 둔다. 비교가 실패하는 값이 tick까지 가면 안 된다.
+        self.traffic.on_robot_state(robot, x, y, yaw, text(state), battery)
         self._pump()
 
     def on_order_board(self, run_mode, orders) -> None:
@@ -125,12 +129,12 @@ class FleetManager:
         틀린 주문 하나가 STOP을 막으면 안 되고, 하나만 빼면 철회로 보이기 때문이다.
         """
         self._input("on_order_board", run_mode, orders)
-        mode_problem = run_mode_problem(run_mode)
+        mode_problem = checked(run_mode_problem, run_mode)
         if mode_problem:
             self._topic_rejected(("order_board",), mode_problem, "order board dropped")
             return
-        if not self._topic_rejected(("order_board",), orders_problem(orders),
-                                    f"run_mode {run_mode} taken, orders kept as they were"):
+        if not self._topic_rejected(("order_board",), checked(orders_problem, orders),
+                                    f"run_mode {text(run_mode)} taken, orders kept as they were"):
             self._board = list(orders)
         self.traffic.on_run_mode(run_mode)
         self.orchestrator.on_order_board(run_mode, self._board)
@@ -291,7 +295,8 @@ class FleetManager:
                                "unrecordable": type(error).__name__})
 
     def _reject(self, detail, robot="") -> None:
-        known = robot if isinstance(robot, str) and robot in self.traffic.robots else ""
+        name = text(robot) if isinstance(robot, str) else ""
+        known = name if name in self.traffic.robots else ""
         self._out.append(EventOut("WARN", "INPUT_REJECTED", detail, known))
 
     def _topic_rejected(self, source, problem, what, robot="") -> bool:
@@ -306,7 +311,7 @@ class FleetManager:
 
     def _robot_refused(self, what, robot) -> bool:
         """모르는 로봇의 goal 응답. 잘못 부른 경우에만 생긴다."""
-        problem = robot_problem(robot, self.traffic.robots)
+        problem = checked(robot_problem, robot, self.traffic.robots)
         if problem:
             self._reject(f"{what} refused: {problem}")
         return bool(problem)

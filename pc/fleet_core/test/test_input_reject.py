@@ -488,11 +488,80 @@ def test_stop_with_an_order_that_cannot_be_printed_is_still_applied(orders, reco
     assert len(rejected(core.tick())) == 1
 
 
-def test_other_inputs_that_cannot_be_printed_are_rejected_without_raising():
-    core, now = make()
-    core.on_order_board(_Unprintable(), [O1])
-    core.on_robot_state("pinky1", _Unprintable(), 0.0, 0.0, "IDLE", 90.0, "pinky1")
-    core.on_robot_state("pinky2", 0.0, 0.0, 0.0, "IDLE", 90.0, _Unprintable())
-    core.on_robot_state(_Unprintable(), 0.0, 0.0, 0.0, "IDLE", 90.0)
-    core.on_move_result(_Unprintable(), 1, True, "")
-    assert len(rejected(core.tick())) == 5
+class _Spiteful(str):
+    """비교, 해시, repr, str이 모두 실패하는 문자열."""
+
+    def __eq__(self, other):
+        raise RuntimeError("no eq")
+
+    def __ne__(self, other):
+        raise RuntimeError("no ne")
+
+    def __hash__(self):
+        raise RuntimeError("no hash")
+
+    def __repr__(self):
+        raise RuntimeError("no repr")
+
+    def __str__(self):
+        raise RuntimeError("no str")
+
+
+class _Incomparable(str):
+    """해시는 되지만 비교가 실패하는 문자열. dict 키로 쓸 수 있다."""
+
+    __hash__ = str.__hash__
+
+    def __eq__(self, other):
+        raise RuntimeError("no eq")
+
+    def __ne__(self, other):
+        raise RuntimeError("no ne")
+
+
+ODD_CALLS = {
+    "a pose": lambda c: c.on_robot_state("pinky1", _Unprintable(), 0.0, 0.0, "IDLE", 90.0),
+    "a robot_id": lambda c: c.on_robot_state("pinky1", 0.0, 0.0, 0.0, "IDLE", 90.0,
+                                             _Spiteful("pinky1")),
+    "a robot on the state topic": lambda c: c.on_robot_state(_Spiteful("pinky1"), 0.0, 0.0,
+                                                             0.0, "IDLE", 90.0),
+    "a robot in a result": lambda c: c.on_move_result(_Spiteful("pinky1"), 1, True, ""),
+    "a run mode": lambda c: c.on_order_board(_Spiteful("STOP"), [O1]),
+    "a zone": lambda c: c.confirm_clear("pinky1", [_Unprintable()], "lifted"),
+    "a robot to clear": lambda c: c.confirm_clear(_Spiteful("pinky1"), ["P-6"], "lifted"),
+    "a note": lambda c: c.confirm_clear("pinky1", ["NO-SUCH-ZONE"], _Unprintable()),
+}
+
+
+@pytest.mark.parametrize("call", ODD_CALLS.values(), ids=ODD_CALLS.keys())
+def test_an_odd_value_anywhere_is_rejected_without_raising(call):
+    core, now, lines = _recorded()
+    call(core)
+    assert len(rejected(core.tick())) == 1
+
+
+ODD_ORDERS = {
+    "an order id that cannot be hashed": [OrderRecord(_Spiteful("O-009"), {"A": 1})],
+    "an item name that cannot be compared": [OrderRecord("O-009", {_Incomparable("A"): 1})],
+}
+
+
+@pytest.mark.parametrize("orders", ODD_ORDERS.values(), ids=ODD_ORDERS.keys())
+def test_stop_with_an_order_that_cannot_be_checked_is_still_applied(orders):
+    core, now, lines = _recorded()
+    core.on_order_board("STOP", orders)
+    assert not core.traffic.running
+    assert len(rejected(core.tick())) == 1
+
+
+def test_a_state_that_cannot_be_compared_is_kept_as_plain_text():
+    """state는 거부하지 않는다. 비교가 실패하는 값이 tick까지 가면 안 된다."""
+    now = [0.0]
+    core = FleetManager(load_lane_map(), load_params(), list(SPOTS), lambda: now[0])
+    for robot, waypoint in SPOTS.items():
+        x, y = core.site.waypoint_pose(waypoint)
+        for _ in range(core.params.release_confirm_samples):
+            core.on_robot_state(robot, x, y, 0.0, _Incomparable("IDLE"), 90.0)
+    assert not rejected(core.tick())
+    state = core.traffic.status_view("pinky1")["fsm_state"]
+    assert state == "IDLE" and type(state) is str
