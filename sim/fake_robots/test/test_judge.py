@@ -802,6 +802,46 @@ def test_orders_bound_by_a_robot_after_its_reinstate_are_counted():
     assert check(j, "bound_after_reinstate_min") == {"value": 1, "minimum": 1, "ok": True}
 
 
+def reinstated_judge():
+    j = ScenarioJudge(SITE, scenario(faults=REINSTATED, orders_shipped_min=1,
+                                     shipped_after_reinstate_min=1), margin_m=0.13, grace_s=1.0)
+    event(j, "ROBOT_REINSTATED", "basket EMPTY", t=2.0, source="pinky2")
+    return j
+
+
+def test_an_order_bound_after_a_reinstate_but_requeued_and_shipped_by_another_does_not_count():
+    j = reinstated_judge()
+    event(j, "ORDER_BOUND", "O-1", t=3.0, source="pinky2")
+    event(j, "ORDER_REQUEUED", "O-1 was bound, basket held {}", t=4.0, source="pinky2")
+    event(j, "ORDER_BOUND", "O-1", t=5.0, source="pinky1")
+    event(j, "ORDER_SHIPPED", "O-1", t=6.0)
+    assert check(j, "shipped_after_reinstate_min") == {"value": 0, "minimum": 1, "ok": False}
+    assert check(j, "bound_after_reinstate_min")["value"] == 1  # 기존 판정은 그대로
+
+
+def test_an_order_bound_after_a_reinstate_and_shipped_counts():
+    j = reinstated_judge()
+    event(j, "ORDER_BOUND", "O-1", t=3.0, source="pinky2")
+    event(j, "ORDER_SHIPPED", "O-1", t=6.0)
+    assert check(j, "shipped_after_reinstate_min") == {"value": 1, "minimum": 1, "ok": True}
+
+
+def test_an_order_bound_before_the_clear_does_not_count():
+    j = ScenarioJudge(SITE, scenario(faults=REINSTATED, orders_shipped_min=1,
+                                     shipped_after_reinstate_min=1), margin_m=0.13, grace_s=1.0)
+    event(j, "ORDER_BOUND", "O-1", t=0.5, source="pinky2")
+    event(j, "ROBOT_REINSTATED", "basket EMPTY", t=2.0, source="pinky2")
+    event(j, "ORDER_SHIPPED", "O-1", t=6.0)
+    assert check(j, "shipped_after_reinstate_min") == {"value": 0, "minimum": 1, "ok": False}
+
+
+def test_a_held_order_bound_after_a_reinstate_does_not_count():
+    j = reinstated_judge()
+    event(j, "ORDER_BOUND", "O-1", t=3.0, source="pinky2")
+    event(j, "ORDER_HELD", "O-1", t=6.0)
+    assert check(j, "shipped_after_reinstate_min")["value"] == 0
+
+
 def test_finish_waits_for_a_robot_after_a_comm_loss():
     lost = scenario(faults=[{"at_s": 1, "robot": "pinky1", "type": "comm_loss", "duration_s": 5}],
                     orders_shipped_min=1)

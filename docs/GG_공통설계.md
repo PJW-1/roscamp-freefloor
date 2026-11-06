@@ -406,7 +406,7 @@ robots:
   pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03} # report_delay_s(보고 지연, 시나리오 초), stop_error_m(정지 오차, 축마다 표준편차)도 쓸 수 있다. 기본 0
 arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
 dock: {duration_s: 3.0, error_cm: 1.0}
-faults: [] # comm_loss, nav_abort(target: 지점이면 그 지점 목표만), stuck 유지. 추가: arm_fail(대상 arm, count), swap_partial(count), operator_remove(로봇을 코스에서 치우고 confirm_clear 호출), drift(robot, duration_s, offset_m: 그동안 보고 위치만 진행 방향 왼쪽으로 민다), operator_reinstate(start 지점에 다시 놓고, 앞선 confirm_clear가 받아들여진 뒤 reinstate 호출, basket 기본 EMPTY. 그 로봇을 치운 뒤에만. 그 전의 stuck도 끝낸다). expect `bound_after_reinstate_min`: 다시 투입한 로봇이 그 뒤 묶은 주문 수의 하한
+faults: [] # comm_loss, nav_abort(target: 지점이면 그 지점 목표만), stuck 유지. 추가: arm_fail(대상 arm, count), swap_partial(count), operator_remove(로봇을 코스에서 치우고 confirm_clear 호출), drift(robot, duration_s, offset_m: 그동안 보고 위치만 진행 방향 왼쪽으로 민다), operator_reinstate(start 지점에 다시 놓고, 앞선 confirm_clear가 받아들여진 뒤 reinstate 호출, basket 기본 EMPTY. 그 로봇을 치운 뒤에만. 그 전의 stuck도 끝낸다). expect `bound_after_reinstate_min`: 다시 투입한 로봇이 그 뒤 묶은 주문 수의 하한, `shipped_after_reinstate_min`: 그중 ORDER_REQUEUED로 돌아가지 않고 출고(SHIPPED·PARTIAL)된 주문 수의 하한
 expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders_held: 0, fifo_violations: 0, dual_arm_overlaps: 0,
   zone_holder_max: 1, released_without_position_check: 0, unheld_zone_pose: 0, released_while_off_lane: 0, events_include: []}
 ```
