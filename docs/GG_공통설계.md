@@ -244,7 +244,8 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `/fleet/assignments` AssignmentArray 토픽(항목마다 robot_id, order_id, station_id, task_type: TO_WORK/FILL/TO_OUTBOUND/SWAP/WAIT): FMS → central
 - `/fleet/zones` ZoneStateArray 토픽: FMS → central
 - `/fleet/confirm_clear` ConfirmClear 서비스: central(관리자) → FMS. 응답의 `string reason`은 11-06에 더한 제안(팀 합의 전, 0.3-draft)이다. 거부하면 이유, 받아들이면 빈 값. `accepted`, `released_zones`는 그대로다
-- `/{pinky}/state` 토픽, `/{pinky}/move_to`·`/{pinky}/dock` 액션: FMS ↔ 핑키. `move_to`는 레인 끝까지의 짧은 목표다(5절). 11-06 지시서 4번에서 `state`에 `BLOCKED`, `LOCALIZING`을, `MoveTo` 결과에 `REASON_HEARTBEAT_LOST`를 더했다. 상수만 더해 필드는 그대로다. 핑키가 지킬 동작은 `docs/핑키_계약.md`에 있다
+- `/{pinky}/state` 토픽, `/{pinky}/move_to`·`/{pinky}/dock` 액션: FMS ↔ 핑키. `move_to`는 레인 끝까지의 짧은 목표다(5절). 11-06 지시서 4번에서 `state`에 `BLOCKED`, `LOCALIZING`을, `MoveTo` 결과에 `REASON_HEARTBEAT_LOST`를 더했다. 상수만 더해 필드는 그대로다. 핑키가 지킬 동작은 `docs/핑키_계약.md`에 관제가 요구하는 것으로 적었다
+  - `BLOCKED` 요구(핑키 계약 4절): `move_to` 실행 중, 1초 넘게 0.02 m/s 미만으로 서 있고, 그 이유가 경로 위 0.5 m 안의 물체일 때. 서고 2초 안에 보고하고, 막힌 동안 목표를 스스로 끝내지 않으며, 취소 뒤에도 물체가 있으면 계속 보고하고, 물체가 1초 안 보이면 끈다. 물체가 아닌 이유로 서면 `NAV_ABORTED`. 관제 처리는 5절 "레인 막힘"
 - `/workcell/fill_basket` FillBasket 액션(items → placed, missing, success, reason): FMS → workcell. 팔 2대 배분과 조율은 workcell 내부 책임
 - `/arm3/swap_basket` SwapBasket 액션(take_full, put_empty → took_full, put_empty_done): FMS → arm3
 - 목표가 끝난 방식: `MoveTo`, `FillBasket`, `SwapBasket`의 결과에는 `REASON_CANCELED`("CANCELED")가 있다. 서버가 reason을 비워 두면 FMS가 목표 상태로 채운다. `STATUS_CANCELED`는 `CANCELED`, `STATUS_ABORTED`는 `ABORTED`다. 서버가 쓴 reason은 그대로 둔다. `FillBasket`, `SwapBasket`의 이 상수는 2026-11-06에 더한 제안(팀 합의 전)이다. 값은 README에 적힌 약속 그대로이고, 형식 설명에 상수가 들어가지 않으므로 직렬화와 타입 해시는 바뀌지 않는다
@@ -254,7 +255,7 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 
 새로 제안하는 바깥 인터페이스 (팀 합의 전. 코드와 `contract.yaml`에는 들어 있다):
 - `/fleet/robots` RobotStatusArray 토픽(LATCHED, 1 Hz): FMS → central. 로봇마다 robot_id, fsm_state(핑키 보고 그대로), task_type, order_id, fault(NONE, ERROR, COMM_LOST, OUT_OF_SERVICE, RECOVERING), fault_reason, wait_zone, wait_robots, battery, x, y, yaw. `/fleet/assignments`와 `/fleet/zones`는 호환을 위해 유지한다. 위치, 배터리, fsm_state는 마지막 보고 값이다
-- `/fleet/heartbeat` std_msgs/Header 토픽(STATE QoS, 2 Hz, `heartbeat_period_s` 0.5 s): FMS → 핑키. **핑키 FSM 계약(FSM 담당과 확인 필요):**
+- `/fleet/heartbeat` std_msgs/Header 토픽(STATE QoS, 2 Hz, `heartbeat_period_s` 0.5 s): FMS → 핑키. 토픽은 제안이지만 핑키 쪽 동작은 관제가 요구하는 것이다(핑키 계약 3절 5번). **핑키에 요구하는 것:**
   - 이동 또는 도킹 목표를 실행 중일 때, 마지막 heartbeat 또는 목표 수락에서 `heartbeat_timeout_s`(제안 1.5 s, heartbeat 3번)가 지나면 그 목표를 취소하고 정지한다. move_to는 `reason=HEARTBEAT_LOST`로 끝낸다(11-06). 목표 수락도 FMS가 살아 있다는 증거로 친다. 새 FMS의 첫 목표가 첫 heartbeat보다 먼저 올 수 있기 때문이다.
   - 할 일이 없는 로봇은 heartbeat가 없어도 아무것도 하지 않고 상태 보고를 계속한다. 멈춘 뒤 온 새 목표는 받는다.
   - 시간은 벽시계로 잰다. 프로세스를 감시하는 값이기 때문이다.
