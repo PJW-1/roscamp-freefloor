@@ -1,8 +1,8 @@
 # 이름, 타입, QoS의 유일한 기준. 코드는 `key`로 찾으므로 이름이나 QoS는 여기만 고친다.
 # 팀 합의 전까지 모두 초안이다. QoS depth는 실제 Wi-Fi에서 측정해야 한다.
 version: 0.3-draft
-# 0.3 (2026-11-06): 제안 중인 heartbeat를 /fms/heartbeat에서 /fleet/heartbeat로 옮겼다.
-# 나머지 이름, 필드, QoS는 그대로다. 0.3에 더하는 것은 모두 제안(팀 합의 전)이다.
+# 0.3 (2026-11-06): 관제가 요구하는 heartbeat를 /fms/heartbeat에서 /fleet/heartbeat로 옮겼다.
+# 나머지 이름, 필드, QoS는 그대로다. 0.3에 더하는 것은 모두 관제 요구(팀 합의 전)다.
 
 placeholders:
   pinky: [pinky1, pinky2, pinky3]
@@ -21,7 +21,7 @@ topics:
   - {key: order_board, name: "/central/orders", type: fleet_interfaces/msg/OrderBoard, qos: LATCHED}
   - {key: assignments, name: "/fleet/assignments", type: fleet_interfaces/msg/AssignmentArray, qos: LATCHED}
   - {key: robots, name: "/fleet/robots", type: fleet_interfaces/msg/RobotStatusArray, qos: LATCHED}
-  # 제안(팀 합의 전). 로봇이 이 토픽을 못 들으면 스스로 멈춘다. 0.3 전에는 /fms/heartbeat였다.
+  # 관제 요구(팀 합의 전). 로봇이 이 토픽을 못 들으면 스스로 멈춘다. 0.3 전에는 /fms/heartbeat였다.
   - {key: heartbeat, name: "/fleet/heartbeat", type: std_msgs/msg/Header, qos: STATE}
   - {key: zones, name: "/fleet/zones", type: fleet_interfaces/msg/ZoneStateArray, qos: LATCHED}
   - {key: events, name: "/central/events", type: fleet_interfaces/msg/FleetEvent, qos: EVENT}
@@ -36,12 +36,14 @@ actions:
   - {key: swap_basket, name: "/{arm}/swap_basket", type: fleet_interfaces/action/SwapBasket, instances: {arm: [arm3]}}
   # 실물 로봇에만 있어서 가짜 로봇 검사는 건너뛴다.
   - {key: navigate_to_pose, name: "/{pinky}/navigate_to_pose", type: nav2_msgs/action/NavigateToPose, real_only: true}
+  # path 모드에서 핑키가 레인 폴리라인을 따를 때 쓴다. 관제는 부르지 않는다.
+  - {key: follow_path, name: "/{pinky}/follow_path", type: nav2_msgs/action/FollowPath, real_only: true}
 
 services:
   - {key: set_run_mode, name: "/central/set_run_mode", type: fleet_interfaces/srv/SetRunMode}
   - {key: submit_order, name: "/central/submit_order", type: fleet_interfaces/srv/SubmitOrder}
   - {key: report_order, name: "/central/report_order", type: fleet_interfaces/srv/ReportOrder}
-  # 제안(팀 합의 전): 응답에 string reason(거부 이유)을 더했다. 이름과 기존 필드는 그대로다.
+  # 관제 요구(팀 합의 전): 응답에 string reason(거부 이유)을 더했다. 이름과 기존 필드는 그대로다.
   - {key: confirm_clear, name: "/fleet/confirm_clear", type: fleet_interfaces/srv/ConfirmClear}
-  # 제안(팀 합의 전): 치운 로봇을 다시 투입한다. basket은 EMPTY 또는 NONE.
+  # 관제 요구(팀 합의 전): 치운 로봇을 다시 투입한다. basket은 EMPTY 또는 NONE.
   - {key: reinstate, name: "/fleet/reinstate", type: fleet_interfaces/srv/Reinstate}
