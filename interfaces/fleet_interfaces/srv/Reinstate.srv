@@ -1,4 +1,4 @@
-# 제안(팀 합의 전, 0.3-draft): confirm_clear로 치운 로봇을 다시 투입한다.
+# 관제 요구(팀 합의 전, 0.3-draft): confirm_clear로 치운 로봇을 다시 투입한다.
 # basket은 BASKET_* 중 하나: 다시 넣을 때 트레이 위 상태
 string BASKET_EMPTY="EMPTY"
 string BASKET_NONE="NONE"
