@@ -107,6 +107,8 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficPath):
         m = self._missions.get(robot)
         if m is None:
             return
+        if state != BLOCKED:
+            m.queue_since = None  # 줄 서기 시계는 BLOCKED가 이어지는 동안만 잰다
         if state == LOCALIZING:
             # 자세를 믿지 않는다. 보고 시각도 두어 오래 가면 COMM_LOST가 된다.
             m.robot_state, m.battery = state, battery
@@ -642,8 +644,10 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficPath):
             waypoint=waypoint,
             called=m.called,
             parked=waypoint in self.site.parking,
-            eligible=m.available and not m.hold and m.dispatch is None,
-            available=m.available,
+            # 막힘으로 선 로봇은 새 호출을 받지 않고, 대기 줄에서는 뒤 로봇이 앞지르지 않는다
+            eligible=(m.available and not m.hold and m.dispatch is None
+                      and (m.called or not self._held_for_block(m))),
+            available=m.available and not self._held_for_block(m),
         )
 
     def _committed(self, m: _Mission) -> bool:
@@ -742,8 +746,9 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficPath):
             self._start_park_leg(m)
 
     def _step_phase(self, m: _Mission) -> None:
-        if m.block and m.block.marked:
-            return  # 막힌 레인 앞에 서서 풀리기를 기다린다
+        if self._held_for_block(m):
+            # 막힌 레인 앞에 서서 풀리기와 취소 결과를 기다린다. 결과 전 새 goal은 추적을 흐린다
+            return
         if m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK):
             self._drive(m)
         elif m.phase == DOCKING:
@@ -837,8 +842,8 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficPath):
                         f"held by {self.zones.holder(zone) or 'nobody'}", m.name)
 
     def _issue_move(self, m: _Mission) -> None:
-        if m.block:
-            return  # 막힌 동안은 목표를 늘리거나 새로 내지 않는다
+        if m.block or m.block_cancel is not None:
+            return  # 막힌 동안과 취소 결과 전에는 목표를 늘리거나 새로 내지 않는다
         if m.goal is None and (self._clock() < m.retry_at or m.arrival_by is not None):
             return
         held = self.zones.held_by(m.name)
