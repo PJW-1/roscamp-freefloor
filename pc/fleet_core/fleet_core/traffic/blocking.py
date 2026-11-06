@@ -80,6 +80,10 @@ class TrafficBlocking:
             a, z = b.lane
             self._event("INFO", "LANE_CLEARED", f"{a} to {z} {how or 'is clear'}", m.name)
 
+    def _held_for_block(self, m: _Mission) -> bool:
+        """막힘 표시 중이거나 표시 때 취소한 goal의 결과를 기다린다. 단계도 새 호출도 없다."""
+        return bool(m.block and m.block.marked) or m.block_cancel is not None
+
     def _cancel_finished(self, m: _Mission, goal_id) -> None:
         """표시할 때 취소한 goal이 끝났다(결과, 거절, 미전송). 막힘이 먼저 풀려도 같다."""
         if m.block_cancel is not None and m.block_cancel == goal_id:

@@ -421,6 +421,24 @@ def test_a_lost_result_of_a_canceled_robot_goal_is_no_rejection():
         assert goals.canceling(key) == (not expected)
 
 
+def test_an_accepted_clear_stops_asking_about_lost_results():
+    """관리자가 치운 로봇은 결과를 잃은 취소를 더 묻지 않는다. 거부된 치우기는 그대로 둔다."""
+    key = ("pinky1", 7)
+    for released, still_asking in (([], False), (None, True)):
+        goals = GoalTracker()
+        goals.sent(key)
+        goals.accepted(key, SimpleNamespace(cancel_goal_async=lambda: None))
+        goals.cancel(key, 0.0)
+        goals.lost(key)
+        core = SimpleNamespace(confirm_clear=lambda *args, r=released: r, last_clear_reason="no")
+        node = SimpleNamespace(core=core, _goals=goals)
+        response = FleetManagerNode._on_confirm_clear(
+            node, ConfirmClear.Request(robot_id="pinky1", zone_ids=[], note="lifted"),
+            ConfirmClear.Response())
+        assert response.accepted == (released is not None)
+        assert goals.canceling(key) == still_asking
+
+
 def test_the_heartbeat_comes_twice_a_second(graph):
     assert wait_for(lambda: len(graph.beats) >= 5, 20.0), graph.beats
     gaps = [b - a for a, b in zip(graph.beats, graph.beats[1:], strict=False)]

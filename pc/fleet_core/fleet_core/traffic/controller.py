@@ -642,7 +642,9 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
             waypoint=waypoint,
             called=m.called,
             parked=waypoint in self.site.parking,
-            eligible=m.available and not m.hold and m.dispatch is None,
+            # 막힘으로 선 로봇은 맡은 호출만 지킨다
+            eligible=(m.available and not m.hold and m.dispatch is None
+                      and (m.called or not self._held_for_block(m))),
             available=m.available,
         )
 
@@ -742,7 +744,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
             self._start_park_leg(m)
 
     def _step_phase(self, m: _Mission) -> None:
-        if (m.block and m.block.marked) or m.block_cancel is not None:
+        if self._held_for_block(m):
             # 막힌 레인 앞에 서서 풀리기와 취소 결과를 기다린다. 결과 전 새 goal은 추적을 흐린다
             return
         if m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK):

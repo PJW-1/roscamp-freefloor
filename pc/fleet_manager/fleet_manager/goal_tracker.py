@@ -19,6 +19,7 @@ class GoalTracker:
         self._pending: set = set()
         self._handles: dict = {}
         self._cancels: dict = {}
+        self._lost: set = set()  # 결과를 잃은 취소. 로봇을 치우면 그만둔다
 
     def sent(self, key) -> None:
         self._pending.add(key)
@@ -33,6 +34,17 @@ class GoalTracker:
         self._pending.discard(key)
         self._handles.pop(key, None)
         self._cancels.pop(key, None)
+        self._lost.discard(key)
+
+    def lost(self, key) -> None:
+        """취소한 goal의 결과를 잃었다. 취소는 남긴다."""
+        if key in self._cancels:
+            self._lost.add(key)
+
+    def forget_lost(self, robot) -> None:
+        """관리자가 치운 로봇의, 결과를 잃은 취소를 그만둔다."""
+        for key in [key for key in self._lost if key[0] == robot]:
+            self.finished(key)
 
     def cancel(self, key, now: float) -> None:
         if key in self._cancels:

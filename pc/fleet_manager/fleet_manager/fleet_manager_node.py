@@ -149,7 +149,10 @@ class FleetManagerNode(Node):
         self.core.on_order_board(adapters.order_board_mode(msg), adapters.order_board_orders(msg))
 
     def _on_confirm_clear(self, request, response):
-        released = self.core.confirm_clear(*adapters.confirm_clear_args(request))
+        robot, zone_ids, note = adapters.confirm_clear_args(request)
+        released = self.core.confirm_clear(robot, zone_ids, note)
+        if released is not None:
+            self._goals.forget_lost(robot)  # 치운 로봇의 잃은 결과는 더 묻지 않는다
         return adapters.confirm_clear_response(response, released, self.core.last_clear_reason)
 
     # ------------------------------------------------------------------ output loop
@@ -281,6 +284,7 @@ class FleetManagerNode(Node):
             self.get_logger().error(f"goal {key} lost its result: {exc}")
             if on_rejected == self._robot_rejected and self._goals.canceling(key):
                 # 취소한 로봇 goal은 끝났는지 모른다. 취소를 남겨 CANCEL_UNCONFIRMED로 알린다
+                self._goals.lost(key)
                 return
             self._goals.finished(key)
             on_rejected(key)

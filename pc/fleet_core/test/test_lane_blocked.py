@@ -275,6 +275,26 @@ def test_a_clear_before_the_cancel_result_sends_again_only_after_the_result():
     assert not pilot.events("GOAL_RETRY")
 
 
+def test_a_robot_held_for_a_block_keeps_its_call_but_takes_no_new_one():
+    """표시 중이거나 취소 결과를 기다리는 로봇은 맡은 호출은 지키고 새 호출은 받지 않는다."""
+    pilot = Pilot()
+    blocked_on_the_way(pilot)
+    pilot.run(MARK_S + 0.2)
+    m, traffic = pilot.mission(), pilot.core.traffic
+    assert m.block.marked and m.called
+    assert traffic._robot_info(m).eligible
+    m.called = False
+    assert not traffic._robot_info(m).eligible
+    m.called = True
+    pilot.state["pinky1"] = "MOVING"
+    pilot.run(0.1 * CONFIRM + 0.3)
+    assert m.block is None and m.block_cancel is not None
+    m.called = False
+    assert not traffic._robot_info(m).eligible
+    pilot.core.on_move_result("pinky1", first_goal(pilot), False, "CANCELED")
+    assert traffic._robot_info(m).eligible
+
+
 def test_a_lost_link_neither_adds_block_time_nor_clears_it():
     """두절 중에는 막힌 시간을 더하지 않는다. 복구 확인이 끝나야 다시 센다."""
     pilot = Pilot()
