@@ -46,6 +46,7 @@ from fleet_core.traffic.mission import (
     OUT_OF_SERVICE,
     PARKED,
     PLACEMENT_CONFLICT,
+    RECOVERING,
     RUN,
     STALLED,
     STOP,
@@ -107,6 +108,9 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
         if state == LOCALIZING:
             # 자세를 믿지 않는다. 보고 시각도 두어 오래 가면 COMM_LOST가 된다.
             m.robot_state, m.battery = state, battery
+            if m.comm == RECOVERING:
+                # 위치를 다시 잡을 때까지 복구 확인을 미룬다
+                m.recover_at = self._clock() + self.params.recover_check_s
             return
         m.x, m.y, m.yaw, m.robot_state, m.battery = x, y, yaw, state, battery
         m.last_seen = self._clock()
@@ -606,6 +610,8 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
             self._event("WARN", "LANE_ERROR", f"{e:.2f} m off {a} to {b} at s={s:.2f}", m.name)
 
     def _release_if_cleared(self, m: _Mission, zone: str) -> None:
+        if m.block and m.block.cancel_id is not None:
+            return  # 막힘으로 취소한 goal의 결과 전에는 어느 구역도 놓지 않는다
         if m.outside.get(zone, 0) >= self.params.release_confirm_samples:
             self.zones.release(m.name, zone)
             m.outside.pop(zone, None)

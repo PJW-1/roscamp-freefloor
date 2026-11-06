@@ -252,6 +252,23 @@ def test_after_a_mark_three_clear_reports_resend_the_same_goal_without_counting(
     assert not pilot.events("GOAL_RETRY")
 
 
+def test_a_cancel_result_after_the_clear_changes_nothing():
+    """풀림이 취소 결과보다 먼저 와도 새 goal이 이전 goal을 대신한다(계약 3절 1번)."""
+    pilot = Pilot()
+    blocked_on_the_way(pilot)
+    goal = first_goal(pilot)
+    pilot.run(MARK_S + 0.2)
+    pilot.state["pinky1"] = "MOVING"
+    pilot.run(0.1 * CONFIRM + 0.3)
+    assert len(pilot.events("LANE_CLEARED")) == 1
+    resent = pilot.mission().goal
+    assert resent is not None and resent.id != goal
+    pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
+    pilot.run(0.3)
+    assert pilot.mission().goal is resent and pilot.mission().attempts == 0
+    assert not pilot.events("GOAL_RETRY")
+
+
 def test_a_lost_link_neither_adds_block_time_nor_clears_it():
     """두절 중에는 막힌 시간을 더하지 않는다. 복구 확인이 끝나야 다시 센다."""
     pilot = Pilot()
@@ -268,6 +285,49 @@ def test_a_lost_link_neither_adds_block_time_nor_clears_it():
     restored = pilot.events("COMM_RESTORED")[0][0]
     frozen = restored + PARAMS.recover_check_s - lost
     assert marks[0][0] >= start + MARK_S + frozen - 0.3
+
+
+def test_a_recovery_keeps_the_zone_ahead_until_the_cancel_result():
+    """표시 뒤 두절이 끝나도 취소 결과가 오기 전에는 앞 구역을 놓지 않는다."""
+    pilot = Pilot()
+    blocked_on_the_way(pilot)
+    goal = first_goal(pilot)
+    pilot.run(MARK_S + 0.2)
+    assert pilot.events("LANE_BLOCKED")
+    pilot.silent.add("pinky1")
+    pilot.run(PARAMS.comm_timeout_s + 0.5)
+    pilot.silent.clear()
+    pilot.run(PARAMS.recover_check_s + 1.0)
+    assert pilot.events("COMM_RESTORED") and not pilot.mission().comm
+    assert pilot.held() == {"N", "S"}
+    pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
+    pilot.run(0.1 * (CONFIRM + 1))
+    assert pilot.held() == {"N"}
+
+
+def test_clear_reports_before_a_lost_link_do_not_count_after_it():
+    """두절과 복구 확인 중의 BLOCKED는 못 볼 수 있어 풀림 보고를 처음부터 다시 센다."""
+    pilot = Pilot()
+    blocked_on_the_way(pilot)
+    goal = first_goal(pilot)
+    pilot.run(MARK_S + 0.2)
+    pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
+    pilot.state["pinky1"] = "IDLE"
+    pilot.run(0.1 * (CONFIRM - 1))
+    pilot.silent.add("pinky1")
+    pilot.run(PARAMS.comm_timeout_s + 0.5)
+    pilot.silent.clear()
+    pilot.state["pinky1"] = "BLOCKED"
+    for _ in range(round((PARAMS.recover_check_s + 1.0) / 0.1)):
+        if not pilot.mission().comm:
+            break
+        pilot.tick()
+    assert not pilot.mission().comm
+    pilot.state["pinky1"] = "IDLE"
+    pilot.tick()
+    assert not pilot.events("LANE_CLEARED")
+    pilot.run(0.1 * (CONFIRM - 1))
+    assert len(pilot.events("LANE_CLEARED")) == 1
 
 
 # ---- 60초 -----------------------------------------------------------------------------------
@@ -374,12 +434,16 @@ def blocked(m):
     m.robot_state = "BLOCKED"
 
 
+def localizing(m):
+    m.robot_state = "LOCALIZING"
+
+
 def test_a_healthy_robot_close_ahead_is_a_queue():
     pilot, traffic, rear = queue()
     assert traffic._queued_behind(rear)
 
 
-@pytest.mark.parametrize("front", [faulted, silent, blocked])
+@pytest.mark.parametrize("front", [faulted, silent, blocked, localizing])
 def test_a_robot_ahead_that_is_not_healthy_is_no_queue(front):
     pilot, traffic, rear = queue(front)
     assert not traffic._queued_behind(rear)
@@ -398,6 +462,27 @@ def test_a_queued_robot_reporting_blocked_opens_no_block():
     pilot, traffic, rear = queue(faulted)
     traffic.on_robot_state("pinky2", rear.x, rear.y, 0.0, "BLOCKED")
     assert rear.block is not None and rear.block.lane == ("P-6", "N")
+
+
+def test_the_block_clock_rests_while_a_healthy_robot_stands_close_ahead():
+    """막힘을 연 뒤 앞에 정상 로봇이 서면 줄 서기다. 막힌 시간을 더하지 않는다."""
+    pilot, traffic, rear = queue(faulted)
+    traffic.on_robot_state("pinky2", rear.x, rear.y, 0.0, "BLOCKED")
+    assert rear.block is not None
+    traffic._missions["pinky1"].fault = ""
+    for step in range(1, round((MARK_S + 1.0) / 0.1)):
+        traffic._watch_block(rear, step * 0.1)
+    assert rear.block.total == 0.0 and not rear.block.marked
+
+
+def test_a_lane_no_longer_on_the_path_has_no_next_lane():
+    """경로가 바뀌어 막힌 레인이 지금 자리에 없으면 그 다음 레인으로 줄 서기를 보지 않는다."""
+    pilot, traffic, rear = queue()
+    rear.path, rear.idx = ["S", "L", "Q"], 0
+    pilot.put("pinky1", "L", "Q", 0.1)
+    front = traffic._missions["pinky1"]
+    front.x, front.y = pilot.pose["pinky1"]
+    assert not traffic._queued_behind(rear, ("P-6", "N"))
 
 
 # ---- 운영자 ----------------------------------------------------------------------------------
@@ -483,6 +568,25 @@ def test_a_placed_robot_that_reports_localizing_keeps_its_zones_and_pose():
     assert (pilot.status()["x"], pilot.status()["y"]) == pose
     assert pilot.held() == held
     assert not pilot.events("INPUT_REJECTED")
+
+
+def test_a_robot_that_says_localizing_during_the_recovery_check_is_not_resumed():
+    """복구 확인 중 LOCALIZING이 오면 위치를 다시 잡을 때까지 복구를 끝내지 않는다."""
+    pilot = Pilot(orders=())
+    pilot.run(0.3)
+    pilot.silent.add("pinky1")
+    pilot.run(PARAMS.comm_timeout_s + 0.5)
+    pilot.silent.clear()
+    pilot.tick()
+    assert pilot.mission().comm == "RECOVERING"
+    pilot.state["pinky1"] = "LOCALIZING"
+    pilot.run(PARAMS.recover_check_s + 0.5)
+    assert pilot.mission().comm == "RECOVERING"
+    pilot.run(PARAMS.comm_timeout_s)
+    assert len(pilot.events("COMM_LOST")) == 2
+    pilot.state["pinky1"] = "IDLE"
+    pilot.run(PARAMS.recover_check_s + 0.5)
+    assert pilot.mission().comm == ""
 
 
 # ---- HEARTBEAT_LOST -------------------------------------------------------------------------

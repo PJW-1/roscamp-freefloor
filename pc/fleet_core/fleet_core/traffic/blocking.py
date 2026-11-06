@@ -5,9 +5,11 @@
     몸이 있는 레인의 구역은 쥐고, 들어가지 않은 앞 구역은 취소 결과가 오고 선 것을 본 뒤 놓는다.
   - 풀림: 통신이 정상이고 BLOCKED가 아닌 보고가 연속 release_confirm_samples번.
     표시했으면 LANE_CLEARED를 내고 같은 목표를 다시 보낸다. 시도로 세지 않는다.
+    두절과 복구 확인 중에는 풀지도 놓지도 않고, 연속 횟수는 처음부터 다시 센다.
   - blocked_timeout_s: ERROR(BLOCKED). 시간은 BLOCKED로 보고된 동안만 센다.
     풀린 뒤 blocked_rejoin_s 안에 같은 레인에서 다시 막히면 이어 센다.
 줄 서기(같은 레인이나 다음 레인 앞 queue_gap_m 안의 정상 로봇)는 막힘으로 치지 않는다.
+막힘을 연 뒤에 줄 서기가 되면 그동안 시계를 멈춘다.
 heartbeat가 끊겨 로봇이 스스로 끝낸 이동(HEARTBEAT_LOST)도 여기서 다룬다.
 
 TrafficController에서 떼어 낸 부분이다. 제어기 상태를 쓰므로 혼자 쓰지 않는다.
@@ -18,6 +20,7 @@ from fleet_core.traffic.lane_map import _point_segment
 from fleet_core.traffic.mission import (
     BLOCKED,
     HEARTBEAT_LOST,
+    LOCALIZING,
     MOVE,
     ON_A_GOAL,
     _Block,
@@ -40,10 +43,12 @@ class TrafficBlocking:
             if m.robot_state == BLOCKED:
                 self._open_block(m)
             return
+        if m.comm:
+            # 두절과 복구 확인 중에는 풀지도 놓지도 않는다. 그동안의 BLOCKED를 못 봤을 수 있다
+            b.clear_n = b.still_n = 0
+            return
         if b.marked and b.cancel_id is None:
             b.still_n = 0 if m.robot_state in ON_A_GOAL else b.still_n + 1
-        if m.comm:
-            return  # 두절과 복구 확인 중에는 풀지 않는다
         b.clear_n = 0 if m.robot_state == BLOCKED else b.clear_n + 1
         if b.clear_n >= self.params.release_confirm_samples:
             self._clear_block(m, "")
@@ -91,9 +96,10 @@ class TrafficBlocking:
     # ---- tick마다 ------------------------------------------------------------------------
 
     def _watch_block(self, m: _Mission, now: float) -> None:
-        """막힌 시간을 잰다. 고장 난 로봇은 시각만 따라간다."""
+        """막힌 시간을 잰다. 줄 서기 동안은 쉬고, 고장 난 로봇은 시각만 따라간다."""
         b = m.block
-        if m.live and not m.comm and m.robot_state == BLOCKED:
+        if (m.live and not m.comm and m.robot_state == BLOCKED
+                and not self._queued_behind(m, b.lane)):
             b.total += now - b.seen
         b.seen = now
         if not m.live:
@@ -153,12 +159,21 @@ class TrafficBlocking:
         return _point_segment(m.x, m.y, lane.ax, lane.ay, lane.bx, lane.by)
 
     def _lane_after(self, m: _Mission, lane: tuple) -> tuple | None:
-        """경로에서 lane 다음 레인."""
-        end = m.idx if lane[1] == m.path[m.idx] else m.idx + 1
-        return (m.path[end], m.path[end + 1]) if end + 1 < len(m.path) else None
+        """경로에서 lane 다음 레인. 경로가 바뀌어 lane이 지금 자리에 없으면 None."""
+        i, path = m.idx, m.path
+        if i < len(path) and path[i] == lane[1]:
+            end = i  # 들어오는 레인
+        elif i + 1 < len(path) and (path[i], path[i + 1]) == lane:
+            end = i + 1  # 나가는 레인
+        else:
+            return None
+        return (path[end], path[end + 1]) if end + 1 < len(path) else None
 
     def _queued_behind(self, m: _Mission, lane: tuple | None = None) -> bool:
-        """같은 레인이나 다음 레인 앞 queue_gap_m 안에 정상인 다른 로봇이 있다."""
+        """같은 레인이나 다음 레인 앞 queue_gap_m 안에 정상인 다른 로봇이 있다.
+
+        막혔거나 위치를 잡는 중인 로봇은 곧 움직이지 않으니 줄로 보지 않는다.
+        """
         lane = lane or self._running_lane(m)
         if lane is None:
             return False
@@ -168,7 +183,8 @@ class TrafficBlocking:
         if following:
             ahead.append((following, self.site.lane(*lane).span - s_here))
         for other in self._missions.values():
-            if other is m or not other.available or other.robot_state == BLOCKED or other.block:
+            if (other is m or not other.available or other.block
+                    or other.robot_state in (BLOCKED, LOCALIZING)):
                 continue
             for key, offset in ahead:
                 s, e = self.site.lane_progress(*key, other.x, other.y)
