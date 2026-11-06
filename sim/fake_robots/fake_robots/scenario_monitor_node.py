@@ -171,7 +171,8 @@ class ScenarioMonitorNode(Node):
 
     def _on_cleared(self, robot: str, future) -> None:
         response = future.result()
-        self._operator.on_cleared(robot, response.accepted, list(response.released_zones))
+        self._operator.on_cleared(robot, response.accepted, list(response.released_zones),
+                                  self._sc.now())
         self.judge.note(self._sc.now(), robot, "CONFIRM_CLEAR",
                         f"accepted={response.accepted} {' '.join(response.released_zones)}")
 
@@ -183,7 +184,7 @@ class ScenarioMonitorNode(Node):
         waiting = []
         for item in self._reinstates:
             at_s, robot, waypoint, basket = item
-            if (at_s > t or not self._operator.ready(robot, self.judge.held_by(robot))
+            if (at_s > t or not self._operator.ready(robot, self.judge.held_by(robot), t)
                     or self.judge.off_course(robot)
                     or not self._reinstate.service_is_ready()):
                 waiting.append(item)

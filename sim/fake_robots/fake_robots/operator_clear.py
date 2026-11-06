@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import math
 from dataclasses import dataclass, field
 
 STILL_HELD = "ZONES_STILL_HELD"
@@ -18,7 +19,9 @@ class _Removal:
     clears: int = 0
     in_flight: bool = False
     accepted: bool = False
-    released: set = field(default_factory=set)  # 이 치우기에서 푼 구역
+    released: set = field(default_factory=set)  # 이 치우기에서 끝낸 구역(풀었거나 이미 비었음)
+    sent: list = field(default_factory=list)  # 부르는 중인 구역
+    answered_at: float = -math.inf
     still: set = field(default_factory=set)  # 관제가 아직 쥐었다고 알린 구역
     gave_up: bool = False
     said: bool = False
@@ -34,13 +37,14 @@ def still_held_zones(detail: str) -> list[str]:
 
 
 class OperatorClear:
-    def __init__(self, max_clears: int = 5):
+    def __init__(self, max_clears: int = 5, settle_s: float = 2.0):
         self.max_clears = max_clears
+        self.settle_s = settle_s  # 응답 뒤 ZONES_STILL_HELD를 기다리는 시간
         self._robots: dict[str, _Removal] = {}
 
     def start(self, robot: str) -> None:
-        """치울 때가 됐고 로봇이 코스 밖이다."""
-        self._robots[robot] = _Removal()
+        """치울 때가 됐고 로봇이 코스 밖이다. 치우는 중이면 이어 간다."""
+        self._robots.setdefault(robot, _Removal())
 
     def _left(self, r: _Removal, held: list[str]) -> list[str]:
         return sorted((r.still | set(held)) - r.released)
@@ -58,16 +62,20 @@ class OperatorClear:
             return None
         r.clears += 1
         r.in_flight = True
+        r.sent = zones
         return zones
 
-    def on_cleared(self, robot: str, accepted: bool, released: list[str]) -> None:
+    def on_cleared(self, robot: str, accepted: bool, released: list[str],
+                   t: float = 0.0) -> None:
         r = self._robots.get(robot)
         if r is None:
             return
         r.in_flight = False
+        r.answered_at = t
         r.accepted = r.accepted or accepted
-        r.released |= set(released)
-        r.still -= set(released)
+        done = set(released) | (set(r.sent) if accepted else set())  # 치운 로봇은 다시 못 쥔다
+        r.released |= done
+        r.still -= done
 
     def on_event(self, source: str, code: str, detail: str) -> None:
         r = self._robots.get(source)
@@ -82,11 +90,11 @@ class OperatorClear:
         r.said = True
         return True
 
-    def ready(self, robot: str, held: list[str]) -> bool:
+    def ready(self, robot: str, held: list[str], t: float = math.inf) -> bool:
         """재투입해도 되는가: 받아들여진 치우기가 있고 남은 구역이 없다."""
         r = self._robots.get(robot)
         return (r is not None and r.accepted and not r.in_flight and not r.gave_up
-                and not self._left(r, held))
+                and t - r.answered_at >= self.settle_s and not self._left(r, held))
 
     def reinstated(self, robot: str) -> None:
         self._robots.pop(robot, None)
