@@ -215,3 +215,65 @@ def test_comm_loss_while_off_the_lane_keeps_the_zones_and_waits_for_the_lane():
     assert "BACK_ON_LANE" in codes(out)
     assert status(core) == ("NONE", "")
     assert core.robot_view("r1")["held"] == held
+
+
+# ---- 레인 막힘(파트 4)과 함께 ---------------------------------------------------------------
+
+
+def blocked_beside(core, along, off, times=N):
+    x, y = core.site.waypoint_pose("W")
+    lane = core.site.lane("W", "A")
+    for _ in range(times):
+        core.on_robot_state("r1", x + lane.ux * along - lane.uy * off,
+                            y + lane.uy * along + lane.ux * off, 0.0, "BLOCKED")
+
+
+def test_off_the_lane_while_a_block_is_open_stops_as_off_lane_and_closes_the_block():
+    """막힘 표시 전에 이탈하면 이탈이 세운다. 막힘 시계는 닫고 구역은 쥔다."""
+    core, now = make({"r1": "W"})
+    start(core)
+    held = core.robot_view("r1")["held"]
+    blocked_beside(core, 0.1, 0.0, 1)
+    core.tick()
+    assert core._missions["r1"].block is not None
+    blocked_beside(core, 0.1, OFF)
+    out = core.tick()
+    assert len(events(out, "LANE_ERROR")) == 1
+    assert core._missions["r1"].block is None
+    for _ in range(round(2 * PARAMS.blocked_mark_s / 0.1)):
+        now[0] = round(now[0] + 0.1, 6)
+        blocked_beside(core, 0.1, OFF, 1)
+        out += core.tick()
+    assert not events(out, "LANE_BLOCKED"), "no goal, so no block opens"
+    assert status(core) == ("RECOVERING", "OFF_LANE")
+    assert core.robot_view("r1")["held"] == held
+
+
+def test_blocked_again_after_coming_back_opens_the_block_again():
+    core, _ = make({"r1": "W"})
+    first = start(core)
+    blocked_beside(core, 0.1, OFF)
+    core.tick()
+    beside(core, "W", "A", 0.1, 0.0)
+    again = cmds(core.tick(), "MoveCmd")
+    assert [m.target_id for m in again] == [first.target_id]
+    blocked_beside(core, 0.1, 0.0, 1)
+    core.tick()
+    assert core._missions["r1"].block is not None
+    assert status(core) == ("NONE", "BLOCKED")
+
+
+def test_a_marked_block_has_no_goal_so_lane_error_does_not_watch():
+    """표시 뒤에는 목표가 취소되어 이탈을 재지 않는다. 그동안 놓는 것은 막힘 쪽 규칙만 한다."""
+    core, now = make({"r1": "W"})
+    start(core)
+    out = []
+    for _ in range(round((PARAMS.blocked_mark_s + 0.5) / 0.1)):
+        now[0] = round(now[0] + 0.1, 6)
+        blocked_beside(core, 0.1, 0.0, 1)
+        out += core.tick()
+    assert len(events(out, "LANE_BLOCKED")) == 1
+    blocked_beside(core, 0.1, OFF)
+    out = core.tick()
+    assert not events(out, "LANE_ERROR")
+    assert status(core) == ("NONE", "BLOCKED")

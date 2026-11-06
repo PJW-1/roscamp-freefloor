@@ -107,6 +107,11 @@ class FaultSchedule:
         return any(f.type == "comm_loss" and f.at_s <= t < f.at_s + f.duration_s
                    for f in self._own)
 
+    def obstacle(self, t: float) -> bool:
+        """경로 앞에 물체가 있다(blocked 고장). 보고와 통신은 정상이다."""
+        return any(f.type == "blocked" and f.at_s <= t < f.at_s + f.duration_s
+                   for f in self._own)
+
     def stuck(self, t: float) -> bool:
         return any(f.type == "stuck" and t >= f.at_s for f in self._own)
 

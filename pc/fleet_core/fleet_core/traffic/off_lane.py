@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fleet_core.traffic.mission import (
     _COMM_REASON,
+    BLOCKED,
     MOVE,
     NO_FAULT,
     RECOVERING,
@@ -29,7 +30,7 @@ class TrafficOffLane:
         if m.off_lane_since is not None:
             self._count_back_on_lane(m)
             return
-        lane = self._running_lane(m)
+        lane = self._error_lane(m)
         if lane is None or m.fault:
             return
         if lane != m.lane_ref:
@@ -42,8 +43,11 @@ class TrafficOffLane:
                         f"{e:.2f} m off {lane[0]} to {lane[1]} at s={s:.2f}, stopping", m.name)
             self._stop_off_lane(m, lane)
 
-    def _running_lane(self, m: _Mission) -> tuple | None:
-        """목표 안에서 로봇이 지금 달리는 레인. 시작점을 지난 마지막 레인이다."""
+    def _error_lane(self, m: _Mission) -> tuple | None:
+        """이탈을 재는 레인: 목표 안에서 시작점을 지난 마지막 레인.
+
+        blocking.py의 _running_lane(가까운 쪽)과 다르다. 직선 목표에서 지점을 지나면 바로 바뀐다.
+        """
         goal = m.goal
         if not (goal and goal.kind == MOVE and goal.target_idx > 0):
             return None
@@ -66,6 +70,9 @@ class TrafficOffLane:
         """목표를 취소하고 구역은 쥔다. 기다리던 요청은 뒤 로봇을 막지 않게 거둔다."""
         if m.goal:
             self._cancel_goal(m)  # settle_idx가 남아 돌아오면 같은 목표를 보낸다
+        if m.block and not m.block.marked:
+            # 이탈이 먼저 세운다. 표시 전 막힘은 닫고, 돌아와 다시 BLOCKED면 이어 센다(rejoin)
+            self._clear_block(m, "")
         m.off_lane_since = self._clock()
         m.off_lane_at = lane
         m.back_on_lane = 0
@@ -114,11 +121,11 @@ class TrafficOffLane:
     # ---- 보이는 값 ---------------------------------------------------------------------
 
     def _shown_fault(self, m: _Mission) -> tuple[str, str]:
-        """/fleet/robots의 fault와 이유. 고장, 통신, 이탈 순이다."""
+        """/fleet/robots의 fault와 이유. 고장, 통신, 이탈, 막힘 순이다."""
         if m.fault:
             return m.fault, m.fault_reason
         if m.comm:
             return m.comm, _COMM_REASON.get(m.comm, "")
         if m.off_lane_since is not None:
             return RECOVERING, OFF_LANE
-        return NO_FAULT, ""
+        return NO_FAULT, BLOCKED if m.block else ""

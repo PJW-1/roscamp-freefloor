@@ -40,6 +40,7 @@ from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.mission import (
     AT_STATION,
     DOCKING,
+    LOCALIZING,
     OUT_OF_SERVICE,
     TO_OUTBOUND,
     TO_WORK,
@@ -112,10 +113,12 @@ class FleetManager:
         no_id = isinstance(robot_id, str) and text(robot_id) == ""
         self._input("on_robot_state", robot, x, y, yaw, state, battery,
                     *([] if no_id else [robot_id]))
+        # 위치를 못 잡은 보고의 자세는 쓰지 않으니 검사하지 않는다.
+        localizing = isinstance(state, str) and text(state) == LOCALIZING
         problem = checked(lambda: robot_problem(robot, self.traffic.robots)
                           or reported_id_problem(robot, robot_id)
-                          or pose_problem(x, y, yaw, self._bounds,
-                                          self.params.input_pose_margin_m))
+                          or ("" if localizing else pose_problem(
+                              x, y, yaw, self._bounds, self.params.input_pose_margin_m)))
         if self._topic_rejected(("robot_state", text(robot)), problem, "robot state dropped",
                                 robot):
             return
@@ -271,6 +274,7 @@ class FleetManager:
             "destination": t["destination"],
             "goal_id": t["goal_id"],
             "attempts": t["attempts"] + o["attempts"],
+            "blocked_lane": t["blocked_lane"],
         }
 
     # ---- the join -----------------------------------------------------------------------

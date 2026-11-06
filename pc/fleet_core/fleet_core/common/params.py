@@ -46,6 +46,10 @@ class FleetParams:
     stall_move_m: float = 0.05
     stall_smooth_s: float = 1.0
     dock_stall_s: float = 15.0
+    blocked_mark_s: float = 5.0
+    blocked_timeout_s: float = 60.0
+    blocked_rejoin_s: float = 10.0
+    queue_gap_m: float = 0.6
     off_lane_timeout_s: float = 20.0
 
 

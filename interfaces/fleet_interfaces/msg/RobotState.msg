@@ -4,6 +4,8 @@ string STATE_WAITING="WAITING"
 string STATE_DOCKING="DOCKING"
 string STATE_DOCKED="DOCKED"
 string STATE_ERROR="ERROR"
+string STATE_BLOCKED="BLOCKED"
+string STATE_LOCALIZING="LOCALIZING"
 
 string robot_id
 geometry_msgs/Pose2D pose

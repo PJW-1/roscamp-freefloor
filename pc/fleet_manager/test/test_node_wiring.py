@@ -33,7 +33,7 @@ from fleet_interfaces.msg import (  # noqa: E402
 )
 from fleet_interfaces.srv import ConfirmClear, ReportOrder  # noqa: E402
 from fleet_manager.fleet_manager_node import FleetManagerNode  # noqa: E402
-from fleet_manager.goal_tracker import ReportOutbox  # noqa: E402
+from fleet_manager.goal_tracker import GoalTracker, ReportOutbox  # noqa: E402
 from rclpy.action import ActionServer, CancelResponse  # noqa: E402
 from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
 from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor  # noqa: E402
@@ -387,6 +387,38 @@ def test_a_robot_goal_with_no_server_is_not_a_rejection_and_an_arm_goal_still_is
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+
+def test_a_lost_result_of_a_canceled_robot_goal_is_no_rejection():
+    """취소한 로봇 goal의 결과를 잃으면 끝났는지 모른다. 거절로 넘기지 않고 취소를 남긴다.
+
+    코어는 막힘 표시 때 취소한 goal이 끝나야 구역을 놓는다. 팔 goal과 취소 안 한 goal은 그대로다.
+    """
+    def broken():
+        raise RuntimeError("result lost")
+
+    def robot_rejected(key):
+        rejected.append(key)
+
+    def arm_rejected(key):
+        rejected.append(key)
+
+    key = ("pinky1", 7)
+    for canceled, on_rejected, expected in ((True, robot_rejected, []),
+                                            (False, robot_rejected, [key]),
+                                            (True, arm_rejected, [key])):
+        goals = GoalTracker()
+        goals.sent(key)
+        goals.accepted(key, SimpleNamespace(cancel_goal_async=lambda: None))
+        if canceled:
+            goals.cancel(key, 0.0)
+        node = SimpleNamespace(_goals=goals, _robot_rejected=robot_rejected,
+                               get_logger=lambda: SimpleNamespace(error=lambda msg: None))
+        rejected = []
+        FleetManagerNode._goal_result(node, key, lambda k, r: None, on_rejected,
+                                      SimpleNamespace(result=broken))
+        assert rejected == expected
+        assert goals.canceling(key) == (not expected)
 
 
 def test_the_heartbeat_comes_twice_a_second(graph):

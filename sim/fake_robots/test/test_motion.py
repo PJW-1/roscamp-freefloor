@@ -101,6 +101,14 @@ def test_stuck_never_recovers_and_is_per_robot():
     assert FaultSchedule(faults(), "pinky3").stuck(1e6) is False
 
 
+def test_an_obstacle_is_there_for_its_window_and_only_for_its_robot():
+    s = FaultSchedule([Fault(at_s=8, robot="pinky1", type="blocked", duration_s=15)], "pinky1")
+    assert [s.obstacle(t) for t in (7.9, 8.0, 22.9, 23.0)] == [False, True, True, False]
+    assert not s.comms_down(10.0) and not s.stuck(10.0)
+    other = FaultSchedule([Fault(at_s=8, robot="pinky1", type="blocked", duration_s=15)], "pinky2")
+    assert not other.obstacle(10.0)
+
+
 def test_operator_remove_is_per_robot_and_lasts():
     s = FaultSchedule([Fault(at_s=60, robot="pinky1", type="operator_remove")], "pinky1")
     assert not s.removed(59.9) and s.removed(60.0) and s.removed(1e6)

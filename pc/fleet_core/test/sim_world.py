@@ -1,7 +1,8 @@
 """가짜 시계로 FleetCore를 구동하는 결정적 가상 창고.
 
 로봇은 직선으로 달리며 잡음 섞인 자세를 보고한다. 가짜 중앙 서버가 주문판을 관리한다.
-장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 보고 밀림, 팔 실패와 무응답을 넣는다.
+장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 앞 물체(막힘), 보고 밀림,
+팔 실패와 무응답을 넣는다.
 매 단계 안전 불변식을 검사하므로 이 세계를 쓰는 테스트는 모두 불변식도 검증한다.
 """
 from __future__ import annotations
@@ -30,6 +31,8 @@ from legacy_core import FleetCore
 DT = 0.1
 NAV_ABORT_AFTER_S = 0.5
 NAV_TIMEOUT_AFTER_S = 2.0
+BLOCK_REPORT_S = 1.0  # 물체 앞에서 이만큼 서 있으면 BLOCKED(핑키 계약 4절: 2초 안)
+BLOCK_CLEAR_S = 1.0  # 물체가 이만큼 안 보이면 BLOCKED를 끄고 이어 간다
 LINE_TOLERANCE_M = 1e-6
 
 DEFAULT_ROBOTS = {
@@ -64,6 +67,11 @@ class VirtualRobot:
     comm_up: bool = True
     removed: bool = False
     stuck: bool = False
+    obstacle_until: float | None = None  # 이 시각까지 경로 앞에 물체
+    stopped_at: float | None = None  # 물체 때문에 선 시각, 풀릴 때까지
+    clear_at: float | None = None  # 물체가 사라진 시각
+    blocked: bool = False  # BLOCKED로 보고한다
+    localizing_until: float = 0.0  # 이 시각까지 위치를 못 잡아 LOCALIZING으로 보고
     nav_aborts: int = 0
     dock_fails: int = 0
     heading: float = 0.0  # 마지막 진행 방향
@@ -122,9 +130,11 @@ class SimWorld:
         for name, spec in self.robots.items():
             cell = spec.get("cell") or min(self.site.zones[spec["start"]])
             x, y = self.site.waypoint_pose(cell)
-            self.virtual[name] = VirtualRobot(name, x, y, spec["speed_mps"], spec["pose_noise_m"])
+            self.virtual[name] = VirtualRobot(name, x, y, spec["speed_mps"], spec["pose_noise_m"],
+                                              localizing_until=spec.get("localizing_s", 0.0))
         self.core = FleetCore(self.site, self.params, list(self.robots), lambda: self.t)
         self.events: list[EventOut] = []
+        self.event_log: list[tuple[float, EventOut]] = []  # (시각, 이벤트)
         self.commands: list[tuple[float, object]] = []
         self.visits: list[tuple[float, str, tuple[int, int], str]] = []
         self._last_cell: dict[str, tuple[int, int]] = {}
@@ -136,6 +146,7 @@ class SimWorld:
     def step(self):
         self.t = round(self.t + DT, 6)
         self._fire_faults()
+        self._watch_obstacles()
         self._deliver_queued_results()
         self._move_robots()
         self._run_arms()
@@ -223,6 +234,8 @@ class SimWorld:
                 robot.dock_fails = fault["count"]
             elif kind == "stuck":
                 robot.stuck = True
+            elif kind == "blocked":
+                robot.obstacle_until = self.t + fault["duration_s"]
             elif kind == "fill_fail":
                 self.arm_faults["fill_fail"] += [fault.get("place", 0)] * fault["count"]
             elif kind in ("fill_silent", "swap_fail", "swap_partial", "swap_silent"):
@@ -231,6 +244,28 @@ class SimWorld:
                 self.run_mode = fault["mode"]
             else:
                 raise ValueError(kind)
+
+    def _watch_obstacles(self):
+        """move 중 물체 앞에서 서면 1초 뒤 BLOCKED. 물체가 1초 안 보이면 끄고 이어 간다.
+
+        취소된 뒤에도 물체가 있는 동안은 BLOCKED다. 창이 열릴 때 move가 없으면 다음 move에 걸린다.
+        """
+        for r in self.virtual.values():
+            if r.obstacle_until is not None and self.t < r.obstacle_until:
+                r.clear_at = None
+                if r.goal_kind == "move" and r.stopped_at is None:
+                    r.stopped_at = self.t
+                if r.stopped_at is not None and self.t - r.stopped_at >= BLOCK_REPORT_S:
+                    r.blocked = True
+                continue
+            r.obstacle_until = None
+            if r.stopped_at is None and not r.blocked:
+                continue
+            if r.clear_at is None:
+                r.clear_at = self.t
+            if self.t - r.clear_at >= BLOCK_CLEAR_S:
+                r.blocked = False
+                r.stopped_at = r.clear_at = None
 
     # ---- central stand-in ----------------------------------------------------------------
 
@@ -275,6 +310,8 @@ class SimWorld:
             if r.goal_elapsed >= NAV_TIMEOUT_AFTER_S:
                 self._finish_goal(r, self.core.on_move_result, False, "TIMEOUT")
             return
+        if r.stopped_at is not None:
+            return  # 물체 앞에서 goal을 쥔 채 서 있다
         if r.nav_aborts > 0 and r.goal_elapsed >= NAV_ABORT_AFTER_S:
             r.nav_aborts -= 1
             self._finish_goal(r, self.core.on_move_result, False, "NAV_ABORTED")
@@ -366,16 +403,21 @@ class SimWorld:
             else:
                 x = r.x + self.rng.uniform(-r.noise, r.noise)
                 y = r.y + self.rng.uniform(-r.noise, r.noise)
+            if self.t < r.localizing_until:
+                self.core.on_robot_state(r.name, 0.0, 0.0, 0.0, "LOCALIZING")
+                continue
             x -= math.sin(r.heading) * r.drift
             y += math.cos(r.heading) * r.drift
             self.reported[r.name] = (x, y)
-            self.core.on_robot_state(r.name, x, y, 0.0, "MOVING" if r.goal_id else "IDLE")
+            state = "BLOCKED" if r.blocked else "MOVING" if r.goal_id else "IDLE"
+            self.core.on_robot_state(r.name, x, y, 0.0, state)
 
     # ---- commands -----------------------------------------------------------------------
 
     def _apply(self, item):
         if isinstance(item, EventOut):
             self.events.append(item)
+            self.event_log.append((self.t, item))
             return
         self.commands.append((self.t, item))
         if isinstance(item, ReportOrderCmd):
@@ -550,6 +592,10 @@ class SimWorld:
             zone = self._physical_zone(r)
             assert zone not in inside, f"{r.name} and {inside[zone]} are both in {zone} at {self.t}"
             inside[zone] = r.name
+            if self.t < r.localizing_until:
+                # 아직 지도에 없다. 다른 로봇에게 그 구역을 주지만 않으면 된다.
+                assert owners.get(zone) in (None, r.name), f"{zone} given away under {r.name}"
+                continue
             assert owners.get(zone) == r.name, (
                 f"{r.name} is in {zone} held by {owners.get(zone)} at {self.t}")
             cell = self.site.nearest_waypoint(r.x, r.y)

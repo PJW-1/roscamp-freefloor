@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 ORDER_RESULTS = ("SHIPPED", "PARTIAL", "HELD")
-ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "drift")
+ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "blocked", "drift")
 ARM_FAULTS = ("arm_fail", "swap_partial")
 FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
 # 이 고장이 난 로봇은 돌아오지 않으므로 주차를 기다리지 않는다.
@@ -47,6 +47,7 @@ class RobotCfg:
     pose_noise_m: float = 0.0
     report_delay_s: float = 0.0  # 측정하고 이만큼 지난 뒤에 보고가 나간다
     stop_error_m: float = 0.0  # 축마다 표준편차: 이동이 목표 주변 어디서 끝나는지
+    localizing_s: float = 0.0  # 시작하고 이만큼 LOCALIZING으로 보고한다(계약 3절 6번)
 
 
 @dataclass(frozen=True)
@@ -218,6 +219,8 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
         raise ScenarioError(f"arm_fail needs a workspace arm in {raw}")
     if "at_s" not in raw:
         raise ScenarioError(f"fault has no at_s: {raw}")
+    if kind == "blocked":
+        _positive(raw, "duration_s")  # 물체가 있는 시간
     if kind == "drift" and not (raw.get("duration_s", 0) > 0 and raw.get("offset_m", 0) != 0):
         raise ScenarioError(f"drift needs a positive duration_s and a nonzero offset_m: {raw}")
     return Fault(float(raw["at_s"]), raw.get("robot", ""), kind,
@@ -259,6 +262,7 @@ def parse_scenario(data: dict, lane_map) -> Scenario:
             pose_noise_m=float(raw.get("pose_noise_m", 0.0)),
             report_delay_s=_not_negative(raw, "report_delay_s"),
             stop_error_m=_not_negative(raw, "stop_error_m"),
+            localizing_s=_not_negative(raw, "localizing_s"),
         )
     if not robots:
         raise ScenarioError("scenario has no robots")

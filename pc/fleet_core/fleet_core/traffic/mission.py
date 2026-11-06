@@ -21,7 +21,12 @@ COMM_LOST = "COMM_LOST"
 RECOVERING = "RECOVERING"
 PLACEMENT_CONFLICT = "PLACEMENT_CONFLICT"
 NO_FAULT = "NONE"  # 이상 없을 때 /fleet/robots에 나가는 값
-ON_A_GOAL = ("MOVING", "DOCKING")  # 로봇 상태 보고에 오는 값
+# 로봇 상태 보고에 오는 값
+ON_A_GOAL = ("MOVING", "DOCKING")
+BLOCKED = "BLOCKED"  # 경로 앞 물체로 섰다(계약 4절)
+LOCALIZING = "LOCALIZING"  # 위치를 아직 못 잡았다. 자세를 믿지 않는다
+NOT_PLACEABLE = ON_A_GOAL + (BLOCKED, LOCALIZING)  # 이 상태로는 지도에 올리지 않는다
+HEARTBEAT_LOST = "HEARTBEAT_LOST"  # heartbeat가 끊겨 로봇이 스스로 끝낸 이동의 이유
 _COMM_REASON = {COMM_LOST: "NO_STATE", RECOVERING: "CHECKING_POSE"}
 STALLED = "STALLED"  # 목표가 열린 채 제자리
 NOT_AT_TARGET = "NOT_AT_TARGET"  # 이동은 성공이라는데 자세는 아니라고 할 때
@@ -49,6 +54,17 @@ class _Goal:
 class _Dispatch:
     goal_id: int
     station_id: str
+
+
+@dataclass
+class _Block:
+    """BLOCKED로 선 한 번. lane은 그때 달리던 레인 (a, b)."""
+    lane: tuple
+    total: float = 0.0  # BLOCKED로 보고된 시간의 합
+    seen: float = 0.0  # total을 마지막으로 잰 시각
+    clear_n: int = 0  # BLOCKED가 아닌 연속 보고 수
+    marked: bool = False  # LANE_BLOCKED를 냈다
+    still_n: int = 0  # 취소가 끝난 뒤 서 있는 연속 보고 수
 
 
 @dataclass
@@ -90,6 +106,11 @@ class _Mission:
     stall_since: float = 0.0
     stall_mean: tuple[float, float] | None = None  # 매끄럽게 한 보고 위치
     stall_seen: float = 0.0
+    stall_hold: bool = False  # heartbeat로 선 goal을 다시 보낼 때까지 멈춤 시계를 이어 잰다
+    block: _Block | None = None
+    block_rejoin: tuple | None = None  # (레인, 풀린 시각, 합). 곧 같은 레인에서 막히면 이어 센다
+    block_cancel: int | None = None  # 막힘 표시 때 취소한 goal. 결과가 오면 None. 풀려도 남는다
+    queue_since: float | None = None  # BLOCKED로 줄 서기를 시작한 시각
     lane_ref: tuple | None = None  # off_lane을 센 레인(a, b)
     off_lane_since: float | None = None  # 레인 이탈로 세운 시각
     off_lane_at: tuple | None = None  # 돌아와야 할 레인(a, b)

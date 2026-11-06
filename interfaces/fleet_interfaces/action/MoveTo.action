@@ -4,6 +4,7 @@ geometry_msgs/Pose2D target_pose
 string REASON_NAV_ABORTED="NAV_ABORTED"
 string REASON_CANCELED="CANCELED"
 string REASON_TIMEOUT="TIMEOUT"
+string REASON_HEARTBEAT_LOST="HEARTBEAT_LOST"
 
 bool success
 string reason
