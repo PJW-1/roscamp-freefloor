@@ -61,7 +61,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `NONE` | `fault` | 문제 없음 |
 | `ERROR` | `fault` | 관리자가 봐야 한다. 이유는 `fault_reason` |
 | `COMM_LOST` | `fault` | 보고가 `comm_timeout_s` 동안 없다. 판단은 멈추지 않고 그 로봇의 요청만 취소한다 |
-| `RECOVERING` | `fault` | 보고가 돌아왔고 `recover_check_s` 뒤에 위치를 확인한다 |
+| `RECOVERING` | `fault` | 보고가 돌아왔고 `recover_check_s` 뒤에 위치를 확인한다(`fault_reason` CHECKING_POSE). 또는 레인을 벗어나 세웠고 돌아오기를 기다린다(`fault_reason` OFF_LANE, 5절). 둘이 겹치면 통신 쪽을 보인다 |
 | `OUT_OF_SERVICE` | `fault` | 관리자가 치웠다(`confirm_clear`). 되돌리는 코드는 없다(13절) |
 | `IDLE`, `MOVING`, `WAITING`, `DOCKING`, `DOCKED`, `ERROR` | `fsm_state` | 핑키가 보고한 값 그대로. 임무 단계와 이름이 같아도 다른 값이다 |
 | `TO_WORK`, `FILL`, `TO_OUTBOUND`, `SWAP`, `WAIT` | `task_type` | `/fleet/assignments`와 `/fleet/robots`의 일 종류 |
@@ -87,7 +87,9 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `CLEAR_REFUSED` | WARN | traffic | 이름은 모두 맞는데 `confirm_clear`를 거부했고 아무것도 바꾸지 않았다(구역을 쥔 로봇인데 목록이 빔). 이유는 detail과 응답의 `reason`(제안, 4절)에 적는다 |
 | `INPUT_REJECTED` | WARN | FMS(`FleetManager`, confirm_clear는 traffic) | 바깥 입력을 거부하거나 버렸다. detail에 무엇을 왜. 대상: 모르는 로봇이나 구역의 `confirm_clear`(응답 `accepted=false`, `reason`), 모르는 로봇의 goal 결과, `/{pinky}/state`의 robot_id 불일치·유한하지 않은 pose·지도 밖(`input_pose_margin_m`) 보고, `/central/orders`의 틀린 run_mode(메시지를 버림)나 틀린 주문(run_mode는 적용, 주문은 이전 것 유지). 서비스는 호출마다 한 번, 토픽은 출처마다 한 번 내고 정상 메시지가 오면 다시 낸다. 늦게 온 결과의 모르는 goal ID는 정상이라 내지 않는다 |
 | `ZONES_STILL_HELD` | WARN | traffic | `confirm_clear` 뒤에도 그 로봇이 쥐고 있는 구역이 남았다. 다시 호출해야 풀린다 |
-| `LANE_ERROR` | WARN | traffic | 이동 목표 중에 레인에서 `lane_error_warn_m` 넘게 벗어난 보고가 `release_confirm_samples`번 이어졌다. 목표당 한 번 낸다. 해제를 막지는 않는다 |
+| `LANE_ERROR` | WARN | traffic | 이동 목표 중에 지금 달리는 레인에서 `lane_error_warn_m` 넘게 벗어난 보고가 `release_confirm_samples`번 이어졌다. 목표를 취소해 세우고 구역은 쥔다. 세울 때마다 한 번 낸다(11-06, 3번) |
+| `BACK_ON_LANE` | INFO | traffic | 레인을 벗어나 세운 로봇의 보고가 그 레인 `half_width_m` 안으로 `release_confirm_samples`번 이어졌다. 같은 목표를 다시 보낸다 |
+| `OFF_LANE` | ERROR | traffic | 레인을 벗어나 세운 로봇이 `off_lane_timeout_s` 안에 돌아오지 않았다. `fault=ERROR`, `fault_reason=OFF_LANE`, 구역은 쥔다. 관리자가 본다 |
 | `DEADLOCK_DETECTED` | ERROR | traffic | 대기 고리를 찾았다 |
 | `DEADLOCK_RETREAT` | ERROR | traffic | 로봇 1대가 아직 들어가지 않은 구역을 포기한다 |
 | `DEADLOCK_UNRESOLVED` | ERROR | traffic | 풀지 못했다. 관리자가 봐야 한다 |
@@ -119,13 +121,14 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `release_margin_extra_m` | 0.05 | 심판 전용. r + 이 값이면 코스 밖이다 |
 | `release_distance_m` | 0.2 | 해제 거리 d(5절). 근거식 d ≥ r + ε + v·(τ + tick), d ≥ 2r + ε. 실측 전 값이고 압박 시험 표는 작업 기록 7번에 있다 |
 | `release_confirm_samples` | 3 | 해제 전에 연속으로 확인하는 보고 수 |
-| `lane_error_warn_m` | 0.15 | `LANE_ERROR`를 내는 이탈 e |
+| `lane_error_warn_m` | 0.15 | `LANE_ERROR`를 내고 로봇을 세우는 이탈 e |
 | `move_retry_limit` | 2 | 첫 실패 뒤 재시도 수. 이동, 도킹, 팔 작업이 같이 쓴다 |
 | `move_retry_wait_s` | 2 | 이동이나 도킹 실패 뒤 다시 보내기까지. 추정. 세 번 시도하는 시간이 `comm_timeout_s`보다 길어 통신 두절이면 `COMM_LOST`가 먼저 난다 |
 | `stall_s` | 6 | 이동 목표가 열린 채 이만큼 제자리면 멈춤. pinky_multi_sim(Gazebo 정리 4.3)과 같은 값. `comm_timeout_s`보다 길어 말 없는 로봇은 `COMM_LOST`가 먼저 난다 |
 | `stall_move_m` | 0.05 | 매끄럽게 한 위치가 이보다 덜 움직이면 제자리. 지시서와 pinky_multi_sim은 0.02였지만, 위치 잡음 σ 0.01 m부터 감시가 걸리지 않아 올렸다(작업 기록 11-06 파트 2). 0.01 m/s보다 느린 로봇은 멈춤으로 본다 |
 | `stall_smooth_s` | 1 | 멈춤 감시가 보는 위치의 지수 평균 시간 상수. 잡음 하나로 시계가 다시 시작되지 않게 한다 |
 | `dock_stall_s` | 15 | 도킹 목표의 멈춤 시간. 도킹은 천천히 맞추므로 더 길다. 추정 |
+| `off_lane_timeout_s` | 20 | 레인을 벗어나 세운 로봇이 이 안에 돌아오지 않으면 `OFF_LANE`(ERROR). 추정 |
 | `arrival_tolerance_m` | 0.15 | 이동의 성공 결과를 도착으로 치는 목표 지점까지의 거리. 추정. 가장 짧은 레인에서 `release_distance_m`을 뺀 값(기본 지도 0.2 m)보다 작아야 한다(7절) |
 | `arrival_settle_s` | 1 | 성공 결과가 위치 보고보다 먼저 왔을 때 보고를 기다리는 시간. 추정. 보고 지연 τ보다 길어야 한다 |
 | `startup_wait_s` | 10 | `ROBOT_NOT_REPORTING`을 내기까지 |
@@ -233,7 +236,10 @@ run_mode는 FMS가 OrderBoard로 받는다. 삭제된 것: TaskBoard, StationCou
 - 구역마다 FIFO다. 충돌쌍에는 FIFO를 넓혀 쌍 전체의 요청 순서를 따른다. 한쪽이 계속 바빠도 다른 쪽이 굶지 않게 하려는 것이고, 지시서의 "레인별 FIFO"보다 넓다. 이 순서로 대기 고리가 생기는지는 지도마다 전수 검사로 본다(11절).
 - 해제: 로봇 위치 p를 그 구역을 떠나는 레인(시작 지점 p_i, 단위 벡터 u)에 투영해 s = (p − p_i)·u를 구한다. s > d(`release_distance_m`)가 `release_confirm_samples`번 연속이면 해제한다. 떠나는 레인이 경로에 없으면(앞쪽 구역, 손으로 옮긴 로봇) 구역 중심선에서 d 이상이어야 한다.
 - 근거식: d ≥ r + ε + v·(τ + tick), d ≥ 2r + ε. r은 반경, ε은 위치 오차, v는 속도, τ는 보고 지연, tick은 관제 주기다. 뒤의 식은 앞 로봇이 해제 지점 근처에 서고 뒤 로봇이 지점까지 오는 경우이고, 시험으로 만들지는 않았다. d ≤ 2r이면 `TrafficController`가 시작을 거부한다. d는 실측 전 값이다. 압박 시험 표는 작업 기록 7번에 있고, 실측 ε과 τ가 나오면 그 표로 d를 정한다.
-- 이탈 e = |(p − p_i) − s·u|는 해제 조건이 아니다. 이동 목표 중에 `lane_error_warn_m`을 넘는 보고가 `release_confirm_samples`번 이어지면 목표당 한 번 `LANE_ERROR`만 낸다. 경로의 첫 지점으로 가는 목표는 기준이 될 레인이 없어 보지 않는다. 목표를 연장하거나 다시 보내면 새 목표다. 횟수를 0부터 다시 세므로, 이탈이 이어지면 새 목표에서 다시 나오고 그 횟수를 채우기 전에 목표가 바뀌면 나오지 않을 수 있다. 05 레인 시뮬과 같다. 레인을 크게 벗어난 로봇도 s > d면 해제한다는 뜻이므로, 실측 e를 본 뒤 다시 판단한다(13절).
+- 이탈 e = |(p − p_i) − s·u|는 해제 조건이 아니다. 대신 이탈 중에는 해제를 멈춘다(13절, 11-06 지시서 3번). e는 이동 목표 안에서 로봇이 지금 달리는 레인(시작점을 지난 마지막 레인)으로 잰다. 횟수는 그 레인이 바뀔 때만 0으로 돌아가고, 목표를 연장하거나 다시 보내도 이어진다. 경로의 첫 지점으로 가는 목표와 도킹은 기준이 될 레인이 없어 보지 않는다. 목표가 없을 때 온 보고는 세지도 끊지도 않는다.
+- `lane_error_warn_m`을 넘는 보고가 `release_confirm_samples`번 이어지면 `LANE_ERROR`(WARN)를 내고 목표를 취소한다(`CancelCmd`). 쥔 구역은 놓지 않고, 기다리던 구역 요청은 거둔다(뒤 로봇을 막지 않게). 그동안 해제 판단(거리 해제, 통신 복구와 교착 후퇴의 해제)을 멈추고, 새 목표를 내지 않고, 배차와 호출에서 빠지며, 목표가 없으니 멈춤 감시도 쉰다. `/fleet/robots`에는 `fault=RECOVERING`, `fault_reason=OFF_LANE`으로 보인다. 벗어난 로봇의 실제 위치를 모르는데 구역을 놓으면 다른 로봇이 그 공간에 들어올 수 있기 때문이다.
+- 보고가 그 레인에서 `half_width_m` 안으로 `release_confirm_samples`번 이어지면 `BACK_ON_LANE`(INFO)을 내고 같은 지점으로 목표를 다시 보낸다. 시도 횟수로 세지 않는다. 서 있던 동안의 보고로는 구역을 놓지 않는다(벗어난 보고 수를 지운다). `off_lane_timeout_s` 안에 못 돌아오면 `OFF_LANE`(ERROR, `fault_reason=OFF_LANE`)이고 그 뒤는 관리자가 정한다(`confirm_clear`나 재투입).
+- 이탈 상태는 통신 상태(`COMM_LOST`, `RECOVERING`)와 따로 둔다. 이탈 중 통신이 끊기면 `COMM_LOST`가 보이고, 보고가 돌아와도 레인에 돌아올 때까지 통신 복구의 위치 확인을 미룬다(`RECOVERING`, CHECKING_POSE). 레인에 돌아오면 통신 복구가 먼저 끝나고 그 뒤 이탈을 푼다. 이탈 시계는 통신이 끊긴 동안에도 간다. 다른 고장(ERROR)이나 `confirm_clear`가 오면 이탈 상태는 지운다.
 - 가장 짧은 레인이 d 이하이면 레인 끝에 서도 해제되지 않으므로 `TrafficController`가 시작을 거부한다. 기본 지도의 가장 짧은 레인은 0.4 m다.
 
 시작과 재시작: 전원이 지도에 올라야 움직이기 시작한다. 로봇은 위치를 보고하고 `MOVING`이나 `DOCKING`이 아닐 때 지도에 오른다. `startup_wait_s`가 지나도 안 오른 로봇이 있으면 `ROBOT_NOT_REPORTING`을 낸다. 아래의 `PLACEMENT_CONFLICT`로 거부된 로봇은 이미 보고했으므로 여기서 세지 않는다. 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있으면 지도에 올리지 않고 `PLACEMENT_CONFLICT`를 내며, 그 로봇이 움직이거나 관리자가 치울 때까지 **전원이 기다린다**(정책, 팀 확인 필요). 지점에서 d보다 멀리 서 있으면 먼저 그 레인의 끝으로 간다. 전원이 오르기 전에는 `/fleet/zones`를 내지 않는다. FMS는 잠금을 아직 모르며, 모르는 것과 빈 것은 다르다.
@@ -265,7 +271,7 @@ confirm_clear(관리자가 로봇을 치웠다): 구역 해제, OUT_OF_SERVICE, 
 
 도착 판정: 이동의 성공 결과가 와도 마지막 보고 위치가 목표 지점에서 `arrival_tolerance_m`보다 멀면 바로 도착으로 치지 않는다. 위치 보고는 결과보다 늦게 올 수 있으므로 `arrival_settle_s` 동안 새 목표를 내지 않고 기다린다. 그 안에 허용치 안의 위치가 보고되면 도착이고, 기한이 지나도 보고된 위치가 멀면 실패한 시도(`NOT_AT_TARGET`)로 친다. 처리는 실패한 이동과 같다. 로봇의 통신 상태가 `COMM_LOST`나 `RECOVERING`이면 위치가 오래된 것이고 복구가 위치를 다시 판단하므로 보지 않는다. 도킹 결과는 위치를 보지 않는다. 정지 오차가 이 값을 자주 넘는 로봇은 재시도를 다 써서 ERROR가 될 수 있으므로, 이 값은 실측한 정지 오차, ε, τ와 함께 정한다. 성공 뒤에 위치 보고가 하나도 오지 않았으면 기한이 지나도 판정하지 않고 기다린다. 그 위치는 성공 전의 것이라 아무것도 말해 주지 않기 때문이다. 보고가 끊긴 로봇은 `COMM_LOST`가 먼저 나고 복구가 위치를 판단한다. 기다리는 동안 새 이동 목표는 내지 않는다(2026-11-06 검토에서 추가). 정지 오차를 넣은 압박 시험은 작업 기록(11-05) 7번에 있고 이 판정을 넣기 전 결과다. 판정을 넣은 뒤의 `basic_orders` 결과는 `docs/worklog_2026-11-06.md`의 압박 시험 표에 있다.
 
-이벤트 코드(traffic, 뜻은 0절): `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_STALLED`, `GOAL_NOT_SENT`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ZONES_STILL_HELD`, `LANE_ERROR`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
+이벤트 코드(traffic, 뜻은 0절): `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_STALLED`, `GOAL_NOT_SENT`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ZONES_STILL_HELD`, `LANE_ERROR`, `BACK_ON_LANE`, `OFF_LANE`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
 
 `TrafficController` 공개 API:
 ```python
@@ -345,17 +351,17 @@ robots:
   pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03} # report_delay_s(보고 지연, 시나리오 초), stop_error_m(정지 오차, 축마다 표준편차)도 쓸 수 있다. 기본 0
 arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
 dock: {duration_s: 3.0, error_cm: 1.0}
-faults: [] # comm_loss, nav_abort, stuck 유지. 추가: arm_fail(대상 arm, count), swap_partial(count), operator_remove(로봇을 코스에서 치우고 confirm_clear 호출)
+faults: [] # comm_loss, nav_abort, stuck 유지. 추가: arm_fail(대상 arm, count), swap_partial(count), operator_remove(로봇을 코스에서 치우고 confirm_clear 호출), drift(robot, duration_s, offset_m: 그동안 보고 위치만 진행 방향 왼쪽으로 민다)
 expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders_held: 0, fifo_violations: 0, dual_arm_overlaps: 0,
-  zone_holder_max: 1, released_without_position_check: 0, unheld_zone_pose: 0, events_include: []}
+  zone_holder_max: 1, released_without_position_check: 0, unheld_zone_pose: 0, released_while_off_lane: 0, events_include: []}
 ```
 `expect`의 숫자는 정확히 일치해야 통과한다. `orders_shipped_min`도 지원한다(고장 시나리오에서 "0건이어도 통과"가 되지 않도록 반드시 1 이상).
 
-시나리오 6개: `basic_orders`(주문 6건, 고장 없음), `order_burst`(한꺼번에 8건, 진행 중 추가 주문, 밀린 주문이면 대기 구간을 거치지 않고 바로 작업공간으로 가는지 확인), `shared_lane_failure`(통신 두절+주행 실패), `stock_shortage`(재고 0인 품목과 기록만 있고 실물 없는 품목: PARTIAL과 HELD, OUT_OF_STOCK과 STOCK_MISMATCH 구분), `stuck_robot`(차선에서 멈춤: 뒤따르는 로봇이 막히고 경고가 나는지), `operator_recovery`(팔 고장 3회 → ERROR → 관리자가 치움 → 주문이 다시 처리되어 전부 끝남).
+시나리오 6개: `basic_orders`(주문 6건, 고장 없음), `order_burst`(한꺼번에 8건, 진행 중 추가 주문, 밀린 주문이면 대기 구간을 거치지 않고 바로 작업공간으로 가는지 확인), `shared_lane_failure`(통신 두절+주행 실패), `stock_shortage`(재고 0인 품목과 기록만 있고 실물 없는 품목: PARTIAL과 HELD, OUT_OF_STOCK과 STOCK_MISMATCH 구분), `stuck_robot`(차선에서 멈춤: 뒤따르는 로봇이 막히고 경고가 나는지), `operator_recovery`(팔 고장 3회 → ERROR → 관리자가 치움 → 주문이 다시 처리되어 전부 끝남). 11-06에 7번째 `off_lane`을 더했다(한 대의 보고가 레인 옆으로 밀림 → 세우고 구역 유지 → 뒤 로봇은 그 구역 앞에서 대기 → 돌아오면 재개 → 전부 출고).
 
 심판은 FMS가 내는 이벤트를 본다. 가짜 노드(FakePinky, FakeWorkcell, FakeArm3, FakeVision, FakeCentral)는 인터페이스가 같으므로 그대로 쓴다. 시나리오 시각은 시뮬 시계(`speed_factor` 5배속)이고, heartbeat만 벽시계다(4절). `tools/pressure_sweep.py`는 시나리오에 지연과 잡음을 넣어 돌리고 표를 만든다(7번 표는 작업 기록에 있다).
 
-심판 추가 항목: `fifo_violations`(ORDER_BOUND 순서가 등록 순서와 다르거나 SHIPPED/PARTIAL 순서가 묶인 순서와 다르면 위반. ORDER_REQUEUED된 주문은 다음에 묶이는 주문이어야 하고, 되돌림 없이 두 번 묶이면 위반), `dual_arm_overlaps`(arm1과 arm2가 동시에 PLACING. 양쪽 팔이 필요한 주문인데 PLACING이 안 보이면 실패. 2026-11-04에 양팔 동시 계획으로 정했으므로 이 항목의 의미가 바뀐다: 동시 PLACING은 허용, 충돌만 위반. 가짜 workcell과 심판을 그에 맞춰 고치기 전까지 기대값은 참고용), `unexpected_errors`(시나리오가 예상하지 않은 ERROR 이벤트), `order_results`(주문별 결과), 시간 초과는 시나리오가 예상한 경우 외에는 실패.
+심판 추가 항목: `fifo_violations`(ORDER_BOUND 순서가 등록 순서와 다르거나 SHIPPED/PARTIAL 순서가 묶인 순서와 다르면 위반. ORDER_REQUEUED된 주문은 다음에 묶이는 주문이어야 하고, 되돌림 없이 두 번 묶이면 위반), `dual_arm_overlaps`(arm1과 arm2가 동시에 PLACING. 양쪽 팔이 필요한 주문인데 PLACING이 안 보이면 실패. 2026-11-04에 양팔 동시 계획으로 정했으므로 이 항목의 의미가 바뀐다: 동시 PLACING은 허용, 충돌만 위반. 가짜 workcell과 심판을 그에 맞춰 고치기 전까지 기대값은 참고용), `unexpected_errors`(시나리오가 예상하지 않은 ERROR 이벤트), `order_results`(주문별 결과), `released_while_off_lane`(drift 시작 1초 뒤부터 끝날 때까지 그 로봇이 놓은 구역 수. 1초는 FMS가 연속 보고로 알아챌 여유), 시간 초과는 시나리오가 예상한 경우 외에는 실패.
 
 ## 7. 알려진 약점 (이번 작업에서 고치지 않고 문서에 남김)
 - `arrival_tolerance_m` 안에 멈춰 도착으로 쳤는데 레인 진행이 `s ≤ d`이면 뒤 구역이 해제되지 않아 조용히 멈출 수 있다. 가장 짧은 레인에서 d를 뺀 값이 허용치보다 작은 지도에서만 생긴다. 기본 지도는 0.4 m에서 0.2 m를 빼 0.2 m이므로 0.15 m에 해당하지 않고, 시험으로 고정했다. 시험 격자(0.33 m)와 `sim/fake_robots/maps/oneway_*.yaml`은 조건을 만족하지 않는다. 시작할 때 막지 않는다.
@@ -473,7 +479,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 - **FMS 구조와 담당**: v17 구조 자체가 팀 합의 전이다. FMS 담당은 정하지 않았다. 제안은 v17의 core와 pinky(코드의 `traffic`과 주문 진행)를 핑키 관제 담당이, arm을 팔 담당이 맡는 것이다.
 - **새로 제안한 바깥 인터페이스**: `/fleet/robots`의 이름과 필드. 핑키 쪽(`/fleet/heartbeat` 포함)은 위 "핑키 계약"으로 정했다.
 - **시작 정책**: 지도에 못 올리는 로봇(`PLACEMENT_CONFLICT`)이 있으면 전원이 기다리는 것(지금 코드)이 맞는지.
-- **이탈 e**: 해제 조건에 넣을지. 실측 e를 본 뒤 정한다. 넣으면 레인이 나란한 지도에서 로봇이 다음 구역을 청하지 못할 수 있다.
+- **이탈 e**: 확정(2026-11-06, 지시서 3번). 해제 조건에 넣지 않되 이탈 중에는 해제를 멈춘다. 조건에 넣으면 레인이 나란한 지도에서 로봇이 다음 구역을 청하지 못할 수 있어서다. 이탈한 로봇은 세우고 구역을 쥔다(5절). `lane_error_warn_m`과 `off_lane_timeout_s`는 실측 e를 본 뒤 다시 정한다.
 - **실측 값**: ε, τ, v를 실물 핑키로 재서 d를 정한다(작업 기록 7번의 표). 실제 지도의 레인 그래프는 2·3번 도구에 데이터만 넣으면 된다.
 - STOP/PAUSE는 FMS가 OrderBoard의 run_mode로 받는다. SR-34의 두 정지 방식은 PAUSE(하던 동작을 끝내고 멈춤)와 STOP(취소하고 바로 멈춤)에 대응한다. 받아들일지는 중앙 담당과 확인한다.
 - 비상 정지의 경로와 어느 노드가 듣는지(SR-36): 화면의 STOP과 달리 FMS에 기대지 않아야 한다.

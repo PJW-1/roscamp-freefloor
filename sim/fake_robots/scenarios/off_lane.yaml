@@ -1,0 +1,37 @@
+# pinky1이 첫 출발 뒤 N에서 S로 가는 레인 위에서 7초부터 8초 동안 보고 위치가
+# 레인 옆으로 0.3 m 밀린다(실제 위치는 그대로). 플릿 매니저는 LANE_ERROR를 내고
+# 목표를 취소해 세우며, 쥔 구역을 놓지 않는다. 뒤따르던 pinky2는 그 구역 앞에서 기다린다.
+# 보고가 레인에 돌아오면 같은 목표를 다시 보내고(BACK_ON_LANE) 주문은 모두 출고된다.
+seed: 7
+speed_factor: 5.0
+timeout_s: 900
+stock: {arm1: {A: 6, B: 6}, arm2: {C: 6, D: 6}}
+orders:
+  - {at_s: 0, id: O-001, items: {A: 1, C: 1}}
+  - {at_s: 0, id: O-002, items: {B: 1, D: 1}}
+  - {at_s: 10, id: O-003, items: {A: 2}}
+  - {at_s: 20, id: O-004, items: {C: 1, D: 1, A: 1}}
+  - {at_s: 40, id: O-005, items: {B: 2, C: 2}}
+  - {at_s: 60, id: O-006, items: {D: 1}}
+robots:
+  pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults:
+  - {at_s: 7, robot: pinky1, type: drift, duration_s: 8, offset_m: 0.3}
+expect:
+  all_orders_finished: true
+  orders_shipped: 6
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  released_while_off_lane: 0
+  events_include: [LANE_ERROR, BACK_ON_LANE]
+  event_counts: {LANE_ERROR: 1, BACK_ON_LANE: 1, OFF_LANE: 0, GOAL_FAILED: 0, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED}

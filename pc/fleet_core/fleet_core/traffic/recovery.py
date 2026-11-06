@@ -95,7 +95,9 @@ class TrafficRecovery:
 
     def _finish_recoveries(self, now: float) -> None:
         for m in self._missions.values():
-            if m.live and m.comm == RECOVERING and now >= m.recover_at:
+            # 레인을 벗어난 동안은 자세를 확인할 수 없어 기다린다.
+            if (m.live and m.comm == RECOVERING and now >= m.recover_at
+                    and not self._still_off_lane(m)):
                 self._finish_recovery(m)
 
     def _finish_recovery(self, m: _Mission) -> None:

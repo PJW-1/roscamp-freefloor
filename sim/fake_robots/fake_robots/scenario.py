@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 ORDER_RESULTS = ("SHIPPED", "PARTIAL", "HELD")
-ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove")
+ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "drift")
 ARM_FAULTS = ("arm_fail", "swap_partial")
 FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
 # 이 고장이 난 로봇은 돌아오지 않으므로 주차를 기다리지 않는다.
@@ -30,6 +30,7 @@ EXPECT_DEFAULTS = {
     "order_results": {},  # 주문 id: SHIPPED, PARTIAL, HELD
     "events_include": [],
     "event_counts": {},  # 코드: 정확히 몇 번 나와야 하는지
+    "released_while_off_lane": 0,  # drift로 레인 밖이라 보고하는 동안 그 로봇이 놓은 구역 수
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
                   "arm", "dock", "faults", "expect"}
@@ -78,6 +79,7 @@ class Fault:
     count: int = 1
     arm: str = ""  # arm_fail의 대상
     after_items: int = 0  # arm_fail: 한 목표에서 몇 개를 놓은 뒤 실패하는지
+    offset_m: float = 0.0  # drift: 보고 위치를 진행 방향 왼쪽으로 미는 거리(음수면 오른쪽)
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,7 @@ class Expect:
     order_results: dict = field(default_factory=dict)
     events_include: list = field(default_factory=list)
     event_counts: dict = field(default_factory=dict)
+    released_while_off_lane: int = 0
 
 
 @dataclass(frozen=True)
@@ -215,9 +218,12 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
         raise ScenarioError(f"arm_fail needs a workspace arm in {raw}")
     if "at_s" not in raw:
         raise ScenarioError(f"fault has no at_s: {raw}")
+    if kind == "drift" and not (raw.get("duration_s", 0) > 0 and raw.get("offset_m", 0) != 0):
+        raise ScenarioError(f"drift needs a positive duration_s and a nonzero offset_m: {raw}")
     return Fault(float(raw["at_s"]), raw.get("robot", ""), kind,
                  float(raw.get("duration_s", 0.0)), int(raw.get("count", 1)),
-                 raw.get("arm", ""), int(raw.get("after_items", 0)))
+                 raw.get("arm", ""), int(raw.get("after_items", 0)),
+                 float(raw.get("offset_m", 0.0)))
 
 
 def _parse_expect(data: dict, faults: list) -> Expect:

@@ -1,0 +1,193 @@
+"""레인 이탈: 많이 벗어나면 세우고 구역을 쥔 채 해제 판단을 멈춘다(11-06 지시서 3번).
+
+기본 지도에서 W를 떠나 A로 가는 로봇 하나로 잰다. 0.1초 틱.
+"""
+from core_helpers import cmds, codes
+from fleet_core.common.params import load_params
+from fleet_core.traffic.controller import TrafficController
+from fleet_core.traffic.lane_map import load_lane_map
+from grid_map import grid_site
+
+PARAMS = load_params()
+N = PARAMS.release_confirm_samples
+OFF = PARAMS.lane_error_warn_m + 0.05
+
+
+def make(where, site=None):
+    now = [0.0]
+    core = TrafficController(site or load_lane_map(), load_params(), list(where),
+                             lambda: now[0])
+    for robot, node in where.items():
+        x, y = core.site.waypoint_pose(node)
+        for _ in range(N):
+            core.on_robot_state(robot, x, y, 0.0, "IDLE")
+    core.on_run_mode("RUN")
+    return core, now
+
+
+def beside(core, a, b, along, off, times=N, robot="r1"):
+    """a에서 b로 가는 레인을 along만큼 가고 왼쪽으로 off만큼 벗어난 자세를 보고한다."""
+    x, y = core.site.waypoint_pose(a)
+    lane = core.site.lane(a, b)
+    for _ in range(times):
+        core.on_robot_state(robot, x + lane.ux * along - lane.uy * off,
+                            y + lane.uy * along + lane.ux * off, 0.0, "MOVING")
+
+
+def start(core):
+    core.on_dispatch(1, "OUTBOUND", "r1")
+    return cmds(core.tick(), "MoveCmd")[0]
+
+
+def status(core):
+    view = core.status_view("r1")
+    return view["fault"], view["fault_reason"]
+
+
+def events(out, code):
+    return [e for e in cmds(out, "EventOut") if e.code == code]
+
+
+def stopped():
+    """W에서 A로 가다 레인을 벗어나 선 로봇."""
+    core, now = make({"r1": "W"})
+    first = start(core)
+    beside(core, "W", "A", 0.1, OFF)
+    out = core.tick()
+    return core, now, first, out
+
+
+def test_the_values():
+    assert PARAMS.off_lane_timeout_s == 20.0
+    assert load_lane_map().half_width < PARAMS.lane_error_warn_m
+
+
+def test_a_robot_far_off_its_lane_is_stopped_and_keeps_its_zones():
+    core, _ = make({"r1": "W"})
+    first = start(core)
+    held = core.robot_view("r1")["held"]
+    beside(core, "W", "A", 0.1, OFF, N - 1)
+    out = core.tick()
+    assert not cmds(out, "CancelCmd"), "one report short"
+    beside(core, "W", "A", 0.1, OFF, 1)
+    out = core.tick()
+    warned = events(out, "LANE_ERROR")
+    assert [e.level for e in warned] == ["WARN"]
+    assert [c.goal_id for c in cmds(out, "CancelCmd")] == [first.goal_id]
+    assert core.robot_view("r1")["goal_id"] is None
+    assert core.robot_view("r1")["held"] == held
+    assert status(core) == ("RECOVERING", "OFF_LANE")
+
+
+def test_nothing_is_released_or_sent_while_off_the_lane():
+    core, now, _, _ = stopped()
+    out = []
+    d = PARAMS.release_distance_m
+    for _ in range(round(2 * PARAMS.stall_s / 0.1)):
+        now[0] = round(now[0] + 0.1, 6)
+        beside(core, "W", "A", d + 0.1, OFF, 1)  # 이탈 전이면 W를 놓을 진행
+        out += core.tick()
+    assert "W" in core.robot_view("r1")["held"]
+    assert not cmds(out, "MoveCmd")
+    assert "GOAL_STALLED" not in codes(out), "no goal, so the stall watch rests"
+    assert codes(out).count("LANE_ERROR") == 0, "once per stop"
+    assert status(core) == ("RECOVERING", "OFF_LANE")
+
+
+def test_back_on_the_lane_sends_the_same_goal_again_and_clears_the_fault():
+    core, _, first, _ = stopped()
+    half = core.site.half_width
+    beside(core, "W", "A", 0.1, half - 0.01)
+    out = core.tick()
+    again = cmds(out, "MoveCmd")
+    assert [m.target_id for m in again] == [first.target_id]
+    assert again[0].goal_id != first.goal_id
+    assert [e.level for e in events(out, "BACK_ON_LANE")] == ["INFO"]
+    assert status(core) == ("NONE", "")
+
+
+def test_reports_back_on_the_lane_must_follow_each_other():
+    core, _, _, _ = stopped()
+    beside(core, "W", "A", 0.1, 0.0, N - 1)
+    beside(core, "W", "A", 0.1, OFF, 1)
+    beside(core, "W", "A", 0.1, 0.0, N - 1)
+    assert not cmds(core.tick(), "MoveCmd")
+    beside(core, "W", "A", 0.1, 0.0, 1)
+    assert cmds(core.tick(), "MoveCmd")
+
+
+def test_a_robot_that_does_not_come_back_ends_in_error_and_keeps_its_zones():
+    core, now, _, _ = stopped()
+    held = core.robot_view("r1")["held"]
+    since = now[0]
+    now[0] = since + PARAMS.off_lane_timeout_s - 0.1
+    beside(core, "W", "A", 0.1, OFF, 1)
+    assert not events(core.tick(), "OFF_LANE")
+    now[0] = since + PARAMS.off_lane_timeout_s
+    beside(core, "W", "A", 0.1, OFF, 1)
+    out = core.tick()
+    assert [e.level for e in events(out, "OFF_LANE")] == ["ERROR"]
+    assert status(core) == ("ERROR", "OFF_LANE")
+    assert core.robot_view("r1")["held"] == held
+    beside(core, "W", "A", 0.1, 0.0)
+    out = core.tick()
+    assert not cmds(out, "MoveCmd"), "the operator decides now"
+    assert status(core) == ("ERROR", "OFF_LANE")
+    assert core.confirm_clear("r1", held, "lifted") == held
+    assert status(core)[0] == "OUT_OF_SERVICE"
+
+
+def test_the_count_survives_a_goal_sent_again_on_the_same_lane():
+    """예전에는 새 목표마다 횟수가 0이 되어 연장이 잦으면 영영 못 잡았다."""
+    core, now = make({"r1": "W"})
+    first = start(core)
+    beside(core, "W", "A", 0.1, OFF, N - 1)
+    core.on_goal_not_sent("r1", first.goal_id)
+    now[0] += PARAMS.move_retry_wait_s
+    again = cmds(core.tick(), "MoveCmd")
+    assert [m.target_id for m in again] == [first.target_id]
+    beside(core, "W", "A", 0.1, OFF, 1)
+    out = core.tick()
+    assert len(events(out, "LANE_ERROR")) == 1
+    assert status(core) == ("RECOVERING", "OFF_LANE")
+
+
+def test_the_count_starts_again_on_the_next_lane_of_a_long_goal():
+    """곧은 목표 하나가 레인 둘에 걸친다. 레인이 바뀌면 처음부터 센다."""
+    core, _ = make({"r1": (4, 3)}, grid_site())
+    start(core)
+    m = core._missions["r1"]
+    a, b, c = m.path[0], m.path[1], m.path[2]
+    assert m.goal.target_idx == 2
+    beside(core, a, b, 0.5 * core.site.lane(a, b).length, OFF, N - 1)
+    beside(core, b, c, 0.05, OFF, 1)
+    out = core.tick()
+    assert not events(out, "LANE_ERROR"), "one report on the new lane"
+    beside(core, b, c, 0.1, OFF, N - 1)
+    assert len(events(core.tick(), "LANE_ERROR")) == 1
+
+
+def test_comm_loss_while_off_the_lane_keeps_the_zones_and_waits_for_the_lane():
+    core, now, _, _ = stopped()
+    held = core.robot_view("r1")["held"]
+    now[0] += PARAMS.comm_timeout_s + 0.5
+    out = core.tick()
+    assert "COMM_LOST" in codes(out)
+    assert status(core) == ("COMM_LOST", "NO_STATE")
+    beside(core, "W", "A", 0.1, OFF, 1)
+    out = core.tick()
+    assert "COMM_RESTORED" in codes(out)
+    for _ in range(round(3 * PARAMS.recover_check_s / 0.1)):
+        now[0] = round(now[0] + 0.1, 6)
+        beside(core, "W", "A", 0.1, OFF, 1)
+        out += core.tick()
+    assert not cmds(out, "MoveCmd"), "still off the lane"
+    assert "RECOVERY_CONFLICT" not in codes(out)
+    assert core.robot_view("r1")["held"] == held
+    assert status(core)[0] == "RECOVERING"
+    beside(core, "W", "A", 0.1, 0.0)
+    out = core.tick() + core.tick()
+    assert cmds(out, "MoveCmd")
+    assert "BACK_ON_LANE" in codes(out)
+    assert status(core) == ("NONE", "")
+    assert core.robot_view("r1")["held"] == held

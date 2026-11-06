@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 
 RATE_PERIOD_S = 0.5  # robots.csv는 2 Hz로 줄여 쓴다
+OFF_LANE_GRACE_S = 1.0  # drift 시작부터 FMS가 연속 보고로 알아챌 때까지의 여유
 EPS = 1e-9
 PLACING = "PLACING"
 FINAL_CODES = {"ORDER_SHIPPED": "SHIPPED", "ORDER_PARTIAL": "PARTIAL", "ORDER_HELD": "HELD"}
@@ -55,6 +56,13 @@ class ScenarioJudge:
         self.max_occupancy = 0
         self.release_violations = 0
         self.unheld_violations = 0
+        self.off_lane_releases = 0
+        # 로봇 -> 보고가 레인 밖으로 밀린 시간 구간들
+        self._drifts: dict[str, list[tuple[float, float]]] = {}
+        for f in scenario.faults:
+            if f.type == "drift":
+                self._drifts.setdefault(f.robot, []).append(
+                    (f.at_s + OFF_LANE_GRACE_S, f.at_s + f.duration_s))
         self.robot_rows: list[tuple] = []
         self.zone_rows: list[tuple] = []
         self.event_rows: list[tuple] = []
@@ -183,6 +191,7 @@ class ScenarioJudge:
         return sorted(z for z, holder in self.holders.items() if holder == robot)
 
     def _check_release(self, t: float, zone: str, robot: str) -> None:
+        self._check_off_lane_release(t, zone, robot)
         position = self._position(robot)
         if position is None:
             self._violate(t, f"{zone} released from {robot} with no known pose")
@@ -200,6 +209,12 @@ class ScenarioJudge:
         if dist <= limit:
             self._violate(t, f"{zone} released from {robot} while {dist:.2f} m from it")
             self.release_violations += 1
+
+    def _check_off_lane_release(self, t: float, zone: str, robot: str) -> None:
+        """보고가 레인 밖인 동안에는 실제 위치를 모르므로 어떤 구역도 놓으면 안 된다."""
+        if any(start <= t < end for start, end in self._drifts.get(robot, ())):
+            self.off_lane_releases += 1
+            self._violate(t, f"{zone} released from {robot} while its reports were off the lane")
 
     def _violate(self, t: float, text: str) -> None:
         self.violations.append(f"t={t:.1f} {text}")
@@ -390,6 +405,7 @@ class ScenarioJudge:
             "released_without_position_check": exact(self.release_violations,
                                                      ex.released_without_position_check),
             "unheld_zone_pose": exact(self.unheld_violations, ex.unheld_zone_pose),
+            "released_while_off_lane": exact(self.off_lane_releases, ex.released_while_off_lane),
             "direct_returns_min": at_least(self.direct_returns, ex.direct_returns_min),
             "parked_while_backlog": exact(self.parked_while_backlog, ex.parked_while_backlog),
             "timed_out": exact(timed_out, ex.timed_out),

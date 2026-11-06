@@ -9,7 +9,7 @@ from fleet_core.traffic.lane_map import load_lane_map
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 SIX = {"basic_orders", "order_burst", "shared_lane_failure", "stock_shortage", "stuck_robot",
-       "operator_recovery"}
+       "operator_recovery", "off_lane"}
 
 
 @pytest.fixture(scope="module")
@@ -106,6 +106,10 @@ def test_multi_cell_zone_is_not_a_valid_start(site):
     {"faults": [{"at_s": 5, "arm": "arm3", "type": "arm_fail"}],
      "expect": {"orders_shipped_min": 1}},
     {"faults": [{"at_s": 5, "robot": "pinky9", "type": "operator_remove"}],
+     "expect": {"orders_shipped_min": 1}},
+    {"faults": [{"at_s": 5, "robot": "pinky1", "type": "drift", "offset_m": 0.3}],
+     "expect": {"orders_shipped_min": 1}},
+    {"faults": [{"at_s": 5, "robot": "pinky1", "type": "drift", "duration_s": 5}],
      "expect": {"orders_shipped_min": 1}},
     {"expect": {"no_such_check": 1}},
     {"expect": {"all_boxes_delivered": True}},
@@ -285,3 +289,24 @@ def test_a_slow_cancel_is_an_arm_option(site):
     sc = load_scenario(SCENARIOS / "operator_recovery.yaml", site)
     assert sc.arm.cancel_seconds > 0
     assert parse_scenario({"robots": {"pinky1": {"start": "P-6"}}}, site).arm.cancel_seconds == 0.0
+
+
+def test_drift_fields_are_read(site):
+    sc = parse_scenario(minimal(expect={"orders_shipped_min": 1}, faults=[
+        {"at_s": 5, "robot": "pinky1", "type": "drift", "duration_s": 8, "offset_m": -0.3}]), site)
+    (drift,) = sc.faults
+    assert (drift.type, drift.at_s, drift.duration_s, drift.offset_m) == ("drift", 5.0, 8.0, -0.3)
+    assert sc.expect.released_while_off_lane == 0
+    assert not sc.gone_robots, "a drifting robot comes back"
+
+
+def test_off_lane_drifts_one_robot_and_expects_it_back_with_nothing_released(site):
+    sc = load_scenario(SCENARIOS / "off_lane.yaml", site)
+    (drift,) = sc.faults
+    assert drift.type == "drift"
+    assert abs(drift.offset_m) > load_fleet_params()["lane_error_warn_m"]
+    assert drift.duration_s < load_fleet_params()["off_lane_timeout_s"], "it must come back"
+    ex = sc.expect
+    assert ex.released_while_off_lane == 0 and ex.all_orders_finished
+    assert ex.event_counts["LANE_ERROR"] == 1 and ex.event_counts["BACK_ON_LANE"] == 1
+    assert ex.event_counts["OFF_LANE"] == 0

@@ -462,3 +462,30 @@ def test_noisy_pose_does_not_release_a_zone_the_robot_is_still_next_to(seed):
     noise = 0.03
     from_floor = world.min_true_release_distance + world.site.half_width
     assert from_floor >= world.params.release_distance_m - 2 * noise
+
+
+# ---- 레인 이탈 --------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_a_robot_reported_off_its_lane_stops_keeps_its_zones_and_resumes(seed):
+    """보고만 레인 옆으로 밀린다. 세우고 구역을 쥐며, 뒤 로봇은 기다리고, 돌아오면 이어 간다."""
+    faults = [{"at_s": 6, "robot": "pinky1", "type": "drift", "duration_s": 8, "offset_m": 0.3}]
+    world = SimWorld(seed=seed, faults=faults)
+    view = world.core.traffic.status_view
+    assert world.run_until(lambda: view("pinky1")["fault_reason"] == "OFF_LANE", 20)
+    assert view("pinky1")["fault"] == "RECOVERING"
+    held = set(world.core.zones.held_by("pinky1"))
+    robot = world.virtual["pinky1"]
+    stopped_at = (robot.x, robot.y)
+    waited = set()
+    while world.t < 14:
+        world.step()
+        assert held <= set(world.core.zones.held_by("pinky1")), "nothing released off the lane"
+        assert (robot.x, robot.y) == stopped_at, "stopped"
+        waited.add(view("pinky2")["wait_zone"])
+    assert waited & held, "the robot behind waits for its zones"
+    assert world.run_until(world.done)
+    assert_clean_finish(world)
+    assert world.event_codes("WARN").count("LANE_ERROR") == 1
+    assert world.event_codes("INFO").count("BACK_ON_LANE") == 1

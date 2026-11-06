@@ -27,7 +27,6 @@ from fleet_core.common.commands import (
     ZoneView,
 )
 from fleet_core.traffic.mission import (
-    _COMM_REASON,
     AT_STATION,
     COMM_LOST,
     DOCK,
@@ -36,7 +35,6 @@ from fleet_core.traffic.mission import (
     FILL,
     IDLE,
     MOVE,
-    NO_FAULT,
     NOT_AT_TARGET,
     ON_A_GOAL,
     OUT_OF_SERVICE,
@@ -53,12 +51,13 @@ from fleet_core.traffic.mission import (
     _Goal,
     _Mission,
 )
+from fleet_core.traffic.off_lane import TrafficOffLane
 from fleet_core.traffic.recovery import TrafficRecovery
 from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
-class TrafficController(TrafficRecovery):
+class TrafficController(TrafficOffLane, TrafficRecovery):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -279,6 +278,7 @@ class TrafficController(TrafficRecovery):
     def tick_progress(self, now: float) -> bool:
         """자세를 따라가며 지난 구역을 놓는다. 대기 순환으로 새 이동을 멈춘 동안 True."""
         for m in self._missions.values():
+            self._watch_off_lane(m, now)
             if m.available:
                 self._judge_arrival(m, now)
                 self._track_progress(m)
@@ -348,10 +348,11 @@ class TrafficController(TrafficRecovery):
             return {}
         wait_zone = self.zones.waiting_for(robot) or ""
         in_the_way = self.zones.blockers(robot, wait_zone) if wait_zone else ()
+        fault, reason = self._shown_fault(m)
         return {
             "fsm_state": m.robot_state,
-            "fault": m.fault or m.comm or NO_FAULT,
-            "fault_reason": m.fault_reason if m.fault else _COMM_REASON.get(m.comm, ""),
+            "fault": fault,
+            "fault_reason": reason,
             "wait_zone": wait_zone,
             "wait_robots": tuple(sorted(in_the_way)),
             "battery": m.battery,
@@ -547,7 +548,7 @@ class TrafficController(TrafficRecovery):
         경로 밖(앞 구역, 손으로 옮긴 로봇)이면 구역 중심선에서 d 이상, s와 같은 기준이다.
 
         s는 투영이라 레인에서 멀리 벗어난 로봇은 못 잡는다. 나가는 레인에 가까운 구역 레인은
-        이미 충돌 쌍이고, 나머지는 LANE_ERROR가 알린다.
+        이미 충돌 쌍이고, 나머지는 이탈 감시가 세운다(off_lane.py).
         """
         lane = self._exit_lane(m, zone)
         if lane:
@@ -567,18 +568,11 @@ class TrafficController(TrafficRecovery):
             else:
                 m.outside.pop(zone, None)
 
-    def _watch_lane_error(self, m: _Mission) -> None:
-        """잠금은 로봇이 레인 위에 있다고 가정한다. 벗어나면 goal마다 한 번 알린다."""
-        if not (m.goal and m.goal.kind == MOVE and m.goal.target_idx > 0):
-            return
-        a, b = m.path[m.goal.target_idx - 1], m.path[m.goal.target_idx]
-        s, e = self.site.lane_progress(a, b, m.x, m.y)
-        m.off_lane = m.off_lane + 1 if e > self.params.lane_error_warn_m else 0
-        if m.off_lane >= self.params.release_confirm_samples and not m.off_lane_warned:
-            m.off_lane_warned = True
-            self._event("WARN", "LANE_ERROR", f"{e:.2f} m off {a} to {b} at s={s:.2f}", m.name)
+    # 레인 이탈 감시(_watch_lane_error)는 off_lane.py에 있다.
 
     def _release_if_cleared(self, m: _Mission, zone: str) -> None:
+        if m.off_lane_since is not None:
+            return  # 벗어난 로봇의 실제 위치는 모른다
         if m.outside.get(zone, 0) >= self.params.release_confirm_samples:
             self.zones.release(m.name, zone)
             m.outside.pop(zone, None)
@@ -840,5 +834,4 @@ class TrafficController(TrafficRecovery):
         yaw = math.atan2(step[1], step[0]) if step else m.yaw
         goal_id = self._next_goal_id()
         m.goal = _Goal(MOVE, goal_id, target_idx, step)
-        m.off_lane, m.off_lane_warned = 0, False
         self._out.append(MoveCmd(m.name, goal_id, self.site.waypoint_id(waypoint), x, y, yaw))

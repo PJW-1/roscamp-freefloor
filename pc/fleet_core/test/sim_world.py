@@ -1,7 +1,7 @@
 """가짜 시계로 FleetCore를 구동하는 결정적 가상 창고.
 
 로봇은 직선으로 달리며 잡음 섞인 자세를 보고한다. 가짜 중앙 서버가 주문판을 관리한다.
-장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 팔 실패와 무응답을 넣는다.
+장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 보고 밀림, 팔 실패와 무응답을 넣는다.
 매 단계 안전 불변식을 검사하므로 이 세계를 쓰는 테스트는 모두 불변식도 검증한다.
 """
 from __future__ import annotations
@@ -66,6 +66,8 @@ class VirtualRobot:
     stuck: bool = False
     nav_aborts: int = 0
     dock_fails: int = 0
+    heading: float = 0.0  # 마지막 진행 방향
+    drift: float = 0.0  # 보고를 진행 방향 왼쪽으로 미는 거리, 실제 위치는 그대로
 
 
 @dataclass
@@ -207,6 +209,14 @@ class SimWorld:
                 self.pending_faults.sort(key=lambda f: f["at_s"])
             elif kind == "comm_back":
                 robot.comm_up = True
+            elif kind == "drift":
+                robot.drift = fault["offset_m"]
+                self.pending_faults.append({
+                    "at_s": self.t + fault["duration_s"], "type": "drift_end",
+                    "robot": robot.name})
+                self.pending_faults.sort(key=lambda f: f["at_s"])
+            elif kind == "drift_end":
+                robot.drift = 0.0
             elif kind == "nav_abort":
                 robot.nav_aborts = fault["count"]
             elif kind == "dock_fail":
@@ -272,6 +282,8 @@ class SimWorld:
         dx, dy = r.target[0] - r.x, r.target[1] - r.y
         dist = math.hypot(dx, dy)
         step = r.speed * DT
+        if dist > 0:
+            r.heading = math.atan2(dy, dx)
         if dist <= step:
             r.x, r.y = r.target
             self._finish_goal(r, self.core.on_move_result, True, "")
@@ -354,6 +366,8 @@ class SimWorld:
             else:
                 x = r.x + self.rng.uniform(-r.noise, r.noise)
                 y = r.y + self.rng.uniform(-r.noise, r.noise)
+            x -= math.sin(r.heading) * r.drift
+            y += math.cos(r.heading) * r.drift
             self.reported[r.name] = (x, y)
             self.core.on_robot_state(r.name, x, y, 0.0, "MOVING" if r.goal_id else "IDLE")
 

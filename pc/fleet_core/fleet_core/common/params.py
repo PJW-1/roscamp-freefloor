@@ -46,6 +46,7 @@ class FleetParams:
     stall_move_m: float = 0.05
     stall_smooth_s: float = 1.0
     dock_stall_s: float = 15.0
+    off_lane_timeout_s: float = 20.0
 
 
 def load_params(path=None) -> FleetParams:

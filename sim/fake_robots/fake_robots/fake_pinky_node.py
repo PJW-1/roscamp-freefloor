@@ -30,6 +30,7 @@ from fake_robots.motion import (
     FaultSchedule,
     Motion,
     abort_at_shutdown,
+    drifted,
     finish_action,
     noisy_pose,
 )
@@ -283,6 +284,7 @@ class FakePinkyNode(Node):
             else:
                 state = self._rest
             x, y = noisy_pose(self._motion.x, self._motion.y, self._cfg.pose_noise_m, self._rng)
+            x, y = drifted(x, y, self._motion.yaw, self._faults.drift(t))  # 진실 토픽은 그대로
             self._reports.push(t, RobotState(
                 robot_id=self.robot_id, pose=Pose2D(x=x, y=y, theta=self._motion.yaw),
                 battery=90.0, state=state,

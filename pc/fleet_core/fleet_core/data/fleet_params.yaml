@@ -11,7 +11,7 @@ release_margin_extra_m: 0.05  # 시나리오 판정 전용: 반경 + 이 값 = �
 # 압박 표는 docs/worklog_2026-11-05.md.
 release_distance_m: 0.2
 release_confirm_samples: 3    # 해제 전에 그 거리를 지난 연속 보고 수
-lane_error_warn_m: 0.15       # 레인에서 이만큼 벗어나면 경고, e = |(p - p_i) - s·u|
+lane_error_warn_m: 0.15       # 지금 레인에서 이만큼 벗어나면 경고하고 세움, e = |(p - p_i) - s·u|
 move_retry_limit: 2           # 첫 실패 뒤 재시도 수, 모두 세 번 시도
 move_retry_wait_s: 2.0        # 추정: 세 번 시도가 comm_timeout_s보다 길어 통신 끊김이 먼저 보인다
 stall_s: 6.0                  # 목표가 열린 채 이만큼 제자리면 멈춤. pinky_multi_sim과 같은 값
@@ -40,3 +40,4 @@ score_distance_weight: 0.91   # 레인 거리 1 m당
 priority_at_station: 200
 priority_has_cargo: 100
 input_pose_margin_m: 1.0      # 웨이포인트 범위 밖으로 이보다 먼 보고 위치는 버린다
+off_lane_timeout_s: 20.0      # 레인을 벗어나 선 로봇이 이 안에 못 돌아오면 ERROR(OFF_LANE)
