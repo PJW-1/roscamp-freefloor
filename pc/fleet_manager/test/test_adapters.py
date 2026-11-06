@@ -18,6 +18,7 @@ from fleet_core.common.commands import (  # noqa: E402
     ZoneView,
 )
 from fleet_core.orders.orchestrator import CANCELED  # noqa: E402
+from fleet_core.traffic.mission import BLOCKED, HEARTBEAT_LOST, LOCALIZING  # noqa: E402
 from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket  # noqa: E402
 from fleet_interfaces.msg import (  # noqa: E402
     Assignment,
@@ -225,6 +226,13 @@ def test_the_arm_actions_name_the_same_cancel_reason_the_core_looks_for():
     assert FillBasket.Result.REASON_CANCELED == CANCELED
     assert SwapBasket.Result.REASON_CANCELED == CANCELED
     assert MoveTo.Result.REASON_CANCELED == CANCELED
+
+
+def test_the_robot_values_the_core_reads_are_the_message_constants():
+    """이름이 어긋나면 관제가 BLOCKED, LOCALIZING, HEARTBEAT_LOST를 못 알아본다(계약 3·4절)."""
+    assert RobotState.STATE_BLOCKED == BLOCKED
+    assert RobotState.STATE_LOCALIZING == LOCALIZING
+    assert MoveTo.Result.REASON_HEARTBEAT_LOST == HEARTBEAT_LOST
 
 
 # ---- 잘못된 입력(11-06 1번) ----

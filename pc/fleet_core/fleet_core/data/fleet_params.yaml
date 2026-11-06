@@ -18,6 +18,10 @@ stall_s: 6.0                  # 목표가 열린 채 이만큼 제자리면 멈�
 stall_move_m: 0.05            # 매끄럽게 한 위치가 이보다 덜 움직이면 제자리. 위치 잡음 σ 0.03 m에도 버틴다
 stall_smooth_s: 1.0           # 위치를 매끄럽게 하는 시간 상수(지수 평균)
 dock_stall_s: 15.0            # 추정: 도킹은 천천히 맞추므로 더 길게 본다
+blocked_mark_s: 5.0           # 추정: BLOCKED가 이만큼 이어지면 레인을 막힘으로 표시하고 목표를 취소
+blocked_timeout_s: 60.0       # 추정: BLOCKED로 보고된 시간이 이만큼이면 ERROR(BLOCKED)
+blocked_rejoin_s: 10.0        # 풀린 뒤 이 안에 같은 레인에서 다시 막히면 막힌 시간을 이어 센다
+queue_gap_m: 0.6              # 추정: 같은 레인이나 다음 레인 앞 이 거리 안에 정상 로봇이 있으면 줄 서기
 arrival_tolerance_m: 0.15     # 추정: 목표 지점에 이만큼 가까워야 이동 성공으로 친다
 arrival_settle_s: 1.0         # 추정: 보고가 늦으니 성공 뒤 이만큼 기다린다
 startup_wait_s: 10.0          # 이때까지 보고 없는 로봇은 알린다

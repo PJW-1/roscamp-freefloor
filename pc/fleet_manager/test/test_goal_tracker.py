@@ -57,6 +57,34 @@ def test_cancel_of_an_unknown_or_finished_goal_is_ignored():
     assert handle.cancels == 0
 
 
+def test_a_goal_is_canceling_from_the_cancel_until_its_end():
+    goals, handle = running()
+    assert not goals.canceling("k")
+    goals.cancel("k", 0.0)
+    assert goals.canceling("k")
+    goals.finished("k")
+    assert not goals.canceling("k")
+
+
+def test_a_lost_cancel_is_warned_about_once_and_then_dropped():
+    """결과를 잃은 취소는 결과가 다시 오지 않는다. 경고까지만 다시 보내고 그만둔다."""
+    goals, handle = running()
+    goals.cancel("k", 0.0)
+    goals.lost("k")
+    assert [retry(goals, now) for now in (1.0, 2.0, 3.0)] == [[], [], ["k"]]
+    assert handle.cancels == 4
+    assert retry(goals, 4.0) == []
+    assert not goals.canceling("k") and handle.cancels == 4
+
+
+def test_a_goal_not_being_canceled_is_not_kept_as_lost():
+    goals, handle = running()
+    goals.lost("k")
+    goals.cancel("k", 0.0)
+    assert [retry(goals, now) for now in (1.0, 2.0, 3.0, 4.0)] == [[], [], ["k"], []]
+    assert goals.canceling("k")
+
+
 def test_rejected_goal_forgets_its_pending_cancel():
     goals = GoalTracker()
     goals.sent("k")

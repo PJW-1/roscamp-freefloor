@@ -14,6 +14,7 @@ from fleet_core.traffic.mission import (
     DOCKING,
     ERROR,
     IDLE,
+    LOCALIZING,
     OUT_OF_SERVICE,
     PARKED,
     RECOVERING,
@@ -56,6 +57,9 @@ class TrafficRecovery:
         m.called = False
         m.hold = False
         self._event("INFO", "ZONES_CLEARED", f"released {released}: {note}", robot)
+        if m.block:
+            self._clear_block(m, "cleared by the operator")
+        m.block_rejoin = m.block_cancel = None
         still_held = self.zones.held_by(robot)
         if still_held:
             # 이 로봇은 더는 자세로 판단하지 않으니 다른 무엇도 이 구역을 풀지 않는다.
@@ -80,9 +84,12 @@ class TrafficRecovery:
             if now - m.last_seen > self.params.comm_timeout_s:
                 m.comm = COMM_LOST
                 m.called = False
+                m.queue_since = None  # 두절 동안 줄을 섰는지 모른다
                 # 말 없는 로봇이 뒤 대기자에게 구역이 넘어가는 것을 막으면 안 된다.
                 self.zones.cancel_all_requests(m.name)
-                self._event("WARN", "COMM_LOST", f"no state for {now - m.last_seen:.1f} s", m.name)
+                what = "pose, LOCALIZING" if m.robot_state == LOCALIZING else "state"
+                self._event("WARN", "COMM_LOST", f"no {what} for {now - m.last_seen:.1f} s",
+                            m.name)
 
     def _begin_recovery(self, m: _Mission) -> None:
         m.comm = RECOVERING
@@ -95,7 +102,9 @@ class TrafficRecovery:
 
     def _finish_recoveries(self, now: float) -> None:
         for m in self._missions.values():
-            if m.live and m.comm == RECOVERING and now >= m.recover_at:
+            # 마지막 보고가 LOCALIZING이면 옛 자세로 끝내지 않는다
+            if (m.live and m.comm == RECOVERING and now >= m.recover_at
+                    and m.robot_state != LOCALIZING):
                 self._finish_recovery(m)
 
     def _finish_recovery(self, m: _Mission) -> None:

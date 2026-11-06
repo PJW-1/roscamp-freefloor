@@ -276,7 +276,7 @@ def test_a_move_stops_when_no_heartbeat_comes(harness, tmp_path):
     assert handle.accepted, "the goal itself shows somebody is there"
     res = result_of(handle, 5.0).result
     took = time.monotonic() - sent
-    assert res.success is False and res.reason == MoveTo.Result.REASON_CANCELED
+    assert res.success is False and res.reason == MoveTo.Result.REASON_HEARTBEAT_LOST
     assert BEAT_TIMEOUT_S * 0.8 <= took <= BEAT_TIMEOUT_S + 1.0, took
     assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_IDLE, 2.0)
     mark = time.monotonic()
@@ -336,3 +336,58 @@ def test_a_robot_with_nothing_to_do_does_not_mind_the_silence(harness, tmp_path)
     assert p.states[-1][1].state == RobotState.STATE_IDLE
     assert time.monotonic() - p.states[-1][0] < 0.5, "it keeps reporting"
 
+
+
+# ---- 앞 물체와 위치 잡기(계약 3절 6번, 4절) -----------------------------------------------
+
+ONE = {"pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}}
+
+
+def states_since(p, mark=0.0):
+    return [s.state for when, s in p.states if when >= mark]
+
+
+def test_an_obstacle_holds_a_move_that_says_blocked_and_then_goes_on(harness, tmp_path):
+    """1초 서면 BLOCKED. 목표는 끝내지 않고, 물체가 1초 안 보이면 이어 가서 도착한다."""
+    p = start(harness, tmp_path, robots=ONE, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 3.0}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    handle = p.goal("N")
+    assert handle.accepted
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 8.0)
+    mark = time.monotonic()
+    assert wait_until(lambda: truth and truth[-1][0] > mark + 0.3, 2.0)
+    assert len({(x, y) for when, x, y in truth if when >= mark}) == 1, "it moved while blocked"
+    res = result_of(handle, 20.0).result
+    assert res.success is True
+    seen = states_since(p)
+    assert RobotState.STATE_MOVING in seen[seen.index(RobotState.STATE_BLOCKED):]
+
+
+def test_blocked_lasts_past_a_cancel_while_the_obstacle_is_there(harness, tmp_path):
+    p = start(harness, tmp_path, robots=ONE, faults=[
+        {"at_s": 1.0, "robot": "pinky1", "type": "blocked", "duration_s": 5.0}])
+    assert wait_until(lambda: p.states, 5.0)
+    handle = p.goal("N")
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 8.0)
+    cancel = handle.cancel_goal_async()
+    assert wait_until(cancel.done, 5.0)
+    res = result_of(handle).result
+    assert res.success is False and res.reason == MoveTo.Result.REASON_CANCELED
+    mark = time.monotonic()
+    time.sleep(0.5)
+    assert set(states_since(p, mark)) == {RobotState.STATE_BLOCKED}
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_IDLE, 8.0)
+
+
+def test_a_robot_says_localizing_until_it_has_a_pose(harness, tmp_path):
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0, "localizing_s": 3.0}})
+    assert wait_until(lambda: p.states and p.states[-1][1].state == RobotState.STATE_IDLE, 8.0)
+    seen = [s for _, s in p.states]
+    first = next(i for i, s in enumerate(seen) if s.state == RobotState.STATE_IDLE)
+    assert first > 0, "no LOCALIZING report came first"
+    assert {s.state for s in seen[:first]} == {RobotState.STATE_LOCALIZING}
+    x, y = SITE.waypoint_pose("P-6")
+    assert (seen[first].pose.x, seen[first].pose.y) == pytest.approx((x, y), abs=1e-9)

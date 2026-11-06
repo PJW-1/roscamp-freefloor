@@ -9,7 +9,7 @@ from fleet_core.traffic.lane_map import load_lane_map
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 SIX = {"basic_orders", "order_burst", "shared_lane_failure", "stock_shortage", "stuck_robot",
-       "operator_recovery", "reinstate"}
+       "operator_recovery", "blocked_lane", "reinstate"}
 
 
 @pytest.fixture(scope="module")
@@ -107,6 +107,9 @@ def test_multi_cell_zone_is_not_a_valid_start(site):
      "expect": {"orders_shipped_min": 1}},
     {"faults": [{"at_s": 5, "robot": "pinky9", "type": "operator_remove"}],
      "expect": {"orders_shipped_min": 1}},
+    {"faults": [{"at_s": 5, "robot": "pinky1", "type": "blocked"}],
+     "expect": {"orders_shipped_min": 1}},
+    {"robots": {"pinky1": {"start": "P-6", "localizing_s": -1.0}}},
     {"expect": {"no_such_check": 1}},
     {"expect": {"all_boxes_delivered": True}},
     {"speed_factor": 0},
@@ -345,3 +348,27 @@ def test_a_slow_cancel_is_an_arm_option(site):
     sc = load_scenario(SCENARIOS / "operator_recovery.yaml", site)
     assert sc.arm.cancel_seconds > 0
     assert parse_scenario({"robots": {"pinky1": {"start": "P-6"}}}, site).arm.cancel_seconds == 0.0
+
+
+def test_blocked_and_localizing_are_read(site):
+    sc = parse_scenario(minimal(
+        robots={"pinky1": {"start": "P-6", "localizing_s": 2.0}},
+        expect={"orders_shipped_min": 1},
+        faults=[{"at_s": 8, "robot": "pinky1", "type": "blocked", "duration_s": 15}]), site)
+    (block,) = sc.faults
+    assert (block.type, block.at_s, block.duration_s) == ("blocked", 8.0, 15.0)
+    assert sc.robots["pinky1"].localizing_s == 2.0
+    assert not sc.gone_robots, "a blocked robot goes on"
+    assert parse_scenario(minimal(), site).robots["pinky1"].localizing_s == 0.0
+
+
+def test_blocked_lane_blocks_one_robot_long_enough_to_mark_the_lane(site):
+    sc = load_scenario(SCENARIOS / "blocked_lane.yaml", site)
+    (block,) = sc.faults
+    params = load_fleet_params()
+    assert block.type == "blocked"
+    assert block.duration_s > params["blocked_mark_s"] + 2.0
+    assert block.duration_s < params["blocked_timeout_s"]
+    assert any(r.localizing_s > 0 for r in sc.robots.values())
+    assert sc.expect.event_counts["LANE_BLOCKED"] == 1
+    assert sc.expect.event_counts["LANE_CLEARED"] == 1

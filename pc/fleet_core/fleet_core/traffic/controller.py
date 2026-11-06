@@ -26,22 +26,27 @@ from fleet_core.common.commands import (
     MoveCmd,
     ZoneView,
 )
+from fleet_core.traffic.blocking import TrafficBlocking
 from fleet_core.traffic.mission import (
     _COMM_REASON,
     AT_STATION,
+    BLOCKED,
     COMM_LOST,
     DOCK,
     DOCKING,
     ERROR,
     FILL,
+    HEARTBEAT_LOST,
     IDLE,
+    LOCALIZING,
     MOVE,
     NO_FAULT,
     NOT_AT_TARGET,
-    ON_A_GOAL,
+    NOT_PLACEABLE,
     OUT_OF_SERVICE,
     PARKED,
     PLACEMENT_CONFLICT,
+    RECOVERING,
     RUN,
     STALLED,
     STOP,
@@ -59,7 +64,7 @@ from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
-class TrafficController(TrafficRecovery, TrafficReinstate):
+class TrafficController(TrafficRecovery, TrafficBlocking, TrafficReinstate):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -103,6 +108,15 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         m = self._missions.get(robot)
         if m is None:
             return
+        if state != BLOCKED:
+            m.queue_since = None  # 줄 서기 시계는 BLOCKED가 이어지는 동안만 잰다
+        if state == LOCALIZING:
+            # 자세를 믿지 않는다. 보고 시각도 두어 오래 가면 COMM_LOST가 된다.
+            m.robot_state, m.battery = state, battery
+            return
+        if m.comm == RECOVERING and m.robot_state == LOCALIZING:
+            # 위치를 다시 잡았다. 복구 확인을 이 보고부터 다시 잰다
+            m.recover_at = self._clock() + self.params.recover_check_s
         m.x, m.y, m.yaw, m.robot_state, m.battery = x, y, yaw, state, battery
         m.last_seen = self._clock()
         if m.arrival_by is not None:
@@ -114,6 +128,7 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         if m.placed:
             self._count_reports_outside(m)
             self._watch_lane_error(m)
+            self._note_block_report(m)
 
     def on_run_mode(self, run_mode) -> None:
         if run_mode == STOP and self._run_mode != STOP:
@@ -179,6 +194,8 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
 
     def on_move_result(self, robot, goal_id, success, reason) -> None:
         m = self._missions.get(robot)
+        if m:
+            self._cancel_finished(m, goal_id)
         goal = m.goal if m else None
         if goal is None or goal.id != goal_id or goal.kind != MOVE:
             return
@@ -191,12 +208,16 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         elif success:
             m.idx = max(m.idx, goal.target_idx)
             m.attempts = 0
+        elif reason == HEARTBEAT_LOST:
+            self._heartbeat_stopped(m, goal)
         else:
             m.settle_idx = goal.target_idx
             self._goal_failed(m, reason)
 
     def on_goal_rejected(self, robot, goal_id) -> None:
         m = self._missions.get(robot)
+        if m:
+            self._cancel_finished(m, goal_id)
         goal = m.goal if m else None
         if goal is None or goal.id != goal_id:
             return
@@ -209,6 +230,8 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
     def on_goal_not_sent(self, robot, goal_id) -> None:
         """액션 서버가 없어 goal이 나가지 않았다. 시도 횟수로 치지 않는다."""
         m = self._missions.get(robot)
+        if m:
+            self._cancel_finished(m, goal_id)
         goal = m.goal if m else None
         if goal is None or goal.id != goal_id:
             return
@@ -289,6 +312,9 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
                 self._watch_stall(m, now)
             else:
                 m.stall_from = m.stall_mean = None
+                m.stall_hold = False
+            if m.block:
+                self._watch_block(m, now)
         return self._check_deadlock(now)
 
     def tick_pick(self) -> None:
@@ -342,6 +368,7 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
             "destination": m.dest,
             "goal_id": m.goal.id if m.goal else None,
             "attempts": m.attempts,
+            "blocked_lane": list(m.block.lane) if m.block and m.block.marked else None,
         }
 
     def status_view(self, robot) -> dict:
@@ -354,7 +381,8 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         return {
             "fsm_state": m.robot_state,
             "fault": m.fault or m.comm or NO_FAULT,
-            "fault_reason": m.fault_reason if m.fault else _COMM_REASON.get(m.comm, ""),
+            "fault_reason": (m.fault_reason if m.fault
+                             else _COMM_REASON.get(m.comm, "") or (BLOCKED if m.block else "")),
             "wait_zone": wait_zone,
             "wait_robots": tuple(sorted(in_the_way)),
             "battery": m.battery,
@@ -400,7 +428,7 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         거절된 로봇은 잠금 없이 서 있으므로, 움직이거나 운영자가 해제할 때까지
         _everyone_reported가 모두를 세워 둔다. 이 FMS가 주지 않은 goal로 달리는 로봇도 같다.
         """
-        if m.robot_state in ON_A_GOAL:
+        if m.robot_state in NOT_PLACEABLE:
             return
         waypoint = self.site.nearest_waypoint(m.x, m.y, radius=self.params.release_distance_m)
         zone = self._zone(waypoint)
@@ -493,20 +521,24 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         """목표가 열린 채 제자리면 취소하고 같은 목표를 다시 낸다. 시도 한 번으로 센다.
 
         목표 없이 구역을 기다리는 것과 RUN이 아닐 때는 재지 않는다. 목표를 바꿔도 시계는 그대로다.
+        막힘과 줄 서기 동안은 쉰다. heartbeat로 선 goal은 다시 보낼 때까지 시계를 잇는다.
         """
         here = self._smoothed(m, now)
-        if m.goal is None or self._run_mode != RUN:
+        idle = m.goal is None and not m.stall_hold
+        if idle or self._run_mode != RUN or m.block or self._queue_rests(m):
             m.stall_from = None
             return
         if m.stall_from is None or math.dist(here, m.stall_from) >= self.params.stall_move_m:
             m.stall_from, m.stall_since = here, now
             return
-        limit = self.params.dock_stall_s if m.goal.kind == DOCK else self.params.stall_s
+        kind = m.goal.kind if m.goal else MOVE
+        limit = self.params.dock_stall_s if kind == DOCK else self.params.stall_s
         if now - m.stall_since < limit:
             return
-        kind = m.goal.kind
         m.stall_from = None
-        self._cancel_goal(m)
+        m.stall_hold = False
+        if m.goal:
+            self._cancel_goal(m)
         self._event("WARN", "GOAL_STALLED",
                     f"no progress for {limit:.0f} s on a {kind}, attempt {m.attempts + 1}", m.name)
         self._goal_failed(m, STALLED, announce=False)
@@ -585,6 +617,9 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
             self._event("WARN", "LANE_ERROR", f"{e:.2f} m off {a} to {b} at s={s:.2f}", m.name)
 
     def _release_if_cleared(self, m: _Mission, zone: str) -> None:
+        if m.block_cancel is not None or (m.block and m.block.marked):
+            # 막힘 표시 중에는 막힘 쪽만 놓고, 취소한 goal의 결과 전에는 아무것도 놓지 않는다
+            return
         if m.outside.get(zone, 0) >= self.params.release_confirm_samples:
             self.zones.release(m.name, zone)
             m.outside.pop(zone, None)
@@ -613,9 +648,11 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
             waypoint=waypoint,
             called=m.called,
             parked=waypoint in self.site.parking,
-            eligible=(m.available and not m.hold and m.dispatch is None
-                      and not self._held_for_placement(m.name)),
-            available=self.available(m.name),
+            # 막힘으로 선 로봇은 새 호출을 받지 않고, 대기 줄에서는 뒤 로봇이 앞지르지 않는다.
+            # 재투입 때문에 세운 로봇은 available(robot)이 거짓이라 호출도 앞지르기도 없다
+            eligible=(self.available(m.name) and not m.hold and m.dispatch is None
+                      and (m.called or not self._held_for_block(m))),
+            available=self.available(m.name) and not self._held_for_block(m),
         )
 
     def _committed(self, m: _Mission) -> bool:
@@ -714,6 +751,9 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
             self._start_park_leg(m)
 
     def _step_phase(self, m: _Mission) -> None:
+        if self._held_for_block(m):
+            # 막힌 레인 앞에 서서 풀리기와 취소 결과를 기다린다. 결과 전 새 goal은 추적을 흐린다
+            return
         if m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK):
             self._drive(m)
         elif m.phase == DOCKING:
@@ -807,6 +847,8 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
                         f"held by {self.zones.holder(zone) or 'nobody'}", m.name)
 
     def _issue_move(self, m: _Mission) -> None:
+        if m.block or m.block_cancel is not None:
+            return  # 막힌 동안과 취소 결과 전에는 목표를 늘리거나 새로 내지 않는다
         if m.goal is None and (self._clock() < m.retry_at or m.arrival_by is not None):
             return
         held = self.zones.held_by(m.name)
@@ -848,4 +890,5 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         goal_id = self._next_goal_id()
         m.goal = _Goal(MOVE, goal_id, target_idx, step)
         m.off_lane, m.off_lane_warned = 0, False
+        m.stall_hold = False
         self._out.append(MoveCmd(m.name, goal_id, self.site.waypoint_id(waypoint), x, y, yaw))

@@ -156,7 +156,7 @@ cat /tmp/run1/summary.json
 
 ## 시나리오
 
-`sim/fake_robots/scenarios/*.yaml`에 여섯 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
+`sim/fake_robots/scenarios/*.yaml`에 일곱 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
 
 | 이름 | 내용 | 확인하는 것 |
 |---|---|---|
@@ -166,6 +166,7 @@ cat /tmp/run1/summary.json
 | `stock_shortage` | 재고 0인 품목, 기록만 있고 실물 없는 품목, 용량 초과 주문 | PARTIAL과 HELD, `OUT_OF_STOCK`과 `STOCK_MISMATCH` 구분 |
 | `stuck_robot` | 돌아오던 로봇이 대로(양방향 구간)에서 영구 정지 | 뒤따르는 로봇이 막히고 `COMM_LOST`, `ZONE_WAIT_LONG`이 남 |
 | `operator_recovery` | 팔 고장 3회로 ERROR, 관리자가 로봇을 치움. 다음 로봇도 담는 도중 치움(팔 취소가 느림) | `ORDER_REQUEUED` 후 앞으로 되돌아가고, 세 번째 로봇이 앞 작업의 취소 결과를 기다렸다가 전부 끝냄 |
+| `blocked_lane` | `basic_orders`에 pinky1 앞 물체(8초부터 15초 동안), pinky3은 처음 2초 `LOCALIZING` | 5초에 `LANE_BLOCKED`와 목표 취소, 물체가 사라지면 `LANE_CLEARED` 뒤 같은 목표로 이어 가 전부 출고 |
 | `reinstate` | 관리자가 로봇 하나를 치우고 나중에 빈 바구니와 함께 다시 투입 | 다시 오른 로봇도 주문을 받아 7건 모두 출고 |
 
 `expect` 항목은 다음과 같습니다. 숫자는 정확히 일치해야 통과합니다(`_min`으로 끝나는 것은 그 값 이상).
@@ -247,7 +248,9 @@ Python 패키지의 `setup.py`에는 `tests_require=['pytest']`를 넣어야 합
 - 멈춰서 진행할 수 없으면 반드시 실패나 `TIMEOUT` 결과를 돌려줍니다. 관제는 목표가 열린 채 제자리인 로봇만 `stall_s`(6초, 도킹은 15초) 뒤에 취소하고 다시 보냅니다. 움직이면서 끝내지 않는 경우는 잡지 못하므로 FSM이 결과를 돌려줘야 합니다.
 - `move_to`의 성공은 목표 지점에서 `arrival_tolerance_m`(0.15 m) 안에 섰을 때만 돌려줍니다. 결과를 보낸 뒤 `arrival_settle_s`(1초)가 지나도록 보고된 위치가 그 안으로 들어오지 않으면 관제는 실패한 시도로 칩니다. 그동안 위치 보고가 하나도 없으면 판정하지 않고 통신 두절(`comm_timeout_s`)을 기다립니다. Nav2를 쓴다면 `xy_goal_tolerance`를 이 값보다 작게 둡니다. 이 약속과 값(추정)은 FSM·Nav2 담당과 확인 전입니다(`docs/GG_공통설계.md` 13절).
 - `/pinkyN/state`를 끊기지 않게 발행합니다. 일정 시간(`comm_timeout_s`) 동안 오지 않으면 통신 두절로 판단합니다.
-- 이동이나 도킹 목표를 실행하는 동안 `/fleet/heartbeat`가 `heartbeat_timeout_s`(1.5초) 넘게 오지 않으면 그 목표를 취소하고 멈춥니다. 목표 수락도 FMS가 살아 있다는 증거로 칩니다. 이 계약은 제안이고 FSM 담당과 확인 전입니다. 자세한 내용은 `docs/GG_공통설계.md` 4절에 있습니다.
+- 이동이나 도킹 목표를 실행하는 동안 `/fleet/heartbeat`가 `heartbeat_timeout_s`(1.5초) 넘게 오지 않으면 그 목표를 취소하고 멈춥니다. `move_to`는 `reason=HEARTBEAT_LOST`로 끝내고, 관제는 이것을 실패 시도로 세지 않습니다. 목표 수락도 FMS가 살아 있다는 증거로 칩니다. 이 계약은 제안이고 FSM 담당과 확인 전입니다. 자세한 내용은 `docs/GG_공통설계.md` 4절에 있습니다.
+- 경로 앞 물체 때문에 1초 넘게 서 있으면 `BLOCKED`로 보고합니다. 목표는 스스로 끝내지 않고 물체가 비키면 이어 갑니다. 관제는 5초 뒤 레인을 막힘으로 표시하고 목표를 취소하며, 풀리면 같은 목표를 다시 보냅니다(계약 4절).
+- 위치를 잡기 전에는 `LOCALIZING`으로 보고합니다. 관제는 그 자세를 쓰지 않고 로봇을 지도에 올리지 않습니다.
 - 상태 값은 `RobotState.STATE_*` 상수를 씁니다.
 - `dock_id`는 스테이션 이름(`WORK`, `OUTBOUND`)입니다.
 
