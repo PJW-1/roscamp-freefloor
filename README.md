@@ -21,9 +21,13 @@ flowchart LR
     manager["manager<br/>FleetManager"]
     subgraph orders["orders"]
       orch["orchestrator<br/>OrderOrchestrator"]
+      ovalid["validate"]
     end
     subgraph traffic["traffic"]
       ctrl["controller<br/>TrafficController"]
+      blocking["blocking<br/>막힘"]
+      detour["detour<br/>우회"]
+      isolation["isolation<br/>자동 격리"]
       mission["mission"]
       recovery["recovery"]
       zones["zones<br/>ZoneLocks"]
@@ -35,6 +39,7 @@ flowchart LR
       commands["commands"]
       params["params"]
       contract["contract"]
+      cvalid["validate"]
     end
   end
   subgraph sim["fake_robots (가짜 노드, 심판)"]
@@ -47,10 +52,14 @@ flowchart LR
   end
   fmnode --> adapters & tracker & manager & lanemap & contract & params & commands
   adapters --> commands
-  manager --> orch & ctrl & mission & commands
+  manager --> orch & ctrl & mission & commands & cvalid & ovalid
+  ovalid --> cvalid
   orch --> commands
-  ctrl --> mission & recovery & zones & selector & commands
-  recovery --> mission & deadlock & commands
+  ctrl --> mission & recovery & zones & selector & commands & blocking & detour & isolation
+  blocking --> lanemap & mission
+  detour --> mission
+  isolation --> mission & commands
+  recovery --> mission & deadlock & commands & cvalid
   fakes --> simcommon & motion & contract
   monitor --> simcommon & judge & contract
   simcommon --> scenario & contract & lanemap
@@ -150,9 +159,9 @@ ros2 launch iponic_bringup pc.launch.py use_fake:=true scenario:=basic_orders re
 cat /tmp/run1/summary.json
 ```
 
-시나리오가 끝나면 launch가 스스로 종료되고, `result_dir`에 `summary.json`, `events.csv`, `zones.csv`, `robots.csv`, `releases.csv`가 남습니다. 심판은 가짜 로봇이 `/sim/truth/<로봇>`으로 발행하는 잡음 없는 위치로 판정하고, 실물 로봇은 보고된 위치로 판정합니다.
+시나리오가 끝나면 launch가 스스로 종료되고, `result_dir`에 `summary.json`, `safety.json`, `events.csv`, `zones.csv`, `robots.csv`, `releases.csv`, `fleet_robots.csv`가 남습니다. 심판은 가짜 로봇이 `/sim/truth/<로봇>`으로 발행하는 잡음 없는 위치로 판정하고, 실물 로봇은 보고된 위치로 판정합니다.
 
-이 코드의 공식 실행 결과는 저장소 옆 폴더 `../test_results/`에 있습니다. 옛 결과는 WSL2와 CycloneDDS에서 얻은 것이고, 지금 개발 PC에는 `rmw_cyclonedds`가 없어 기본 DDS(Fast DDS)로 실행합니다. 환경이 다르므로 옛 결과를 그대로 옮겨 말하지 않습니다. CI와 시험 의존성도 Fast DDS(`rmw_fastrtps_cpp`)로 맞췄습니다. 실물 로봇에서 쓸 DDS는 Wi-Fi 비교 시험(T-10) 뒤에 정합니다. Fast DDS는 다른 프로세스의 QoS 깊이를 알려 주지 않으므로 `check_interfaces.py`는 이 경우 깊이를 검사하지 않고 신뢰성과 지속성만 검사합니다.
+실행 결과의 숫자와 그 커밋은 `docs/worklog_2026-11-06.md`와 `docs/GG_공통설계.md` 11절에 있습니다. 예전에 근거로 들던 저장소 옆 폴더 `../test_results/`는 지금 없습니다. 옛 결과는 WSL2와 CycloneDDS에서 얻은 것이고, 지금 개발 PC에는 `rmw_cyclonedds`가 없어 기본 DDS(Fast DDS)로 실행합니다. 환경이 다르므로 옛 결과를 그대로 옮겨 말하지 않습니다. CI와 시험 의존성도 Fast DDS(`rmw_fastrtps_cpp`)로 맞췄습니다. 실물 로봇에서 쓸 DDS는 Wi-Fi 비교 시험(T-10) 뒤에 정합니다. Fast DDS는 다른 프로세스의 QoS 깊이를 알려 주지 않으므로 `check_interfaces.py`는 이 경우 깊이를 검사하지 않고 신뢰성과 지속성만 검사합니다.
 
 ## 시나리오
 
@@ -206,6 +215,22 @@ faults:
   - {at_s: 0, type: swap_partial, count: 1}            # 찬 바구니는 꺼내지만 빈 바구니를 못 놓습니다
 ```
 
+### 11-06에 더한 이벤트
+
+뜻과 수준은 `docs/GG_공통설계.md` 0절 표에 있습니다. 시나리오의 `events_include`, `event_counts`에 쓸 수 있습니다.
+
+| 코드 | 수준 | 언제 |
+|---|---|---|
+| `GOAL_NOT_SENT` | WARN | 액션 서버가 없어 목표를 못 보냄. 시도로 세지 않음 |
+| `CLEAR_REFUSED`, `ZONES_STILL_HELD` | WARN | `confirm_clear` 거부(구역을 쥔 로봇인데 빈 목록), 일부 구역만 풂 |
+| `INPUT_REJECTED` | WARN | 잘못된 바깥 입력을 거부하거나 버림(파트 1) |
+| `GOAL_STALLED` | WARN | 목표가 열린 채 6초(도킹 15초) 제자리. 취소하고 다시 보냄(파트 2) |
+| `HEARTBEAT_LOST` | WARN | 로봇이 heartbeat를 못 받아 스스로 섬. 시도로 세지 않고 다시 보냄(파트 4) |
+| `LANE_BLOCKED`, `LANE_CLEARED` | WARN, INFO | `BLOCKED` 5초에 레인 표시와 취소, 풀림(파트 4) |
+| `BLOCKED_TOO_LONG` | ERROR | `BLOCKED` 60초(파트 4) |
+| `DETOUR` | INFO | 서 있는 보유자나 막힌 레인을 피해 길을 바꿈(파트 5) |
+| `ROBOT_ISOLATED` | ERROR | 지도에 오른 로봇이 ERROR가 되어 자동 격리. 주문은 바로 되돌림(파트 5.5) |
+
 ## 실물로 교체
 
 ```bash
@@ -253,8 +278,8 @@ Python 패키지의 `setup.py`에는 `tests_require=['pytest']`를 넣어야 합
 - 멈춰서 진행할 수 없으면 반드시 실패나 `TIMEOUT` 결과를 돌려줍니다. 관제는 목표가 열린 채 제자리인 로봇만 `stall_s`(6초, 도킹은 15초) 뒤에 취소하고 다시 보냅니다. 움직이면서 끝내지 않는 경우는 잡지 못하므로 FSM이 결과를 돌려줘야 합니다.
 - `move_to`의 성공은 목표 지점에서 `arrival_tolerance_m`(0.15 m) 안에 섰을 때만 돌려줍니다. 결과를 보낸 뒤 `arrival_settle_s`(1초)가 지나도록 보고된 위치가 그 안으로 들어오지 않으면 관제는 실패한 시도로 칩니다. 그동안 위치 보고가 하나도 없으면 판정하지 않고 통신 두절(`comm_timeout_s`)을 기다립니다. Nav2를 쓴다면 `xy_goal_tolerance`를 이 값보다 작게 둡니다. 이 약속과 값(추정)은 FSM·Nav2 담당과 확인 전입니다(`docs/GG_공통설계.md` 13절).
 - `/pinkyN/state`를 끊기지 않게 발행합니다. 일정 시간(`comm_timeout_s`) 동안 오지 않으면 통신 두절로 판단합니다.
-- 이동이나 도킹 목표를 실행하는 동안 `/fleet/heartbeat`가 `heartbeat_timeout_s`(1.5초) 넘게 오지 않으면 그 목표를 취소하고 멈춥니다. `move_to`는 `reason=HEARTBEAT_LOST`로 끝내고, 관제는 이것을 실패 시도로 세지 않습니다. 목표 수락도 FMS가 살아 있다는 증거로 칩니다. 이 계약은 제안이고 FSM 담당과 확인 전입니다. 자세한 내용은 `docs/GG_공통설계.md` 4절에 있습니다.
-- 경로 앞 물체 때문에 1초 넘게 서 있으면 `BLOCKED`로 보고합니다. 목표는 스스로 끝내지 않고 물체가 비키면 이어 갑니다. 관제는 5초 뒤 레인을 막힘으로 표시하고 목표를 취소하며, 풀리면 같은 목표를 다시 보냅니다(계약 4절).
+- 이동이나 도킹 목표를 실행하는 동안 `/fleet/heartbeat`가 `heartbeat_timeout_s`(1.5초) 넘게 오지 않으면 그 목표를 취소하고 멈춥니다. `move_to`는 `reason=HEARTBEAT_LOST`로 끝내고, 관제는 이것을 실패 시도로 세지 않습니다. 목표 수락도 FMS가 살아 있다는 증거로 칩니다. 토픽 이름은 제안이지만 이 동작은 관제가 요구하는 것입니다(계약 3절 5번, `docs/GG_공통설계.md` 4절).
+- 경로 앞 물체 때문에 1초 넘게 서 있으면 `BLOCKED`로 보고합니다. 목표는 스스로 끝내지 않고 물체가 비키면 이어 갑니다. 관제는 5초 뒤 레인을 막힘으로 표시하고 목표를 취소하며(다른 로봇은 돌아갈 길이 있으면 `DETOUR`), 풀리면 같은 목표를 다시 보냅니다. 60초면 ERROR이고 플릿이 그 로봇을 자동 격리합니다(계약 4절).
 - 위치를 잡기 전에는 `LOCALIZING`으로 보고합니다. 관제는 그 자세를 쓰지 않고 로봇을 지도에 올리지 않습니다.
 - 상태 값은 `RobotState.STATE_*` 상수를 씁니다.
 - `dock_id`는 스테이션 이름(`WORK`, `OUTBOUND`)입니다.
