@@ -28,6 +28,7 @@ from fleet_core.common.commands import (
 )
 from fleet_core.traffic.blocking import TrafficBlocking
 from fleet_core.traffic.detour import TrafficDetour
+from fleet_core.traffic.isolation import TrafficIsolation
 from fleet_core.traffic.mission import (
     AT_STATION,
     BLOCKED,
@@ -63,7 +64,8 @@ from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
-class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, TrafficDetour):
+class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, TrafficDetour,
+                        TrafficIsolation):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -305,6 +307,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             self._watch_off_lane(m, now)
             if m.available:
                 self._judge_arrival(m, now)
+            if m.available:  # 방금 도착 판정으로 격리됐으면 이번 판은 건너뛴다
                 self._track_progress(m)
                 self._release_passed_zones(m)
                 self._watch_stall(m, now)
@@ -471,7 +474,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         m.goal = None
 
     def _fail(self, m: _Mission, reason: str = "") -> None:
-        """운영자가 봐야 한다. 구역은 계속 쥔다."""
+        """구역은 계속 쥔다. 처음 ERROR가 되면 격리한다(isolation.py)."""
+        first = not m.fault
         m.fault = ERROR
         m.fault_reason = reason
         m.called = False
@@ -479,6 +483,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         if m.dispatch:
             self._out.append(DispatchResult(m.dispatch.goal_id, False, m.name, reason))
             m.dispatch = None
+        if first:
+            self._isolate(m, reason)
 
     def _at_target(self, m: _Mission, index: int) -> bool:
         target = self.site.waypoint_pose(m.path[index])
@@ -605,6 +611,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
     def _release_if_cleared(self, m: _Mission, zone: str) -> None:
         if m.off_lane_since is not None:
             return  # 벗어난 로봇의 실제 위치는 모른다
+        if m.fault == ERROR:
+            return  # 격리된 로봇의 구역은 confirm_clear만 푼다
         if m.block_cancel is not None or (m.block and m.block.marked):
             # 막힘 표시 중에는 막힘 쪽만 놓고, 취소한 goal의 결과 전에는 아무것도 놓지 않는다
             return

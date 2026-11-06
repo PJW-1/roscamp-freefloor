@@ -95,6 +95,20 @@ def test_nav_abort_consumes_count_after_start_time():
     assert [s.take_nav_abort(80.0) for _ in range(3)] == [True, True, False]
 
 
+def test_nav_abort_with_a_target_hits_only_goals_to_that_waypoint():
+    s = FaultSchedule([Fault(at_s=0, robot="pinky1", type="nav_abort", count=2, target="F2")],
+                      "pinky1")
+    assert s.take_nav_abort(5.0, "F1") is False
+    assert s.take_nav_abort(6.0, "F2") is True
+    assert s.take_nav_abort(7.0, "W") is False
+    assert [s.take_nav_abort(8.0, "F2") for _ in range(2)] == [True, False]
+
+
+def test_nav_abort_without_a_target_hits_any_goal():
+    s = FaultSchedule(faults(), "pinky2")
+    assert s.take_nav_abort(80.0, "W") is True
+
+
 def test_stuck_never_recovers_and_is_per_robot():
     s = FaultSchedule(faults(), "pinky2")
     assert not s.stuck(89.0) and s.stuck(90.0) and s.stuck(1e6)

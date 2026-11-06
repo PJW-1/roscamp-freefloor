@@ -8,6 +8,7 @@ from fleet_core.common.commands import (
     OrderRecord,
     ReleaseCmd,
     RobotFaultCmd,
+    RobotIsolated,
 )
 from fleet_core.common.params import load_params
 from fleet_core.manager import FleetManager
@@ -16,7 +17,7 @@ from fleet_core.traffic.lane_map import load_lane_map
 from grid_map import grid_site
 
 INTERNAL = (DispatchCmd, CancelDispatchCmd, ReleaseCmd, RobotFaultCmd, DispatchFeedback,
-            DispatchResult)
+            DispatchResult, RobotIsolated)
 O1 = OrderRecord("O-001", {"A": 1})
 O2 = OrderRecord("O-002", {"B": 1})
 

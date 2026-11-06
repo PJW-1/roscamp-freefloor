@@ -6,7 +6,9 @@ import math
 from pathlib import Path
 
 from core_helpers import cmds, codes
+from fleet_core.common.commands import OrderRecord
 from fleet_core.common.params import load_params
+from fleet_core.manager import FleetManager
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.lane_map import load_lane_map
 from fleet_core.traffic.mission import MOVE, _Goal
@@ -389,3 +391,68 @@ def test_a_robot_on_a_detour_is_watched_and_resumed_on_its_new_lane():
     again = [c for c in cmds(out, "MoveCmd") if c.robot == "r1"]
     assert [c.target_id for c in again] == ["T2"]
     assert [e.robot for e in events(out, "BACK_ON_LANE")] == ["r1"]
+
+
+# ---- 자동 격리와의 결합(파트 5.5) ---------------------------------------------------------
+
+
+def test_an_off_lane_timeout_isolates_the_robot_once():
+    core, now, _, _ = stopped()
+    held = core.zones.held_by("r1")
+    now[0] += PARAMS.off_lane_timeout_s
+    beside(core, "W", "A", 0.1, OFF, 1)
+    out = core.tick()
+    assert [(c.robot, c.reason) for c in cmds(out, "RobotIsolated")] == [("r1", "OFF_LANE")]
+    assert len(events(out, "ROBOT_ISOLATED")) == 1
+    assert core.zones.held_by("r1") == held
+    now[0] += 1.0
+    beside(core, "W", "A", 0.1, 0.0)
+    again = core.tick()
+    assert not cmds(again, "RobotIsolated") and not events(again, "ROBOT_ISOLATED")
+
+
+def test_an_off_lane_timeout_puts_the_order_back_through_the_manager():
+    now = [0.0]
+    core = FleetManager(grid_site(), load_params(), ["r1"], lambda: now[0])
+
+    def report(cell):
+        x, y = core.site.waypoint_pose(cell)
+        for _ in range(N):
+            core.on_robot_state("r1", x, y, 0.0, "IDLE")
+
+    report((4, 3))
+    core.on_order_board("RUN", [OrderRecord("O-001", {"A": 1})])
+    m = core.traffic._missions["r1"]
+    for _ in range(300):
+        out = core.tick()
+        for fill in cmds(out, "FillCmd"):
+            core.on_fill_result(fill.goal_id, True, {"A": 1}, {})
+        bound = core.robot_view("r1")["order"] == "O-001"
+        goal = m.goal
+        if bound and goal is not None and goal.kind == MOVE and goal.target_idx > m.idx:
+            break  # 주문을 싣고 레인을 달리는 중
+        if goal is not None and goal.kind == MOVE:
+            report(m.path[goal.target_idx])
+            core.on_move_result("r1", goal.id, True, "")
+        elif goal is not None:
+            core.on_dock_result("r1", goal.id, True)
+        report(m.path[m.idx])
+    else:
+        raise AssertionError(f"no move goal with the order: {core.robot_view('r1')}")
+    a = core.site.waypoint_pose(m.path[m.idx])
+    b = core.site.waypoint_pose(m.path[m.idx + 1])
+    ux, uy = (b[0] - a[0]) / math.dist(a, b), (b[1] - a[1]) / math.dist(a, b)
+    x, y = a[0] + ux * 0.1 - uy * OFF, a[1] + uy * 0.1 + ux * OFF
+    for _ in range(N):
+        core.on_robot_state("r1", x, y, 0.0, "MOVING")
+    seen = core.tick()
+    assert "LANE_ERROR" in codes(seen)
+    now[0] += PARAMS.off_lane_timeout_s
+    core.on_robot_state("r1", x, y, 0.0, "MOVING")
+    seen += core.tick() + core.tick()
+    assert "ROBOT_ISOLATED" in codes(seen)
+    requeued = [e for e in cmds(seen, "EventOut") if e.code == "ORDER_REQUEUED"]
+    assert len(requeued) == 1 and requeued[0].detail.startswith("O-001")
+    view = core.robot_view("r1")
+    assert (view["state"], view["order"]) == ("ERROR", None)
+    assert core.traffic.status_view("r1")["fault_reason"] == "OFF_LANE"

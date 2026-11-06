@@ -156,7 +156,7 @@ cat /tmp/run1/summary.json
 
 ## 시나리오
 
-`sim/fake_robots/scenarios/*.yaml`에 여덟 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
+`sim/fake_robots/scenarios/*.yaml`에 열두 개가 있습니다(기본 지도 9개, 특징 지도 3개). 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
 
 | 이름 | 내용 | 확인하는 것 |
 |---|---|---|
@@ -165,9 +165,13 @@ cat /tmp/run1/summary.json
 | `shared_lane_failure` | 통신 두절과 주행 실패 | 구역 잠금 유지, `COMM_LOST`, `COMM_RESTORED`, `GOAL_RETRY`, 전부 출고 |
 | `stock_shortage` | 재고 0인 품목, 기록만 있고 실물 없는 품목, 용량 초과 주문 | PARTIAL과 HELD, `OUT_OF_STOCK`과 `STOCK_MISMATCH` 구분 |
 | `stuck_robot` | 돌아오던 로봇이 대로(양방향 구간)에서 영구 정지 | 뒤따르는 로봇이 막히고 `COMM_LOST`, `ZONE_WAIT_LONG`이 남 |
-| `operator_recovery` | 팔 고장 3회로 ERROR, 관리자가 로봇을 치움. 다음 로봇도 담는 도중 치움(팔 취소가 느림) | `ORDER_REQUEUED` 후 앞으로 되돌아가고, 세 번째 로봇이 앞 작업의 취소 결과를 기다렸다가 전부 끝냄 |
+| `operator_recovery` | 팔 고장 3회로 ERROR와 자동 격리, 관리자가 로봇을 치움. 다음 로봇도 담는 도중 치움(팔 취소가 느림) | 격리 때 `ORDER_REQUEUED`로 앞으로 되돌아가고, 세 번째 로봇이 앞 작업의 취소 결과를 기다렸다가 전부 끝냄 |
 | `blocked_lane` | `basic_orders`에 pinky1 앞 물체(8초부터 15초 동안), pinky3은 처음 2초 `LOCALIZING`. 의도: 5초에 막힘 표시와 목표 취소, 물체가 사라지면 같은 목표로 이어 감 | `LANE_BLOCKED` 1번, `LANE_CLEARED` 1번, `BLOCKED_TOO_LONG`·`GOAL_RETRY`·`GOAL_STALLED`·`GOAL_FAILED` 0번, 6건 전부 출고, 구역 검사 |
 | `off_lane` | `basic_orders`에 pinky1의 보고 위치만 레인 옆으로 0.3 m 밀림(7초부터 8초 동안). 의도: 목표 취소와 구역 유지, 뒤 로봇은 그 구역 앞에서 대기, 보고가 돌아오면 같은 목표로 이어 감 | `LANE_ERROR` 1번, `BACK_ON_LANE` 1번, `OFF_LANE`·`GOAL_FAILED` 0번, 6건 전부 출고, `released_while_off_lane` 0, 구역 검사 |
+| `auto_isolation` | 팔 고장 3회로 둘째 로봇이 작업대에서 ERROR. 플릿이 바로 격리하고 120초에 관리자가 치움 | 사람 없이 주문이 맨 앞으로 돌아가고(`ROBOT_ISOLATED`, `ORDER_REQUEUED` 1회), 앞서 간 로봇은 관리자 전에 출고(`shipped_before_operator` 1 이상). 치운 뒤 되돌린 주문부터 전부 끝냄 |
+| `feature_basic_orders` | `basic_orders`와 같고 특징 지도(`feature_map`)와 출발 칸만 다름 | 특징 지도에서 전부 출고(파트 5) |
+| `feature_blocked_lane` | `blocked_lane`과 같고 특징 지도, 출발 칸, 물체 시각(46초부터 30초)이 다름 | 막힌 레인을 다른 로봇이 돌아감(`DETOUR`), 전부 출고(파트 5) |
+| `feature_auto_isolation` | 특징 지도. 느린 pinky1(0.04 m/s)의 F2로 가는 이동이 3회 중단(`nav_abort`의 `target: F2`)돼 F1, F2를 쥔 채 레인 위에서 ERROR. 400초에 관리자가 치움 | 판정: 격리 로봇을 피한 `DETOUR`(`detours_around_isolated` 1 이상), 격리 뒤 관리자 전 출고(`shipped_before_operator` 4 이상), 전부 출고. 실행 기록: 6판 모두 좁은 통로로 돌아가 6건 모두 관리자 전에 출고(5.5번) |
 
 `expect` 항목은 다음과 같습니다. 숫자는 정확히 일치해야 통과합니다(`_min`으로 끝나는 것은 그 값 이상).
 
@@ -180,6 +184,8 @@ cat /tmp/run1/summary.json
 | `dual_arm_overlaps` | arm1과 arm2가 동시에 PLACING인 횟수. 각 팔 상태의 `stamp`로 비교합니다. 출고한 주문에 두 팔이 다 필요했는데 PLACING을 못 본 팔이 있으면 실패입니다 |
 | `direct_returns_min` | 출고 구역에서 대기 구간을 거치지 않고 작업공간으로 돌아간 횟수의 최솟값 |
 | `parked_while_backlog` | 묶이지 않은 주문이 로봇 수 이상인데 출고 구역에서 대기 구간으로 들어간 횟수 |
+| `shipped_before_operator_min` | 첫 `ROBOT_ISOLATED`부터 격리된 로봇의 첫 `ZONES_CLEARED` 전까지 출고(SHIPPED, PARTIAL)한 건수의 최솟값. 로봇 1대가 고장 나도 플릿이 계속 운행하는지 봅니다. 기본 0 |
+| `detours_around_isolated_min` | 격리된 로봇이 치워지기 전에 그 로봇이 쥔 구역을 피한 `DETOUR`(detail의 `held by <로봇>`) 수의 최솟값. 막힌 레인을 피한 `DETOUR`는 세지 않습니다. 기본 0 |
 | `zone_holder_max` | 한 구역에 실제로 동시에 있었던 로봇 수의 최댓값 |
 | `released_without_position_check` | 로봇이 아직 구역을 벗어나지 않았는데 해제된 횟수 |
 | `unheld_zone_pose` | 잠그지 않은 구역에 로봇이 있었던 횟수 |
@@ -195,7 +201,7 @@ cat /tmp/run1/summary.json
 ```yaml
 faults:
   - {at_s: 40, robot: pinky2, type: comm_loss, duration_s: 20}
-  - {at_s: 50, robot: pinky1, type: nav_abort, count: 2}
+  - {at_s: 50, robot: pinky1, type: nav_abort, count: 2}   # target: F2를 주면 그 지점으로 가는 목표만 중단합니다
   - {at_s: 50, robot: pinky1, type: stuck}
   - {at_s: 60, robot: pinky1, type: operator_remove}   # 코스에서 치운 뒤 심판이 confirm_clear를 부릅니다
   - {at_s: 0, arm: arm1, type: arm_fail, count: 3}     # after_items: N을 주면 N개를 담은 뒤 고장납니다
