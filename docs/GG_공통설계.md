@@ -57,7 +57,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | workcell | 없음. 시험: `fake_workcell_node`. 구조는 팔 담당이 정한다. v17은 FMS의 arm 모듈과 `arm_planner`(임시 이름, 제안)로 그렸다 | 팔 PC 중 한 곳 | 두 팔의 작업과 재고 영역 | `/workcell/fill_basket` 액션 | arm_control |
 | arm_control | `arm/arm_control`은 빈 패키지. 시험: `fake_arm_node`(arm3), arm1과 arm2는 `fake_workcell_node`가 함께 맡는다 | 팔 PC | 팔 상태 | `/arm3/swap_basket` 액션. `/{arm}/state` 발행 | 팔 하드웨어 |
 | arm_vision | `arm/arm_vision`은 빈 패키지. 시험: `fake_vision_node`. Vision 서버로 옮기는 것은 제안(v17) | 팔 PC | 인식 결과 | `/{arm}/vision/items`(arm1, arm2) 발행 | 카메라 |
-| 시험 전용 | `sim_clock_node`, `scenario_monitor_node`(심판) | 관제 PC, 시험 때만 | 시뮬 시각, 판정 기록 | `/clock`, `summary.json`, `safety.json` | 관리자 역할로 `/fleet/confirm_clear`, `/fleet/reinstate`. 첫 치우기는 코스 밖 확인 뒤 `settle_s` 0.5초가 지나고 보유가 `quiet_s` 0.3초 그대로일 때, 늦어도 `act_by_s` 1.0초에 보낸다(시뮬레이션 초). `ZONES_STILL_HELD`면 남은 구역을 다시 치우고 남은 구역이 없을 때만 재투입한다(`operator_clear.py`) |
+| 시험 전용 | `sim_clock_node`, `scenario_monitor_node`(심판) | 관제 PC, 시험 때만 | 시뮬 시각, 판정 기록 | `/clock`, `summary.json`, `safety.json` | 관리자 역할로 `/fleet/confirm_clear`, `/fleet/reinstate`. 첫 치우기는 코스 밖 확인 뒤 `settle_s` 0.5초가 지나고 보유가 `quiet_s` 0.3초 그대로일 때, 늦어도 `act_by_s` 1.0초에 보낸다(시뮬레이션 초). `ZONES_STILL_HELD`면 남은 구역을 다시 치우고 심판이 아는 남은 구역(보유 스냅샷과 `ZONES_STILL_HELD`)이 없고 응답 뒤 2초가 지났을 때만 재투입한다(`operator_clear.py`). 알림이 그보다 늦으면 재투입이 거부될 수 있고 다시 부르지 않는다 |
 
 ### 상태 값
 
@@ -587,7 +587,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 - **핑키 계약(11-06, 사용자 지시)**: 관제가 핑키에 요구하는 통신 규격과 동작은 `docs/핑키_계약.md`에 요구사항으로 정했다. 제안으로 두지 않는다. 선점, 취소, 실패 반환, 도착 0.15 m, heartbeat 정지, `LOCALIZING`, `BLOCKED` 판정과 관제의 막힘 처리(5초 뒤 레인 표시, 60초 뒤 ERROR, 줄 서기 제외)를 담는다. `BLOCKED`, `LOCALIZING`, `HEARTBEAT_LOST`는 지시서 4번에서 정의 파일과 관제 코드에 넣었다. `MoveTo.path`는 지시서 7번에서 넣었다.
 - **우회(11-06 지시서 5번)**: 다음 구역을 청할 때만 비용(레인 길이 + 서 있는 보유자의 예상 대기 × 속도, 막힌 레인은 못 지남)으로 다시 고른다. 서 있음과 달림, 속도 0.2 m/s, `DETOUR`(INFO)는 5절에 정했다. 30초 추정과 0.2 m/s는 실물에서 다시 본다.
 - **이탈 e(11-06 지시서 3번)**: 해제 조건에 넣지 않되 이탈 중에는 해제를 멈춘다. 조건에 넣으면 레인이 나란한 지도에서 로봇이 다음 구역을 청하지 못할 수 있어서다. 이탈한 로봇은 세우고 구역을 쥔다(5절). `lane_error_warn_m`과 `off_lane_timeout_s`는 실측 e를 본 뒤 다시 정한다.
-- **치운 로봇을 다시 투입하는 절차(11-06 지시서 6번)**: 관리자가 `/fleet/reinstate`(robot_id, basket ∈ {EMPTY, NONE}, note)를 부른다(4절). 로봇은 시작 때와 같은 절차로 다음 위치 보고 때 맵에 오르고, 그동안 다른 로봇은 멈추지 않는다. 단 남이 쥔 구역에 보고되면 그 주인만 세우고, 둘 다 제자리면 관리자가 옮기거나 다시 치워야 풀린다(5절). 바구니는 관리자가 본 값이고, NONE이면 주문 전에 출고 구역에서 빈 바구니를 받는다(5절). 서비스 이름과 타입은 0.3-draft 관제 요구(팀 합의 전)이고 중앙 담당과 확인한다.
+- **치운 로봇을 다시 투입하는 절차(11-06 지시서 6번)**: 관리자가 `/fleet/reinstate`(robot_id, basket ∈ {EMPTY, NONE}, note)를 부른다(4절). 로봇은 다음 위치 보고부터 시작 때와 같은 절차로 맵에 오르고(이동·도킹 중이거나 배치 충돌이면 기다림), 그동안 다른 로봇은 멈추지 않는다. 단 남이 쥔 구역에 보고되면 그 주인만 세우고, 둘 다 제자리면 관리자가 옮기거나 다시 치워야 풀린다(5절). 바구니는 관리자가 본 값이고, NONE이면 주문 전에 출고 구역에서 빈 바구니를 받는다(5절). 서비스 이름과 타입은 0.3-draft 관제 요구(팀 합의 전)이고 중앙 담당과 확인한다.
 - **레인 준수 방식(11-06 지시서 결정 2, 7번)**: FollowPath로 정했다. 관제가 레인 폴리라인을 `MoveTo.path`로 보내고 핑키가 그 선을 따른다. "관제가 잡은 공간 = 실제 주행선"을 노린다. `point` 모드는 호환·비교용으로만 남긴다. FSM·Nav2 담당과 확인 전이다.
 
   | 방식 | 장점 | 단점 |
