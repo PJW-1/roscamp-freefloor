@@ -19,6 +19,7 @@ class GoalTracker:
         self._pending: set = set()
         self._handles: dict = {}
         self._cancels: dict = {}
+        self._lost: set = set()  # 결과를 잃은 취소. 경고한 뒤 그만둔다
 
     def sent(self, key) -> None:
         self._pending.add(key)
@@ -33,6 +34,12 @@ class GoalTracker:
         self._pending.discard(key)
         self._handles.pop(key, None)
         self._cancels.pop(key, None)
+        self._lost.discard(key)
+
+    def lost(self, key) -> None:
+        """취소한 goal의 결과를 잃었다. 결과는 다시 오지 않으니 경고까지만 취소를 다시 보낸다."""
+        if key in self._cancels:
+            self._lost.add(key)
 
     def cancel(self, key, now: float) -> None:
         if key in self._cancels:
@@ -44,12 +51,19 @@ class GoalTracker:
             return
         self._cancels[key] = _Cancel(now)
 
+    def canceling(self, key) -> bool:
+        """취소를 보냈고 결과는 아직이다."""
+        return key in self._cancels
+
     def retry_cancels(self, now: float, retry_s: float, warn_after: int) -> list:
         """때가 된 취소를 다시 요청한다. warn_after번을 막 채운 key를 한 번씩 돌려준다.
         수락을 기다리는 시간도 센다. goal은 그동안 돌고 있을 수 있다."""
         unconfirmed = []
         for key, cancel in list(self._cancels.items()):
             if now - cancel.tried_at < retry_s:
+                continue
+            if cancel.warned and key in self._lost:
+                self.finished(key)  # 잃은 결과는 다시 오지 않는다
                 continue
             if cancel.tries >= warn_after and not cancel.warned:
                 cancel.warned = True

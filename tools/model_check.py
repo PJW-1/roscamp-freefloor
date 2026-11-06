@@ -16,12 +16,22 @@
     arrive X        X의 이동이 끝남
     docked X        X의 도킹이 끝남
     report X        X의 보고가 한 번 더 옴(--confirm이 1보다 클 때만)
+    block X         X가 달리던 레인이 막혀 표시됨(--blocks일 때만, 지시서 5번)
+    unblock X       X의 막힘이 풀림(--blocks일 때만)
     nothing         tick만
+
+block은 이동 goal이 있는 로봇에만 일어난다. 막힘 1단계의 5초 표시와 취소 결과를 한 단계로 줄였다.
+막힌 로봇은 BLOCKED로 보고하고, unblock 뒤에는 정상 보고 한 번으로 풀린다.
+우회는 코어가 정하므로 사건이 늘지 않는다. --detour로 우회를 켜고 끈다.
 
 아무것도 바꾸지 못하는 호출(두 번째 dispatch, 풀 것이 없는 release)은 `nothing`과 같은 단계라 뺀다.
 test_model_check_tool.py가 작은 맵에서 둘을 비교한다.
 
 출력은 (states, deadlocks, starved)와 교착에 이르는 가장 짧은 경로 하나다.
+  behind_standing: (상태, 로봇) 쌍 중 로봇이 구역을 기다리는데 막는 로봇 하나가 서 있는 것
+    (코어의 _standing_wait_s가 None이 아님). 우회가 줄이려는 것이다.
+  behind_avoidable: 그중 그 구역을 피해 목적지로 가는 길이 있는 것(막힌 레인, 새 대기 칸 제외).
+    목적지 구역을 기다리는 것처럼 돌아갈 수 없는 대기는 빠진다.
   deadlock: 대기 순환이 있는 상태. 여기서는 시간이 멈춰 실제 코어의 후퇴가 오지 않으므로
     더 진행하지 않는다. 나중의 cancel이 풀 수도 있지만 그래도 센다.
   starved: (상태, 로봇) 쌍 중 로봇이 갈 곳이 남았는데 cancel이 아닌 어떤 사건 순서로도
@@ -60,19 +70,23 @@ from fleet_core.common.params import load_params  # noqa: E402
 from fleet_core.traffic.controller import TrafficController  # noqa: E402
 from fleet_core.traffic.deadlock import find_cycle, wait_graph  # noqa: E402
 from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
-from fleet_core.traffic.mission import DOCK, MOVE, _Dispatch, _Goal  # noqa: E402
+from fleet_core.traffic.mission import DOCK, MOVE, _Block, _Dispatch, _Goal  # noqa: E402
 
 PAST = 0.01  # 로봇이 지나갈 때 d를 얼마나 넘어서 보고하는가
 NAMED = 100  # 이름 지정 dispatch의 goal id는 여기서 시작해 열린 호출의 id와 겹치지 않는다
 CHUNK = 500  # 프로세스 여럿이 일할 때 job 하나의 상태 수
-ROBOT_FIELDS = 12  # 상태에서 로봇 하나를 나타내는 부분의 길이
+ROBOT_FIELDS = 14  # 상태에서 로봇 하나를 나타내는 부분의 길이
 
 
 class Model:
     """저장된 어떤 상태로도 맞출 수 있는 코어 하나. 한 단계에 객체 복사가 없다."""
 
-    def __init__(self, site, robots: int, start=None, params=None, confirm: int = 1):
+    def __init__(self, site, robots: int, start=None, params=None, confirm: int = 1,
+                 blocks: bool = False):
+        if blocks and confirm != 1:
+            raise ValueError("block events are modelled with one report per zone only")
         self.confirm = confirm
+        self.blocks = blocks
         params = replace(params or load_params(), release_confirm_samples=confirm)
         self.site = site
         self.d = params.release_distance_m
@@ -97,7 +111,7 @@ class Model:
         found = [("nothing",), ("open call",), ("cancel call",)]
         for name in self.names:
             found += [(kind, name) for kind in ("send", "cancel", "release", "pass", "arrive",
-                                                "docked", "report")]
+                                                "docked", "report", "block", "unblock")]
         return found
 
     def _conflict_groups(self) -> dict:
@@ -127,9 +141,13 @@ class Model:
             counted = ()
             if self.confirm > 1:
                 counted = tuple(sorted((z, min(n, self.confirm)) for z, n in m.outside.items()))
+            block = (m.block.lane, min(m.block.still_n, self.confirm)) if m.block else None
+            detour = ()
+            if m.detour_avoid and m.path and m.detour_at == m.path[core._anchor(m)]:
+                detour = (m.detour_at, m.detour_avoid)
             robots.append((m.phase, tuple(m.path[first:]), m.idx - first, m.dest, goal, settle,
                            m.called, m.dispatch.station_id if m.dispatch else None, m.hold,
-                           m.await_pick, self.pose[name], counted))
+                           m.await_pick, self.pose[name], counted, block, detour))
         zones = core.zones
         holders = tuple(sorted((z, h) for z, h in zones._holder.items() if h))
         requests = sorted(zones._arrived.items(), key=lambda item: item[1])
@@ -151,13 +169,17 @@ class Model:
         for number, name in enumerate(self.names):
             m = core._missions[name]
             (m.phase, path, m.idx, m.dest, goal, m.settle_idx, m.called, station, m.hold,
-             m.await_pick, self.pose[name], counted) = state[number]
+             m.await_pick, self.pose[name], counted, block, detour) = state[number]
             m.path = list(path)
             m.goal = _Goal(goal[0], 1, goal[1], goal[2]) if goal else None
             m.dispatch = _Dispatch(NAMED + number, station) if station else None
             m.x, m.y = self.xy(self.pose[name])
             m.outside = dict(counted)
             m.off_lane, m.off_lane_warned, m.wait_zone, m.attempts = 0, False, None, 0
+            m.block = _Block(block[0], marked=True, still_n=block[1]) if block else None
+            m.robot_state = "BLOCKED" if block else "IDLE"
+            m.block_cancel = m.block_rejoin = m.queue_since = None
+            m.detour_at, m.detour_avoid = detour or (None, ())
         holders, queue = state[len(self.names)]
         zones = core.zones
         for zone in zones._holder:
@@ -193,7 +215,7 @@ class Model:
         reporters = self.names if self.confirm == 1 else [reporter] if reporter else []
         for name in reporters:
             m = core._missions[name]
-            core.on_robot_state(name, m.x, m.y, 0.0, "IDLE")
+            core.on_robot_state(name, m.x, m.y, 0.0, m.robot_state or "IDLE")
         core.tick()
 
     def events(self, state: tuple) -> list[tuple]:
@@ -221,7 +243,49 @@ class Model:
                 found.append(("docked", name))
             if self.confirm > 1:
                 found.append(("report", name))
+            if self.blocks and m.block:
+                found.append(("unblock", name))
+            elif self.blocks and m.goal and m.goal.kind == MOVE:
+                found.append(("block", name))
         return found
+
+    def _block(self, m) -> None:
+        """막힘을 열고 바로 표시한다. 취소 결과도 곧 온 것으로 친다. 줄 서기면 아무 일 없다."""
+        core = self.core
+        m.robot_state = "BLOCKED"
+        core._open_block(m)
+        if not m.block:
+            m.robot_state = "IDLE"
+            return
+        core._mark_block(m)
+        core._cancel_finished(m, m.block_cancel)
+
+    def behind_standing(self) -> tuple[int, int]:
+        """구역을 기다리는 로봇 중 막는 로봇 하나가 서 있는 수, 그중 돌아갈 길이 있는 수."""
+        core = self.core
+        count = avoidable = 0
+        for name in self.names:
+            zone = core.zones.waiting_for(name)
+            if zone and any(core._standing_wait_s(core._missions[other]) is not None
+                            for other in core.zones.blockers(name, zone)):
+                count += 1
+                avoidable += self._way_around(core._missions[name], zone)
+        return count, avoidable
+
+    def _way_around(self, m, zone) -> bool:
+        """zone에 들어가지 않고 목적지로 가는 길이 있는가. 우회와 같은 막힌 레인, 대기 칸 규칙."""
+        core, site = self.core, self.site
+        anchor = core._anchor(m)
+        tail = m.path[anchor:]
+        shut = core._shut_lanes()
+        parking = set(site.parking) - set(tail)
+
+        def cost(lane):
+            if (lane.a, lane.b) in shut or lane.b in parking or site.zone_of[lane.b] == zone:
+                return float("inf")
+            return lane.length
+
+        return site.cheapest(tail[0], tail[-1], cost) is not None
 
     @staticmethod
     def _lane_pose(m) -> tuple:
@@ -251,15 +315,21 @@ class Model:
             core.on_move_result(event[1], m.goal.id, True, "")
         elif kind == "docked":
             core.on_dock_result(event[1], core._missions[event[1]].goal.id, True)
+        elif kind == "block":
+            self._block(core._missions[event[1]])
+        elif kind == "unblock":
+            core._missions[event[1]].robot_state = "IDLE"
         self._tick(event[1] if kind in ("pass", "arrive", "report") else None)
 
     def expand(self, states: Iterable[tuple]) -> list:
-        """상태마다 교착이면 None, 아니면 (사건 코드, 다음 상태) 쌍."""
+        """상태마다 (서 있는 로봇 뒤 대기 수, 그중 돌아갈 길이 있는 수, 교착이면 None,
+        아니면 (사건 코드, 다음 상태) 쌍)."""
         answers = []
         for state in states:
             self.restore(state)
+            behind = self.behind_standing()
             if self.has_cycle():
-                answers.append(None)
+                answers.append((*behind, None))
                 continue
             seen = set()
             successors = []
@@ -271,7 +341,7 @@ class Model:
                 if successor != state and key not in seen:
                     seen.add(key)
                     successors.append((self.event_code[event], successor))
-            answers.append(successors)
+            answers.append((*behind, successors))
         return answers
 
 
@@ -298,9 +368,9 @@ def _is_cancel(event: tuple) -> bool:
 _worker_model: Model | None = None
 
 
-def _start_worker(model_class, site, robots, start, params, confirm) -> None:
+def _start_worker(model_class, site, robots, start, params, confirm, blocks) -> None:
     global _worker_model
-    _worker_model = model_class(site, robots, start, params, confirm)
+    _worker_model = model_class(site, robots, start, params, confirm, blocks)
 
 
 def _work(states: list) -> list:
@@ -315,6 +385,8 @@ class Result:
     example: list
     complete: bool
     local_states: int
+    behind_standing: int = 0  # 탐색한 상태에서 센 값
+    behind_avoidable: int = 0
 
 
 class _Store:
@@ -363,8 +435,8 @@ class _Store:
 
 def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, workers: int = 1,
           progress=None, model_class=Model, stop_at_first: bool = False,
-          confirm: int = 1) -> Result:
-    model = model_class(site, robots, start, params, confirm)
+          confirm: int = 1, blocks: bool = False) -> Result:
+    model = model_class(site, robots, start, params, confirm, blocks)
     store = _Store(robots)
     store.add(model.initial)
     parents = array("I", [0])
@@ -374,10 +446,11 @@ def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, w
     cancels = [_is_cancel(event) for event in model.event_list]
     frontier = [0]
     complete = True
+    behind = avoidable = 0
     pool = None
     if workers > 1:
         pool = multiprocessing.get_context("fork").Pool(
-            workers, _start_worker, (model_class, site, robots, start, params, confirm))
+            workers, _start_worker, (model_class, site, robots, start, params, confirm, blocks))
     try:
         while frontier:
             if max_states and len(store) >= max_states:
@@ -391,7 +464,9 @@ def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, w
             answers = pool.imap(_work, jobs) if pool else map(model.expand, jobs)
             next_frontier = []
             for chunk, answer in zip(chunks, answers, strict=True):
-                for node, successors in zip(chunk, answer, strict=True):
+                for node, (waiting, around, successors) in zip(chunk, answer, strict=True):
+                    behind += waiting
+                    avoidable += around
                     if successors is None:
                         dead.append(node)
                         continue
@@ -413,7 +488,8 @@ def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, w
     starved = _count_starved(store, robots, edges_from, edges_to) if complete else -1
     example = _way_to(dead, parents, parent_events, model.event_list)
     robot_parts = sum(1 for part in store.parts if len(part) == ROBOT_FIELDS)
-    return Result(len(store), len(dead), starved, example, complete, robot_parts)
+    return Result(len(store), len(dead), starved, example, complete, robot_parts, behind,
+                  avoidable)
 
 
 def _count_starved(store: _Store, robots: int, edges_from, edges_to) -> int:
@@ -466,6 +542,10 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=1, help="processes working on the states")
     parser.add_argument("--confirm", type=int, default=1,
                         help="reports past a zone that free it. The real core takes 3")
+    parser.add_argument("--blocks", action="store_true",
+                        help="add the events block X and unblock X")
+    parser.add_argument("--detour", choices=("file", "on", "off"), default="file",
+                        help="detours: as the parameter file says, or forced")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -476,14 +556,19 @@ def main() -> int:
     def show(known, frontier, dead):
         print(f"  {known} known, {frontier} to do, {dead} deadlocks", file=sys.stderr, flush=True)
 
-    result = check(site, args.robots, start, max_states=args.max_states, workers=args.workers,
-                   progress=None if args.quiet else show, stop_at_first=args.stop_at_first,
-                   confirm=args.confirm)
+    params = load_params()
+    if args.detour != "file":
+        params = replace(params, detour_enabled=args.detour == "on")
+    result = check(site, args.robots, start, params=params, max_states=args.max_states,
+                   workers=args.workers, progress=None if args.quiet else show,
+                   stop_at_first=args.stop_at_first, confirm=args.confirm, blocks=args.blocks)
     if args.json:
         print(json.dumps(vars(result)))
         return 0
     print(f"({result.states}, {result.deadlocks}, {result.starved})"
-          + ("" if result.complete else " stopped early, starved not counted"))
+          + ("" if result.complete else " stopped early, starved not counted")
+          + f", {result.behind_standing} waits behind a standing robot"
+          + f" ({result.behind_avoidable} with a way around)")
     if result.example:
         print("shortest way into a deadlock:")
         for step in result.example:

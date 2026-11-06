@@ -83,6 +83,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `HEARTBEAT_LOST` | WARN | traffic | 로봇이 heartbeat를 못 받아 스스로 이동을 끝냈다(결과 reason). 시도로 세지 않고 `move_retry_wait_s` 뒤 같은 목표를 다시 보낸다(11-06, 4번) |
 | `LANE_BLOCKED` | WARN | traffic | `BLOCKED` 보고가 `blocked_mark_s` 동안 이어져 달리던 레인을 막힘으로 표시하고 목표를 취소했다. detail에 레인(11-06, 4번) |
 | `LANE_CLEARED` | INFO | traffic | 표시한 레인이 풀렸다(`BLOCKED`가 아닌 보고가 이어짐, 또는 `confirm_clear`). 같은 목표를 다시 보낸다 |
+| `DETOUR` | INFO | traffic | 다음 구역을 청할 때 더 싼 길로 바꿨다(11-06, 5번). detail에 피한 것(구역과 보유자와 서 있는 시간, 또는 막힌 레인)과 새 경로 |
 | `BLOCKED_TOO_LONG` | ERROR | traffic | `BLOCKED`로 보고된 시간이 `blocked_timeout_s`에 닿았다. `fault_reason=BLOCKED`, 구역은 쥔다 |
 | `COMM_LOST` | WARN | traffic | 보고가 `comm_timeout_s` 동안 없다. 지도에 오른 로봇이 `LOCALIZING`만 보내는 것도 같다(detail에 적는다) |
 | `COMM_RESTORED` | INFO | traffic | 보고가 돌아왔다. 위치를 확인하고 이어 간다 |
@@ -105,7 +106,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `FILL_FAILED`, `SWAP_FAILED` | ERROR | orchestrator | 재시도를 다 썼거나 담은 일부를 내보낼 수 없다 |
 | `ARM_NO_RESULT` | ERROR | orchestrator | 취소한 팔 작업의 결과가 끝내 안 왔다. 바구니 내용을 알 수 없다 |
 | `ARM_LATE_RESULT` | WARN | orchestrator | `ARM_NO_RESULT`를 낸 작업, 또는 로봇을 치울 때 취소한 작업(무엇을 했다고 할 때만)의 결과가 늦게 왔다. detail에 보고 내용을 적는다. 로봇을 치운 뒤라면 주문이 두 번 담기거나 출고될 수 있다(5-1절) |
-| `CANCEL_UNCONFIRMED` | WARN | `fleet_manager` 노드 | 취소를 요청하고 `cancel_warn_after` × `cancel_retry_s`가 지나도 목표의 결과가 없다. 서버가 목표를 아직 수락하지 않아 취소를 보내지 못한 경우도 포함한다. source는 로봇이나 서버, detail에 목표 ID. 목표당 한 번 내고 취소는 계속 보낸다 |
+| `CANCEL_UNCONFIRMED` | WARN | `fleet_manager` 노드 | 취소를 요청하고 `cancel_warn_after` × `cancel_retry_s`가 지나도 목표의 결과가 없다. 서버가 목표를 아직 수락하지 않아 취소를 보내지 못한 경우도 포함한다. source는 로봇이나 서버, detail에 목표 ID. 목표당 한 번 낸다. 취소는 결과가 올 때까지 계속 보내되, 결과를 잃은 이동·도킹 취소(결과 future 오류)는 이 경고 다음 재시도에서 그만둔다 |
 | `ORDER_REPORT_REFUSED` | ERROR | `fleet_manager` 노드 | central이 주문 보고에 `accepted=false`로 답했다. detail은 주문 ID로 시작한다. 다시 보내지 않는다 |
 | `NO_ROBOT_AVAILABLE` | WARN | orchestrator | 주문은 있는데 지도에 올라 고장이 아닌 로봇이 없다. 전원이 통신 두절일 때는 돌아올 수 있으므로 내지 않는다 |
 | `ORDER_ACCEPTED`, `ORDER_SHIPPED` | INFO | central | 주문을 받았다, 출고했다 |
@@ -135,6 +136,9 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `blocked_timeout_s` | 60 | `BLOCKED`로 보고된 시간이 이만큼이면 ERROR(`BLOCKED`). 추정 |
 | `blocked_rejoin_s` | 10 | 풀린 뒤 이 안에 같은 레인에서 다시 막히면 막힌 시간을 이어 센다. 5초 표시와 60초에 같은 시계를 쓴다 |
 | `queue_gap_m` | 0.6 | 경로상 같은 레인이나 다음 레인 앞 이 거리 안에 정상 로봇이 있으면 `BLOCKED`를 줄 서기로 본다. 추정 |
+| `detour_enabled` | true | 우회 규칙(5절)을 쓴다. false면 지금처럼 FIFO로 기다린다(비교용). 이 값이 없는 옛 기록은 false로 재생한다(데이터클래스 기본값) |
+| `station_wait_estimate_s` | 30 | 스테이션, 대기 칸, 할 일 대기로 선 로봇이 비키기까지의 예상 시간. 추정 |
+| `detour_speed_mps` | 0.2 | 예상 대기 시간을 거리 벌점으로 바꾸는 속도. 추정, FakePinky와 시나리오의 기본 속도 |
 | `arrival_tolerance_m` | 0.15 | 이동의 성공 결과를 도착으로 치는 목표 지점까지의 거리. 추정. 가장 짧은 레인에서 `release_distance_m`을 뺀 값(기본 지도 0.2 m)보다 작아야 한다(7절) |
 | `arrival_settle_s` | 1 | 성공 결과가 위치 보고보다 먼저 왔을 때 보고를 기다리는 시간. 추정. 보고 지연 τ보다 길어야 한다 |
 | `startup_wait_s` | 10 | `ROBOT_NOT_REPORTING`을 내기까지 |
@@ -277,13 +281,26 @@ confirm_clear(관리자가 로봇을 치웠다): 구역 해제, OUT_OF_SERVICE, 
 
 멈춤 감시(11-06 개선 지시서 2번): 이동이나 도킹 목표가 열려 있는데 보고 위치가 `stall_s`(도킹은 `dock_stall_s`) 동안 `stall_move_m` 미만으로만 움직이면 `GOAL_STALLED`(WARN)를 내고 그 목표를 취소한다. 실패한 시도 하나로 세므로 `move_retry_wait_s` 뒤 같은 지점으로 다시 보내고, 세 번째 시도까지 멈추면 `GOAL_FAILED`(ERROR, `fault_reason=STALLED`)다. `GOAL_RETRY`는 따로 내지 않는다. 위치는 보고 그대로가 아니라 `stall_smooth_s` 시간 상수의 지수 평균으로 본다. 재는 시작점은 목표가 보인 첫 tick의 평균 위치이고, 평균이 그 점에서 `stall_move_m` 이상 움직이면 그 자리에서 다시 잰다. 시드 200개 시험에서 σ 0.03 m 잡음의 제자리 로봇은 모두 ERROR까지 갔고 0.2 m/s 주행은 한 번도 멈춤으로 잡히지 않았다. σ 0.05 m에서는 200개 중 20개가 30초 안에 ERROR까지 가지 못했다. 목표를 연장해도 시계는 그대로다. 목표가 없을 때(구역을 기다리며 서 있음, 스테이션에서 대기), RUN이 아닐 때(PAUSE, STOP), 통신이 끊기거나 복구 중이거나 고장일 때는 재지 않고 처음부터 다시 잰다. 취소한 목표의 결과는 목표 번호가 달라 무시된다. 전수 검사는 시계가 멈춰 있어 이 감시가 끼어들지 않는다.
 
-레인 막힘(11-06 개선 지시서 4번, 핑키 계약 4절, `traffic/blocking.py`): 이동 목표 중 `BLOCKED` 보고가 오면 막힘을 연다. 레인은 그때 달리던 레인이다. 경로의 들어오는 레인과 나가는 레인 중 로봇에 가까운 쪽이고, 같으면 나가는 레인이다. 경로상 같은 레인이나 다음 레인 앞 `queue_gap_m` 안에 정상 로봇(지도에 있고 고장, 두절, `BLOCKED`, `LOCALIZING`, 막힘이 아님)이 있으면 줄 서기로 보고 열지 않는다. 목표가 없거나 통신이 비정상이면 상태만 보인다. 막힘이 있거나 `BLOCKED`로 보고하는 동안은 멈춤 감시를 쉰다. 경로 레인은 거리 제한 없이 가까운 쪽을 고른다. 경로가 아닌 레인에 귀속시키지 않기 위해서다. 레인에서 멀리 벗어난 로봇은 `LANE_ERROR`가 알린다.
-- 시간은 tick마다 `BLOCKED`이고 통신이 정상이며 줄 서기가 아닐 때만 더한다. 두절과 복구 확인 동안, 막힘을 연 뒤 앞에 정상 로봇이 선 동안은 멈춘다. 줄 서기가 `blocked_timeout_s` 넘게 이어지면 더는 쉬지 않고 막힘으로 친다. 앞 로봇이 뒤 로봇의 구역을 기다려 서로 막고 서면 구역 대기 그래프에 보이지 않기 때문이다. tick(0.1초) 단위로 더하므로 상태가 바뀔 때마다 한 tick까지 틀릴 수 있다.
-- `blocked_mark_s`: 레인을 표시하고(`LANE_BLOCKED`) 그 로봇의 잠금 요청과 목표를 취소한다. 몸이 있는 레인 양 끝의 구역은 쥔다. 나머지 쥔 구역은 취소한 목표의 결과가 오고 이동 중이 아닌 보고가 `release_confirm_samples`번 이어진 뒤, 바닥 밖이 확인된 것만 놓는다. 표시 동안 구역은 이 규칙으로만 놓고, 다른 자동 해제(지나간 구역, 복구, 교착 후퇴)는 쉰다. 취소한 목표의 결과가 오기 전에는 막힘이 먼저 풀려도 그 로봇의 어느 구역도 자동으로 놓지 않는다(`_release_if_cleared`, `block_cancel`). 결과가 끝내 오지 않으면 노드가 1초마다 취소를 다시 보내고 5번 뒤 `CANCEL_UNCONFIRMED`(WARN)를 낸다. 구역은 쥔 채 두고 관리자가 `confirm_clear`로 푼다. 정지는 상태 보고(`BLOCKED`는 계약상 1초 넘게 0.02 m/s 미만)와 취소 결과로 본다. 원시 자세로 재면 σ 0.03 m 잡음에 흔들려 넣지 않았다. 표시 동안 새 구역 요청과 이동을 내지 않는다.
-- 풀림: 통신이 정상이고 `BLOCKED`가 아닌 보고가 `release_confirm_samples`번 이어진다. 두절이나 복구 확인 중의 보고는 풀림 셈과 정지 셈을 0으로 되돌린다. 표시했으면 `LANE_CLEARED`를 내고 구역을 다시 청해 같은 목표를 다시 보낸다(시도로 세지 않는다). 취소 결과보다 풀림이 먼저 와도 새 목표가 이전 목표를 대신하고(계약 3절 1번), 늦게 온 결과는 goal id가 달라 버린다. 표시 전에 풀리면 아무것도 보내지 않고 멈춤 시계만 0부터 다시 잰다.
+레인 막힘(11-06 개선 지시서 4번, 핑키 계약 4절, `traffic/blocking.py`): 이동 목표 중 `BLOCKED` 보고가 오면 막힘을 연다. 레인은 그때 달리던 레인이다. 경로의 들어오는 레인과 나가는 레인 중 로봇에 가까운 쪽이고, 같으면 나가는 레인이다. 경로상 같은 레인이나 다음 레인 앞 `queue_gap_m` 안에 정상 로봇(지도에 있고 고장, 두절, `BLOCKED`, `LOCALIZING`, 막힘이 아님)이 있으면 줄 서기로 보고 열지 않는다. 목표가 없거나 통신이 비정상이면 상태만 보인다. 막힘을 연 동안과 줄 서기 동안은 멈춤 감시를 쉰다. 달리던 레인을 찾지 못한 `BLOCKED`는 막힘을 열지 않으므로 멈춤 감시가 잰다. 경로 레인은 거리 제한 없이 가까운 쪽을 고른다. 경로가 아닌 레인에 귀속시키지 않기 위해서다. 레인에서 멀리 벗어난 로봇은 `LANE_ERROR`가 알린다.
+- 시간은 tick마다 `BLOCKED`이고 통신이 정상이며 줄 서기가 아닐 때만 더한다. 두절과 복구 확인 동안, 막힘을 연 뒤 앞에 정상 로봇이 선 동안은 멈춘다. 줄 서기가 `blocked_timeout_s` 넘게 이어지면 더는 쉬지 않고 막힘으로 친다. 앞 로봇이 뒤 로봇의 구역을 기다려 서로 막고 서면 구역 대기 그래프에 보이지 않기 때문이다. 그때부터 막힘 시계로 `blocked_mark_s` 뒤에 표시하고 `blocked_timeout_s` 뒤에 ERROR다. 줄 서기 시간은 `BLOCKED`가 아닌 보고나 통신 두절이 끼면 처음부터 다시 잰다. tick(0.1초) 단위로 더하므로 상태가 바뀔 때마다 한 tick까지 틀릴 수 있다.
+- `blocked_mark_s`: 레인을 표시하고(`LANE_BLOCKED`) 그 로봇의 잠금 요청과 목표를 취소한다. 몸이 있는 레인 양 끝의 구역은 쥔다. 나머지 쥔 구역은 취소한 목표의 결과가 오고 이동 중이 아닌 보고가 `release_confirm_samples`번 이어진 뒤, 바닥 밖이 확인된 것만 놓는다. 표시 동안 구역은 이 규칙으로만 놓고, 다른 자동 해제(지나간 구역, 복구, 교착 후퇴)는 쉰다. 취소한 목표의 결과가 오기 전에는 막힘이 먼저 풀려도 그 로봇의 어느 구역도 자동으로 놓지 않는다(`_release_if_cleared`, `block_cancel`). 결과가 끝내 오지 않으면 노드가 1초마다 취소를 다시 보내고 5번 뒤 `CANCEL_UNCONFIRMED`(WARN)를 낸다. 구역은 쥔 채 두고 관리자가 `confirm_clear`로 푼다. 정지는 상태 보고(`BLOCKED`는 계약상 1초 넘게 0.02 m/s 미만)와 취소 결과로 본다. 원시 자세로 재면 σ 0.03 m 잡음에 흔들려 넣지 않았다. 표시 동안과 취소한 목표의 결과가 오기 전에는 그 로봇의 단계를 진행하지 않는다(새 구역 요청, 이동, 도킹을 내지 않는다). 결과 전에 새 목표가 다시 막혀 표시되면 앞 취소의 추적을 잃기 때문이다. 그래서 이 로봇은 구역 대기 그래프에 들어가지 않고 교착 후퇴 대상도 되지 않는다. 이 동안 새 호출은 받지 않는다. 이미 맡은 호출은 다른 로봇처럼 선택기가 다시 고른다(같은 호출 가산점). 대기 줄에서는 앞 로봇으로 남아 뒤 로봇이 앞지르지 않는다. 지정 배차는 받아 두고 결과가 오면 이어 간다. 노드가 결과를 잃으면(결과 future 오류) 취소한 로봇 목표는 거절로 넘기지 않는다. `CANCEL_UNCONFIRMED`를 낸 뒤에는 그 취소를 다시 보내지 않고, 코어는 결과나 `confirm_clear`까지 구역을 쥔다.
+- 풀림: 통신이 정상이고 `BLOCKED`가 아닌 보고가 `release_confirm_samples`번 이어진다. 두절이나 복구 확인 중의 보고는 풀림 셈과 정지 셈을 0으로 되돌린다. 표시했으면 `LANE_CLEARED`를 내고 구역을 다시 청해 같은 목표를 다시 보낸다(시도로 세지 않는다). 취소 결과보다 풀림이 먼저 오면 결과를 받은 뒤 다시 보낸다. 그동안 선택기가 호출을 다른 로봇에게 넘겼으면 바뀐 경로로 간다. 채우기 도크의 commit 구역을 잡았거나 지난 로봇은 방향을 바꾸지 않고 도크 지점까지 간다(`_committed`). 그때 맡은 호출이 없으면 도킹하지 않고 대기 지점으로 간다. 표시 전에 풀리면 아무것도 보내지 않고 멈춤 시계만 0부터 다시 잰다.
 - 풀린 뒤 `blocked_rejoin_s` 안에 같은 레인에서 다시 막히면 앞의 시간에 이어 센다. 5초 표시와 60초에 같은 시계를 쓰므로, 표시까지 갔던 레인이 곧 다시 막히면 바로 다시 표시한다.
 - `blocked_timeout_s`: ERROR(`BLOCKED_TOO_LONG`, `fault_reason=BLOCKED`). 구역은 쥔다. 레인 표시는 풀림 보고가 오면 ERROR와 상관없이 지운다. `confirm_clear`도 표시를 지운다.
-- 표시한 레인은 `blocked_lanes()`와 `robot_view()["blocked_lane"]`로 읽는다. 다른 로봇의 우회는 파트 5에서 넣는다. 지금은 그 레인의 구역을 기다린다. `/fleet/robots`의 `fault_reason`은 막힘 동안 `BLOCKED`이고 `fault`는 NONE이다.
+- 표시한 레인은 `blocked_lanes()`와 `robot_view()["blocked_lane"]`로 읽는다. 다른 로봇은 아래 우회 규칙으로 그 레인을 피하고, 길이 없으면 그 구역을 기다린다. `/fleet/robots`의 `fault_reason`은 막힘 동안 `BLOCKED`이고 `fault`는 NONE이다.
+
+우회(11-06 개선 지시서 5번, 레인 막힘 2단계, `traffic/detour.py`): 다음 구역을 남이 쥐고 서 있거나 남은 경로에 막힌 레인이 있으면, 다른 길이 더 쌀 때 돌아간다. 규칙은 결정적이다. 입력과 시계만 쓴다.
+- 비용 = 레인 길이 + 들어가는 구역의 벌점. 구역 안의 레인은 길이만 센다. 같은 비용이면 `LaneMap.plan`과 같은 순서로 가른다.
+  - 막힌 레인(`blocked_lanes()`)은 못 지난다. 양방향 쌍이면 반대 방향도 막는다. 같은 통로이기 때문이다.
+  - 서 있는 로봇이 쥔 구역(그 구역이나 충돌쌍 구역)은 예상 대기 시간 × `detour_speed_mps`. 무한이면 못 지난다. 보유자가 여럿이면 큰 쪽이다.
+  - 달리는 로봇이 쥔 구역은 벌점이 없다.
+  - 지금 경로에 없던 대기 칸으로는 못 간다. 대기 줄은 앞지르지 않는 줄이라(호출 규칙), 지나가는 로봇이 끼면 호출이 풀릴 수 있다. 특징 지도에서는 이 규칙이 없으면 F1에서 대기 줄을 한 바퀴 도는 우회가 나왔다.
+- 서 있음과 달림(`_standing_wait_s`): 열린 이동이나 도킹 goal이 있으면 달린다. 주행 단계(TO_*, DOCKING)에서 goal 사이에 있는 로봇도 같은 tick에 다음 goal을 받으므로 달린다(아래 대기 경우는 빼고). 그 밖은 서 있다. 예상 대기 시간은 위에서부터 먼저 맞는 것이다. 고장(`ERROR`, `OUT_OF_SERVICE`), 두절과 복구 확인, 막힘 기록, `BLOCKED` 보고는 무한이다. 구역을 기다리면 그 구역을 기다린 시간이다. 재시도나 도착 확인을 기다리면 남은 시간이다. 나머지(`AT_STATION`, 대기 칸, 할 일 대기)는 `station_wait_estimate_s`다. pinky_multi_sim 4.2의 "작업 중이면 남은 시간"은 교통이 팔 작업 시간을 모르므로 추정값으로 바꿨다.
+- 다시 고르는 때: 현재 구역 말고 쥔 것이 없어 다음 구역을 청할 때뿐이다(`_request_next_zone`). 다음 구역을 이미 쥐었으면 바꾸지 않는다. 다음 구역에 벌점이 없고 남은 경로에 막힌 레인도 없으면 계산하지 않는다. 기다리는 동안은 tick마다 다시 본다. 대기 시간이 늘어 벌점이 커지면 그때 돌아갈 수 있다.
+- 새 길이 지금 길보다 싸야 바꾼다. 같으면 그대로다. 길이 없으면 지금처럼 그 구역을 기다린다. 경로는 반드시 도달할 지점(`_anchor`)부터 바꾸고 목적지는 그대로다. 막힌 로봇 자신과, 표시 때 취소한 goal의 결과를 기다리는 로봇(`_held_for_block`)은 다시 고르지 않는다. 남이 볼 때 결과를 기다리는 로봇은 서 있는 것으로 치고 `station_wait_estimate_s`를 쓴다.
+- 왕복 금지: 한 지점에서 포기한 다음 구역은 그 지점을 떠날 때까지 못 지난다. 지시서는 "직전에 포기한 구역"이지만 그 지점에서 포기한 구역을 모두 막는다. 둘 이상을 번갈아 고르지 않게 하려는 것이다.
+- 바꾸면 `DETOUR`(INFO)를 내고 옛 다음 구역 요청을 거둔다. 우회로 경로가 지금 구역 안에서 끝나면 요청 없이 도착한다(전수 검사에서 찾은 경우).
+- `detour_enabled=false`면 이 절은 쉬고 동작은 파트 5 전과 같다. 기본 지도에서는 돌아갈 길이 없어 켜도 나오지 않았다(11절).
 
 heartbeat 정지(11-06, 4번): 이동 결과의 reason이 `HEARTBEAT_LOST`면 시도로 세지 않는다. `HEARTBEAT_LOST`(WARN)를 내고 `move_retry_wait_s` 뒤 같은 목표를 다시 보낸다. 그 사이에도 멈춤 시계는 이어 잰다. 끊김이 되풀이되어 `stall_s` 동안 진전이 없으면 `GOAL_STALLED`가 실패 한 번으로 센다.
 
@@ -291,7 +308,7 @@ heartbeat 정지(11-06, 4번): 이동 결과의 reason이 `HEARTBEAT_LOST`면 �
 
 도착 판정: 이동의 성공 결과가 와도 마지막 보고 위치가 목표 지점에서 `arrival_tolerance_m`보다 멀면 바로 도착으로 치지 않는다. 위치 보고는 결과보다 늦게 올 수 있으므로 `arrival_settle_s` 동안 새 목표를 내지 않고 기다린다. 그 안에 허용치 안의 위치가 보고되면 도착이고, 기한이 지나도 보고된 위치가 멀면 실패한 시도(`NOT_AT_TARGET`)로 친다. 처리는 실패한 이동과 같다. 로봇의 통신 상태가 `COMM_LOST`나 `RECOVERING`이면 위치가 오래된 것이고 복구가 위치를 다시 판단하므로 보지 않는다. 도킹 결과는 위치를 보지 않는다. 정지 오차가 이 값을 자주 넘는 로봇은 재시도를 다 써서 ERROR가 될 수 있으므로, 이 값은 실측한 정지 오차, ε, τ와 함께 정한다. 성공 뒤에 위치 보고가 하나도 오지 않았으면 기한이 지나도 판정하지 않고 기다린다. 그 위치는 성공 전의 것이라 아무것도 말해 주지 않기 때문이다. 보고가 끊긴 로봇은 `COMM_LOST`가 먼저 나고 복구가 위치를 판단한다. 기다리는 동안 새 이동 목표는 내지 않는다(2026-11-06 검토에서 추가). 정지 오차를 넣은 압박 시험은 작업 기록(11-05) 7번에 있고 이 판정을 넣기 전 결과다. 판정을 넣은 뒤의 `basic_orders` 결과는 `docs/worklog_2026-11-06.md`의 압박 시험 표에 있다.
 
-이벤트 코드(traffic, 뜻은 0절): `ROBOT_ISOLATED`, `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_STALLED`, `GOAL_NOT_SENT`, `HEARTBEAT_LOST`, `LANE_BLOCKED`, `LANE_CLEARED`, `BLOCKED_TOO_LONG`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ZONES_STILL_HELD`, `LANE_ERROR`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
+이벤트 코드(traffic, 뜻은 0절): `ROBOT_ISOLATED`, `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_STALLED`, `GOAL_NOT_SENT`, `HEARTBEAT_LOST`, `LANE_BLOCKED`, `LANE_CLEARED`, `DETOUR`, `BLOCKED_TOO_LONG`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ZONES_STILL_HELD`, `LANE_ERROR`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
 
 `TrafficController` 공개 API:
 ```python
@@ -331,7 +348,7 @@ SWAPPING(OUTBOUND 요청의 결과를 받은 뒤):
 
 `ARM_NO_RESULT` 뒤에 온 결과: 그 작업을 기억해 두었다가 `ARM_LATE_RESULT`(WARN)로 보고 내용(placed, 또는 took_full과 put_empty_done)을 알린다. 주문이 아직 그 로봇에 묶여 있으면 반영한다. 담기의 placed는 주문에 더하고, FULL 바구니를 꺼낸 교환(took_full)은 제시간에 온 결과처럼 SHIPPED(결품이 있었으면 PARTIAL)로 보고하고 주문을 푼다. 그래서 나중에 로봇을 치워도 주문이 되돌아가지 않는다. 로봇은 ERROR 그대로이고 놓아주지 않으며, 관리자가 확인한다. 이미 로봇을 치웠으면 주문은 되돌아간 뒤이므로 이벤트만 내고 반영하지 않는다. 이때 주문이 두 번 담기거나 출고될 수 있고, detail이 그렇게 알린다. 주문을 이미 보고한 뒤의 교환 재시도라면 묶인 주문이 없으므로 이벤트만 낸다. 로봇을 치우면서 취소한 작업도 같은 방식으로 기억한다. 그 결과가 무엇을 했다고 하면(담은 것이 있거나, `took_full`이나 `put_empty_done`) 반영하지 않고 `ARM_LATE_RESULT`로 알리며, detail은 주문이 두 번 담기거나 출고될 수 있다고 적는다. 아무것도 하지 않았다는 결과는 알리지 않는다(2026-11-06 검토에서 추가).
 
-취소 확인(`fleet_manager` 노드, 이동·도킹·팔 목표 공통): 취소는 그 목표의 결과가 와야 끝난 것으로 친다. 코어는 `CancelCmd`를 내면 잊지만, 노드는 결과가 올 때까지 `cancel_retry_s`마다 취소를 다시 보낸다. 처음 보낸 것을 포함해 `cancel_warn_after`번이 답 없이 지나가면 `CANCEL_UNCONFIRMED`를 한 번 내고, 그 뒤에도 같은 간격으로 계속 보낸다. 서버가 수락하기 전에 요청한 취소는 수락되는 순간 보내고, 수락을 기다리는 시간도 횟수에 넣는다. 수락 답이 사라져도 목표는 돌고 있을 수 있기 때문이다. 시각은 노드의 시계를 쓰므로 시뮬레이션 시간을 따른다.
+취소 확인(`fleet_manager` 노드, 이동·도킹·팔 목표 공통): 취소는 그 목표의 결과가 와야 끝난 것으로 친다. 코어는 `CancelCmd`를 내면 잊지만, 노드는 결과가 올 때까지 `cancel_retry_s`마다 취소를 다시 보낸다. 처음 보낸 것을 포함해 `cancel_warn_after`번이 답 없이 지나가면 `CANCEL_UNCONFIRMED`를 한 번 내고, 그 뒤에도 같은 간격으로 계속 보낸다. 다만 취소한 이동·도킹 목표의 결과를 잃으면(결과 future 오류) 결과가 다시 올 수 없으므로 이 경고 다음 재시도에서 그만둔다. 그 로봇의 구역은 코어가 결과나 `confirm_clear`까지 쥔다(5절 레인 막힘). 서버가 수락하기 전에 요청한 취소는 수락되는 순간 보내고, 수락을 기다리는 시간도 횟수에 넣는다. 수락 답이 사라져도 목표는 돌고 있을 수 있기 때문이다. 시각은 노드의 시계를 쓰므로 시뮬레이션 시간을 따른다.
 
 보고 확인(`fleet_manager` 노드): 주문 보고는 `accepted=true` 답을 받을 때까지 노드가 가지고 있고, 답이 없으면 `report_retry_s`마다 다시 보낸다(4절). 서비스가 안 보이는 동안에는 보내지 않는다. 호출이 실패해도 가지고 있다가 다시 보낸다. `accepted=false`면 버리고 `ORDER_REPORT_REFUSED`를 낸다.
 
@@ -379,7 +396,11 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 ```
 `expect`의 숫자는 정확히 일치해야 통과한다. `orders_shipped_min`도 지원한다(고장 시나리오에서 "0건이어도 통과"가 되지 않도록 반드시 1 이상).
 
-시나리오 8개: `basic_orders`(주문 6건, 고장 없음), `order_burst`(한꺼번에 8건, 진행 중 추가 주문, 밀린 주문이면 대기 구간을 거치지 않고 바로 작업공간으로 가는지 확인), `shared_lane_failure`(통신 두절+주행 실패), `stock_shortage`(재고 0인 품목과 기록만 있고 실물 없는 품목: PARTIAL과 HELD, OUT_OF_STOCK과 STOCK_MISMATCH 구분), `stuck_robot`(차선에서 멈춤: 뒤따르는 로봇이 막히고 경고가 나는지), `operator_recovery`(팔 고장 3회 → ERROR와 자동 격리 → 관리자가 치움 → 주문이 다시 처리되어 전부 끝남), `blocked_lane`(파트 4), `auto_isolation`(팔 고장 3회 → 자동 격리 → 앞서 간 로봇은 사람 없이 출고 → 관리자가 치운 뒤 되돌린 주문부터 전부 끝남, 11-06 5.5번).
+시나리오 파일의 `map`(선택)은 `sim/fake_robots/maps`의 지도 이름이다. 있으면 `pc.launch.py`와 `fakes.launch.py`가 `map_file`을 주지 않았을 때 그 지도를 모든 노드에 준다. 없으면 기본 지도다.
+
+특징 지도 시나리오 2개(11-06, 5번): `feature_basic_orders`(`basic_orders`와 같고 지도와 출발 칸만 다름), `feature_blocked_lane`(`blocked_lane`과 같고 지도, 출발 칸, 물체 시각(46초부터 30초)이 다름). 통합 시험 목록(`test_scenario_integration.py`)에는 넣지 않았다. 도메인 50~56을 넘기 때문이다.
+
+기본 지도 시나리오 8개: `basic_orders`(주문 6건, 고장 없음), `order_burst`(한꺼번에 8건, 진행 중 추가 주문, 밀린 주문이면 대기 구간을 거치지 않고 바로 작업공간으로 가는지 확인), `shared_lane_failure`(통신 두절+주행 실패), `stock_shortage`(재고 0인 품목과 기록만 있고 실물 없는 품목: PARTIAL과 HELD, OUT_OF_STOCK과 STOCK_MISMATCH 구분), `stuck_robot`(차선에서 멈춤: 뒤따르는 로봇이 막히고 경고가 나는지), `operator_recovery`(팔 고장 3회 → ERROR와 자동 격리 → 관리자가 치움 → 주문이 다시 처리되어 전부 끝남), `blocked_lane`(`basic_orders`에 pinky1 앞 물체: 5초 표시와 취소, 풀린 뒤 같은 목표로 이어 가 전부 출고. pinky3은 처음 2초 `LOCALIZING`), `auto_isolation`(팔 고장 3회 → 자동 격리 → 앞서 간 로봇은 사람 없이 출고 → 관리자가 치운 뒤 되돌린 주문부터 전부 끝남, 11-06 5.5번).
 
 심판은 FMS가 내는 이벤트를 본다. 가짜 노드(FakePinky, FakeWorkcell, FakeArm3, FakeVision, FakeCentral)는 인터페이스가 같으므로 그대로 쓴다. 시나리오 시각은 시뮬 시계(`speed_factor` 5배속)이고, heartbeat만 벽시계다(4절). `tools/pressure_sweep.py`는 시나리오에 지연과 잡음을 넣어 돌리고 표를 만든다(7번 표는 작업 기록에 있다).
 

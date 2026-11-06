@@ -27,6 +27,7 @@ from fleet_core.common.commands import (
     ZoneView,
 )
 from fleet_core.traffic.blocking import TrafficBlocking
+from fleet_core.traffic.detour import TrafficDetour
 from fleet_core.traffic.isolation import TrafficIsolation
 from fleet_core.traffic.mission import (
     _COMM_REASON,
@@ -64,7 +65,7 @@ from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
-class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
+class TrafficController(TrafficRecovery, TrafficBlocking, TrafficDetour, TrafficIsolation):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -106,6 +107,8 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
         m = self._missions.get(robot)
         if m is None:
             return
+        if state != BLOCKED:
+            m.queue_since = None  # 줄 서기 시계는 BLOCKED가 이어지는 동안만 잰다
         if state == LOCALIZING:
             # 자세를 믿지 않는다. 보고 시각도 두어 오래 가면 COMM_LOST가 된다.
             m.robot_state, m.battery = state, battery
@@ -647,8 +650,10 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
             waypoint=waypoint,
             called=m.called,
             parked=waypoint in self.site.parking,
-            eligible=m.available and not m.hold and m.dispatch is None,
-            available=m.available,
+            # 막힘으로 선 로봇은 새 호출을 받지 않고, 대기 줄에서는 뒤 로봇이 앞지르지 않는다
+            eligible=(m.available and not m.hold and m.dispatch is None
+                      and (m.called or not self._held_for_block(m))),
+            available=m.available and not self._held_for_block(m),
         )
 
     def _committed(self, m: _Mission) -> bool:
@@ -693,11 +698,12 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
 
     # ---- mission steps ------------------------------------------------------------------
 
-    def _start_leg(self, m: _Mission, phase: str, dest: str | None, goal_waypoint) -> None:
-        """반드시 도달할 지점 이후의 경로를 바꾼다."""
+    def _start_leg(self, m: _Mission, phase: str, dest: str | None, goal_waypoint,
+                   way=None) -> None:
+        """반드시 도달할 지점 이후의 경로를 바꾼다. way는 우회가 고른 그 지점부터의 길."""
         _, old_next = self._upcoming(m) if m.path else ("", None)
         anchor = self._anchor(m)
-        tail = self.site.plan(m.path[anchor], goal_waypoint)
+        tail = way or self.site.plan(m.path[anchor], goal_waypoint)
         behind = max(m.idx - 1, 0)  # 방금 지난 레인은 남긴다. 그 구역을 아직 못 놓았을 수 있다
         m.path = m.path[behind:anchor + 1] + tail[1:]
         if m.goal and m.goal.kind == MOVE:
@@ -747,8 +753,9 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
             self._start_park_leg(m)
 
     def _step_phase(self, m: _Mission) -> None:
-        if m.block and m.block.marked:
-            return  # 막힌 레인 앞에 서서 풀리기를 기다린다
+        if self._held_for_block(m):
+            # 막힌 레인 앞에 서서 풀리기와 취소 결과를 기다린다. 결과 전 새 goal은 추적을 흐린다
+            return
         if m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK):
             self._drive(m)
         elif m.phase == DOCKING:
@@ -785,6 +792,9 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
             self._arrive(m)
             return
         self._request_next_zone(m)
+        if m.goal is None and m.settle_idx is None and m.idx == len(m.path) - 1:
+            self._arrive(m)  # 우회한 길이 여기서 끝난다
+            return
         self._issue_move(m)
 
     def _trim_parking_path(self, m: _Mission) -> None:
@@ -826,6 +836,11 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
         if following in held or any(zone != current for zone in held):
             m.wait_zone = None
             return
+        if self._consider_detour(m, following):
+            current, following = self._upcoming(m)
+            if following is None:  # 새 길은 이 구역 안에서 끝난다
+                m.wait_zone = None
+                return
         if self.zones.request(m.name, following):
             m.wait_zone = None
         else:
@@ -842,8 +857,8 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
                         f"held by {self.zones.holder(zone) or 'nobody'}", m.name)
 
     def _issue_move(self, m: _Mission) -> None:
-        if m.block:
-            return  # 막힌 동안은 목표를 늘리거나 새로 내지 않는다
+        if m.block or m.block_cancel is not None:
+            return  # 막힌 동안과 취소 결과 전에는 목표를 늘리거나 새로 내지 않는다
         if m.goal is None and (self._clock() < m.retry_at or m.arrival_by is not None):
             return
         held = self.zones.held_by(m.name)

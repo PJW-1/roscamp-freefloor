@@ -252,21 +252,66 @@ def test_after_a_mark_three_clear_reports_resend_the_same_goal_without_counting(
     assert not pilot.events("GOAL_RETRY")
 
 
-def test_a_cancel_result_after_the_clear_changes_nothing():
-    """풀림이 취소 결과보다 먼저 와도 새 goal이 이전 goal을 대신한다(계약 3절 1번)."""
+def test_a_clear_before_the_cancel_result_sends_again_only_after_the_result():
+    """풀림이 취소 결과보다 먼저 오면 결과가 올 때까지 새 goal을 내지 않는다.
+
+    그 사이 새 goal이 다시 막혀 표시되면 앞 취소의 추적을 잃기 때문이다.
+    """
     pilot = Pilot()
     blocked_on_the_way(pilot)
     goal = first_goal(pilot)
     pilot.run(MARK_S + 0.2)
     pilot.state["pinky1"] = "MOVING"
     pilot.run(0.1 * CONFIRM + 0.3)
-    assert len(pilot.events("LANE_CLEARED")) == 1
-    resent = pilot.mission().goal
-    assert resent is not None and resent.id != goal
+    cleared = pilot.events("LANE_CLEARED")
+    assert len(cleared) == 1
+    assert pilot.mission().goal is None
+    assert not [c for t, c in pilot.sent("MoveCmd") if t >= cleared[0][0]]
     pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
     pilot.run(0.3)
-    assert pilot.mission().goal is resent and pilot.mission().attempts == 0
+    resent = pilot.mission().goal
+    assert resent is not None and resent.id != goal and resent.kind == MOVE
+    assert pilot.mission().attempts == 0
     assert not pilot.events("GOAL_RETRY")
+
+
+def test_a_robot_held_for_a_block_takes_no_new_call():
+    """표시 중이거나 취소 결과를 기다리는 로봇은 새 호출을 받지 않는다.
+
+    맡은 호출은 다른 로봇처럼 후보로 남고 선택기가 다시 고른다.
+    """
+    pilot = Pilot()
+    blocked_on_the_way(pilot)
+    pilot.run(MARK_S + 0.2)
+    m, traffic = pilot.mission(), pilot.core.traffic
+    assert m.block.marked and m.called
+    assert traffic._robot_info(m).eligible
+    m.called = False
+    assert not traffic._robot_info(m).eligible
+    m.called = True
+    pilot.state["pinky1"] = "MOVING"
+    pilot.run(0.1 * CONFIRM + 0.3)
+    assert m.block is None and m.block_cancel is not None
+    m.called = False
+    assert not traffic._robot_info(m).eligible
+    pilot.core.on_move_result("pinky1", first_goal(pilot), False, "CANCELED")
+    assert traffic._robot_info(m).eligible
+
+
+def test_a_held_robot_ahead_in_the_parking_line_is_not_overtaken():
+    """대기 줄 앞 로봇이 막힘으로 서 있으면 뒤 로봇을 대신 부르지 않는다. 앞지를 수 없다."""
+    pilot = Pilot(starts={"pinky1": "P-6", "pinky2": "P-5"}, orders=())
+    traffic = pilot.core.traffic
+    front = traffic._missions["pinky1"]
+
+    def picked():
+        return traffic.selector.pick(1, [traffic._robot_info(m)
+                                         for m in traffic._missions.values()])
+
+    front.block_cancel = 99
+    assert picked() == set()
+    front.block_cancel = None
+    assert picked() == {"pinky1"}
 
 
 def test_a_lost_link_neither_adds_block_time_nor_clears_it():
@@ -505,6 +550,49 @@ def test_a_queue_that_lasts_past_the_timeout_is_a_block():
         if step == 2:
             assert rear.block is None
     assert rear.block is not None and rear.block.lane == ("P-6", "N")
+
+
+def test_a_queue_past_the_timeout_marks_and_fails_on_the_block_clock():
+    """줄 서기가 시간 제한을 넘으면 그때부터 막힘 시계로 5초에 표시하고 60초에 ERROR다."""
+    pilot, traffic, rear = queue()
+    marked_at = failed_at = None
+    for step in range(round((2 * PARAMS.blocked_timeout_s + 1.0) / 0.5)):
+        t = step * 0.5
+        pilot.now[0] = t
+        pilot.core.on_robot_state("pinky2", rear.x, rear.y, 0.0, "BLOCKED")
+        if rear.block:
+            traffic._watch_block(rear, t)
+        if marked_at is None and rear.block and rear.block.marked:
+            marked_at = t
+        if failed_at is None and rear.fault:
+            failed_at = t
+    assert marked_at == pytest.approx(PARAMS.blocked_timeout_s + MARK_S)
+    assert failed_at == pytest.approx(2 * PARAMS.blocked_timeout_s)
+
+
+def test_a_report_that_is_not_blocked_starts_the_queue_clock_again():
+    """막힘을 연 채 줄을 서다가 BLOCKED가 아닌 보고가 오면 줄 서기 시계를 처음부터 잰다."""
+    pilot, traffic, rear = queue(faulted)
+    pilot.core.on_robot_state("pinky2", rear.x, rear.y, 0.0, "BLOCKED")
+    assert rear.block is not None
+    traffic._missions["pinky1"].fault = ""
+    moved = PARAMS.blocked_timeout_s - 10.0
+    for step in range(1, round((PARAMS.blocked_timeout_s + MARK_S + 5.0) / 0.5)):
+        t = step * 0.5
+        pilot.now[0] = t
+        state = "MOVING" if moved <= t < moved + 0.5 * (CONFIRM - 1) else "BLOCKED"
+        pilot.core.on_robot_state("pinky2", rear.x, rear.y, 0.0, state)
+        traffic._watch_block(rear, t)
+    assert rear.block is not None and not rear.block.marked
+
+
+def test_a_lost_link_starts_the_queue_clock_again():
+    """두절 동안 줄을 섰는지 모르니 줄 서기 시계를 처음부터 잰다."""
+    pilot, traffic, rear = queue()
+    pilot.core.on_robot_state("pinky2", rear.x, rear.y, 0.0, "BLOCKED")
+    assert rear.queue_since == 0.0
+    traffic._check_comm(PARAMS.comm_timeout_s + 1.0)
+    assert rear.comm == "COMM_LOST" and rear.queue_since is None
 
 
 def test_a_lane_no_longer_on_the_path_has_no_next_lane():
