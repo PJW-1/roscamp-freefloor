@@ -182,3 +182,44 @@ def test_operator_reinstate_calls_reinstate_once_the_robot_is_back(harness, tmp_
     time.sleep(0.5)
     assert calls == [("clear", "pinky1"), ("reinstate", "pinky1", "NONE", "operator_reinstate")]
     assert not monitor.judge.off_course("pinky1")
+
+
+def _serve_both(probe, calls, clear_ok=True):
+    def clear(request, response):
+        calls.append(("clear", request.robot_id))
+        response.accepted = clear_ok
+        return response
+
+    def back(request, response):
+        calls.append(("reinstate", request.robot_id))
+        response.accepted = True
+        return response
+
+    probe.create_service(ConfirmClear, C.name("confirm_clear"), clear)
+    probe.create_service(Reinstate, C.name("reinstate"), back)
+
+
+def test_a_later_second_removal_does_not_hold_back_the_first_reinstate(harness, tmp_path):
+    """리뷰 3번: 앞으로 올 치우기는 지금의 재투입과 상관없다."""
+    _, probe = start(
+        harness, tmp_path, orders=ONE_ORDER, timeout_s=60,
+        expect={"orders_shipped_min": 1},
+        faults=[{"at_s": 0.5, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-6"},
+                {"at_s": 50.0, "robot": "pinky1", "type": "operator_remove"}])
+    calls = []
+    _serve_both(probe, calls)
+    assert wait_until(lambda: ("reinstate", "pinky1") in calls, 10.0), calls
+
+
+def test_no_reinstate_after_a_refused_clear(harness, tmp_path):
+    _, probe = start(
+        harness, tmp_path, orders=ONE_ORDER, timeout_s=60,
+        expect={"orders_shipped_min": 1},
+        faults=[{"at_s": 0.5, "robot": "pinky1", "type": "operator_remove"},
+                {"at_s": 2.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-6"}])
+    calls = []
+    _serve_both(probe, calls, clear_ok=False)
+    assert wait_until(lambda: ("clear", "pinky1") in calls, 8.0)
+    time.sleep(3.0)
+    assert ("reinstate", "pinky1") not in calls

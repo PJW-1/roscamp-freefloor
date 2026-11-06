@@ -101,7 +101,11 @@ class FaultSchedule:
                    for f in self._own)
 
     def stuck(self, t: float) -> bool:
-        return any(f.type == "stuck" and t >= f.at_s for f in self._own)
+        """그 뒤 다시 투입되기 전까지 멈춘다. 운영자가 고쳐 넣은 것으로 본다."""
+        return any(f.type == "stuck" and t >= f.at_s
+                   and not any(g.type == "operator_reinstate" and f.at_s < g.at_s <= t
+                               for g in self._own)
+                   for f in self._own)
 
     def removed(self, t: float) -> bool:
         """치웠고 그 뒤 다시 투입하지 않았다."""

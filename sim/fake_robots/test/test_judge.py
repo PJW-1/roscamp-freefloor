@@ -737,21 +737,33 @@ def test_finish_waits_for_a_robot_that_was_put_back():
     assert j.finished(2.0)
 
 
-def test_a_robot_put_back_is_not_counted_unheld_before_it_leaves_that_spot():
-    """시작 칸처럼 매니저가 다음 보고를 들어야 잡는다."""
+def _put_back_off_its_start(t_back):
     j = ScenarioJudge(SITE, scenario(faults=REINSTATED, orders_shipped_min=1),
                       margin_m=0.13, grace_s=1.0)
     j.on_true_pose("pinky1", *at(OTHER))  # 출발 칸을 떠났다
     j.tick(0.0)
     j.on_zones(0.0, {OTHER_ZONE: "pinky1"})
     j.on_true_pose("pinky1", *at(WAITING[0]))
-    j.on_zones(1.0, {OTHER_ZONE: ""})
-    j.put_back("pinky1", WAITING[0])
-    for t in (1.0, 3.0, 5.0):
+    j.on_zones(t_back, {OTHER_ZONE: ""})
+    j.put_back(t_back, "pinky1", WAITING[0])
+    return j
+
+
+def test_a_robot_put_back_has_a_short_while_to_be_placed():
+    """매니저가 다음 보고를 들어야 잡는다. 그동안만 면제한다."""
+    j = _put_back_off_its_start(1.0)
+    j.tick(1.0)
+    j.tick(1.9)
+    j.on_zones(1.9, {"P-6": "pinky1"})
+    for t in (3.0, 5.0, 9.0):
         j.tick(t)
     assert check(j, "unheld_zone_pose")["value"] == 0
-    j.on_true_pose("pinky1", *at(LANE))
-    for t in (6.0, 8.0, 10.0):
+
+
+def test_a_robot_put_back_that_is_never_placed_is_counted():
+    """서비스 거부나 PLACEMENT_CONFLICT로 잠금을 못 얻으면 놓치지 않는다(리뷰 4번)."""
+    j = _put_back_off_its_start(1.0)
+    for t in (1.0, 2.0, 3.0, 4.0, 5.0):
         j.tick(t)
     assert check(j, "unheld_zone_pose")["value"] == 1
 

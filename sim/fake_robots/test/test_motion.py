@@ -119,6 +119,18 @@ def test_operator_reinstate_ends_a_removal_until_the_next_one():
     assert FaultSchedule(own, "pinky2").put_back(150.0) is None
 
 
+def test_a_reinstate_ends_a_stuck_before_it_and_not_one_after_it():
+    """운영자가 고쳐 다시 넣었다. 그 뒤의 stuck은 다시 멈춘다(리뷰 5번)."""
+    own = [Fault(at_s=5, robot="pinky1", type="stuck"),
+           Fault(at_s=10, robot="pinky1", type="operator_remove"),
+           Fault(at_s=20, robot="pinky1", type="operator_reinstate", start=(3, 4)),
+           Fault(at_s=30, robot="pinky1", type="stuck")]
+    s = FaultSchedule(own, "pinky1")
+    assert s.stuck(5.0) and s.stuck(19.9)
+    assert not s.stuck(20.0) and not s.stuck(29.9)
+    assert s.stuck(30.0)
+
+
 def test_arm_fail_counts_down_per_arm_after_its_start_time():
     f = ArmFaults([Fault(at_s=5, type="arm_fail", arm="arm1", count=2)])
     assert f.take_arm_fail("arm1", 4.9, 1) is None

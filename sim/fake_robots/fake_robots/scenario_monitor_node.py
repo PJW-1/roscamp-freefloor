@@ -73,6 +73,7 @@ class ScenarioMonitorNode(Node):
         self._reinstates = sorted(((f.at_s, f.robot, f.start, f.basket) for f in scenario.faults
                                    if f.type == "operator_reinstate"), key=lambda r: r[0])
         self._reinstate = self.create_client(Reinstate, contract.name("reinstate"))
+        self._cleared: dict[str, int] = {}  # 받아들여진 치우기 중 아직 재투입하지 않은 수
 
         def sub(msg_type, key, callback, **names):
             self.create_subscription(
@@ -154,18 +155,21 @@ class ScenarioMonitorNode(Node):
 
     def _on_cleared(self, robot: str, future) -> None:
         response = future.result()
+        if response.accepted:
+            self._cleared[robot] = self._cleared.get(robot, 0) + 1
         self.judge.note(self._sc.now(), robot, "CONFIRM_CLEAR",
                         f"accepted={response.accepted} {' '.join(response.released_zones)}")
 
     def _reinstate_put_back_robots(self, t: float) -> None:
-        """치우기를 마치고 로봇이 코스에 다시 보일 때 부른다."""
+        """앞선 치우기가 받아들여지고 로봇이 코스에 다시 보일 때 부른다."""
         while self._reinstates and self._reinstates[0][0] <= t:
             _, robot, waypoint, basket = self._reinstates[0]
-            if (any(r == robot for _, r in self._removals) or self.judge.off_course(robot)
+            if (not self._cleared.get(robot) or self.judge.off_course(robot)
                     or not self._reinstate.service_is_ready()):
                 return
             self._reinstates.pop(0)
-            self.judge.put_back(robot, waypoint)
+            self._cleared[robot] -= 1
+            self.judge.put_back(t, robot, waypoint)
             self.judge.note(t, robot, "OPERATOR_REINSTATE", f"basket={basket}")
             future = self._reinstate.call_async(Reinstate.Request(
                 robot_id=robot, basket=basket, note="operator_reinstate"))

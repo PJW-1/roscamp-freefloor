@@ -35,8 +35,34 @@ class TrafficReinstate:
             battery=old.battery, last_seen=old.last_seen)
         self.zones.cancel_all_requests(robot)
         self._joining.add(robot)
+        self._blocking.pop(robot, None)
         return True
 
     def _joined(self, m: _Mission) -> None:
         """맵에 올랐다. 이제 다른 로봇과 같다."""
         self._joining.discard(m.name)
+        self._blocking.pop(m.name, None)
+
+    def _placement_blocked(self, m: _Mission, in_the_way: dict) -> str:
+        """재투입 로봇이 잠금 없이 남의 구역에 섰다. 그 주인을 세운다(목표 취소, 새 목표 없음).
+
+        로봇이 맵에 오르거나 다시 치워질 때까지다. 이벤트 detail에 붙일 문구를 돌려준다.
+        시작 때의 충돌은 전원이 기다리므로 여기서 하지 않는다.
+        """
+        if m.name not in self._joining:
+            return ""
+        holders = set(in_the_way.values())
+        self._blocking[m.name] = holders
+        for name in sorted(holders):
+            held = self._missions[name]
+            if held.goal:
+                self._cancel_goal(held)
+        return f", {sorted(holders)} stop until it is placed or cleared"
+
+    def _held_for_placement(self, robot) -> bool:
+        """맵에 못 오른 재투입 로봇 때문에 세운 로봇이면 True."""
+        for joiner, holders in self._blocking.items():
+            m = self._missions[joiner]
+            if robot in holders and not m.placed and m.fault != OUT_OF_SERVICE:
+                return True
+        return False

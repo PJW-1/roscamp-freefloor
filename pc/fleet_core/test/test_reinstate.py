@@ -144,23 +144,73 @@ def test_a_report_while_moving_does_not_place_it():
     assert core.traffic.robot_view("pinky2")["on_map"]
 
 
-def test_a_placement_conflict_stops_only_that_robot():
+THREE = {"pinky1": "P-6", "pinky2": "P-5", "pinky3": "P-4"}
+
+
+def ticks(core, now, n=10):
+    """올라 있는 로봇은 제자리에서 보고하며 시간을 보낸다. 목표는 끝내지 않는다."""
+    out = []
+    for _ in range(n):
+        now[0] += 0.5
+        for robot, m in core.traffic._missions.items():
+            if m.placed:
+                report(core, robot, m.path[m.idx])
+        out += core.tick()
+    return out
+
+
+def test_a_placement_conflict_stops_the_holder_until_the_robot_is_placed():
+    """잠금 없이 남의 구역에 선 로봇이 있으니 그 구역 주인을 세운다(리뷰 1번)."""
+    core, now = cleared(robots=THREE, robot="pinky3")
+    core.reinstate("pinky3", "EMPTY", "back")
+    report(core, "pinky3", "P-5")  # pinky2가 서 있는 자리
+    out = core.tick()
+    events = [e for e in cmds(out, "EventOut") if e.code == "PLACEMENT_CONFLICT"]
+    assert len(events) == 1 and events[0].level == "ERROR"
+    assert "pinky2" in events[0].detail
+    assert core.traffic.robot_view("pinky3")["fault"] == "ERROR"
+    assert not core.traffic.robot_view("pinky3")["on_map"]
+    assert not core.traffic.available("pinky2")
+    core.on_order_board("RUN", [O1])
+    out = ticks(core, now)
+    assert not moves_of(out, "pinky2"), "the holder stays put"
+    assert moves_of(out, "pinky1"), "a robot not in the way takes the order"
+    report(core, "pinky3", "P-3")
+    view = core.traffic.robot_view("pinky3")
+    assert view["on_map"] and view["fault"] == ""
+    assert core.traffic.available("pinky2")
+
+
+def test_a_placement_conflict_cancels_the_goal_of_the_holder():
+    core, now = cleared()
+    core.on_order_board("RUN", [O1])
+    for _ in range(20):
+        now[0] += 0.5
+        core.tick()
+        if core.traffic._missions["pinky1"].goal is not None:
+            break
+    m = core.traffic._missions["pinky1"]
+    assert m.goal is not None, "pinky1 should be driving"
+    goal_id = m.goal.id
+    core.reinstate("pinky2", "EMPTY", "back")
+    report(core, "pinky2", m.path[m.idx])
+    out = core.tick()
+    assert any(c.robot == "pinky1" and c.goal_id == goal_id for c in cmds(out, "CancelCmd"))
+    out = ticks(core, now)
+    assert not moves_of(out, "pinky1")
+    report(core, "pinky2", "P-3")
+    out = ticks(core, now)
+    assert moves_of(out, "pinky1"), "it drives on once the robot is placed"
+
+
+def test_clearing_the_conflicting_robot_again_frees_the_holder():
     core, now = cleared()
     core.reinstate("pinky2", "EMPTY", "back")
-    report(core, "pinky2", "P-6")  # pinky1이 서 있는 자리
-    out = core.tick()
-    assert "PLACEMENT_CONFLICT" in codes(out)
-    assert core.traffic.robot_view("pinky2")["fault"] == "ERROR"
-    assert not core.traffic.robot_view("pinky2")["on_map"]
-    core.on_order_board("RUN", [O1])
-    out = []
-    for _ in range(5):
-        now[0] += 1.0
-        out += core.tick()
-    assert moves_of(out, "pinky1"), "the others are not held by the conflict"
-    report(core, "pinky2", "P-3")
-    view = core.traffic.robot_view("pinky2")
-    assert view["on_map"] and view["fault"] == ""
+    report(core, "pinky2", "P-6")
+    core.tick()
+    assert not core.traffic.available("pinky1")
+    core.confirm_clear("pinky2", [], "lifted again")
+    assert core.traffic.available("pinky1")
 
 
 def test_a_robot_with_no_basket_fetches_one_at_the_outbound_before_any_order():
@@ -206,6 +256,28 @@ def test_a_late_arm_result_of_the_cleared_job_does_not_count_for_the_same_order_
     report(core, "pinky1", "P-6")
     drive(core, ["pinky1"], lambda: core.robot_view("pinky1")["order"] == "O-001")
     core.on_fill_result(old_fill.goal_id, False, {"A": 1}, {}, "CANCELED")
+    out = core.tick()
+    late = [e for e in cmds(out, "EventOut") if e.code == "ARM_LATE_RESULT"]
+    assert late and "check the basket" in late[0].detail
+    assert core.robot_view("pinky1")["placed"] == {}
+
+
+def test_a_late_result_of_a_job_given_up_before_the_clear_does_not_count_again():
+    """ARM_NO_RESULT로 포기한 작업은 해제 전부터 잃은 작업이다(리뷰 2번)."""
+    core, now = make({"pinky1": "P-6"})
+    core.on_order_board("RUN", [O1])
+    out = drive(core, ["pinky1"], lambda: core.orchestrator._robots["pinky1"].arm is not None)
+    old_fill = cmds(out + core.tick(), "FillCmd")[-1]
+    now[0] += core.params.fill_timeout_s + 1.0
+    core.tick()
+    now[0] += core.params.arm_cancel_wait_s + 1.0
+    assert "ARM_NO_RESULT" in codes(core.tick())
+    core.confirm_clear("pinky1", core.zones.held_by("pinky1"), "lifted")
+    core.tick()
+    core.reinstate("pinky1", "EMPTY", "back")
+    report(core, "pinky1", "P-6")
+    drive(core, ["pinky1"], lambda: core.robot_view("pinky1")["order"] == "O-001")
+    core.on_fill_result(old_fill.goal_id, True, {"A": 1}, {}, "")
     out = core.tick()
     late = [e for e in cmds(out, "EventOut") if e.code == "ARM_LATE_RESULT"]
     assert late and "check the basket" in late[0].detail

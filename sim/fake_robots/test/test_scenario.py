@@ -187,6 +187,15 @@ def test_a_wrong_reinstate_is_rejected(site, change):
         parse_scenario(data, site)
 
 
+def test_a_stuck_robot_removed_and_put_back_is_not_gone(site):
+    """FaultSchedule.stuck과 같은 뜻: 재투입은 그 전의 stuck을 끝낸다."""
+    data = _with_reinstate()
+    data["faults"].insert(0, {"at_s": 5, "robot": "pinky1", "type": "stuck"})
+    assert parse_scenario(data, site).gone_robots == set()
+    data["faults"].append({"at_s": 30, "robot": "pinky1", "type": "stuck"})
+    assert parse_scenario(data, site).gone_robots == {"pinky1"}
+
+
 def test_a_robot_removed_again_after_its_reinstate_is_gone(site):
     data = _with_reinstate({"at_s": 30, "robot": "pinky1", "type": "operator_remove"})
     assert parse_scenario(data, site).gone_robots == {"pinky1"}

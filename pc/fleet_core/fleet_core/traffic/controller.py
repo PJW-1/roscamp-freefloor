@@ -93,6 +93,7 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         self._no_robot_warned = False
         self.clear_reason = ""  # 마지막 confirm_clear 거부 이유, 받아들이면 빈 값
         self._joining: set[str] = set()  # 다시 투입했고 아직 맵에 안 오른 로봇(reinstate.py)
+        self._blocking: dict[str, set[str]] = {}  # 재투입 로봇 -> 그 때문에 세운 구역 주인
 
     # ---- inputs -------------------------------------------------------------------------
 
@@ -254,7 +255,7 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
 
     def available(self, robot) -> bool:
         m = self._missions.get(robot)
-        return m.available if m else False
+        return m.available and not self._held_for_placement(robot) if m else False
 
     def tick(self) -> list:
         """한 주기 전체. 단계 사이에 할 일이 없는 호출자용."""
@@ -405,11 +406,12 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
         zone = self._zone(waypoint)
         in_the_way = self.zones.holders_around(zone, m.name)
         if not self.zones.force_acquire(m.name, zone):
+            stopped = self._placement_blocked(m, in_the_way)
             if m.fault_reason != PLACEMENT_CONFLICT:
                 m.fault = ERROR
                 m.fault_reason = PLACEMENT_CONFLICT
                 self._event("ERROR", PLACEMENT_CONFLICT,
-                            f"{m.name} cannot take {zone}, held: {in_the_way}", m.name)
+                            f"{m.name} cannot take {zone}, held: {in_the_way}{stopped}", m.name)
             return
         m.placed = True
         self._joined(m)
@@ -611,7 +613,8 @@ class TrafficController(TrafficRecovery, TrafficReinstate):
             waypoint=waypoint,
             called=m.called,
             parked=waypoint in self.site.parking,
-            eligible=m.available and not m.hold and m.dispatch is None,
+            eligible=(m.available and not m.hold and m.dispatch is None
+                      and not self._held_for_placement(m.name)),
             available=m.available,
         )
 

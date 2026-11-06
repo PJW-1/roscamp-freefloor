@@ -79,6 +79,7 @@ class _LostJob:
     kind: str  # FILL 또는 SWAP
     order_id: str  # 포기할 때 묶여 있던 주문, 이미 보고했으면 빈 값
     cleared: bool = False  # 운영자가 로봇을 해제해서 취소됨
+    bound: int = 0  # 그때 주문을 묶은 차례. 같은 주문을 다시 묶으면 다른 값이다
 
 
 @dataclass
@@ -100,6 +101,7 @@ class _Robot:
     arm: _ArmJob | None = None
     arm_retry_at: float = 0.0  # 실패나 거절 뒤 이 시각 전에는 새 팔 goal 없음
     attempts: int = 0
+    bound: int = 0  # 지금 주문을 묶은 차례(_bind_seq)
 
 
 class OrderOrchestrator:
@@ -111,6 +113,7 @@ class OrderOrchestrator:
         self._next_goal_id = next_goal_id or self._own_goal_id
         self._goal_seq = 0
         self._dispatch_seq = 0
+        self._bind_seq = 0
         self._robots = {name: _Robot(name) for name in robots}
         self._out: list = []
         self._run_mode: str | None = None
@@ -197,7 +200,8 @@ class OrderOrchestrator:
             self._cleared_jobs[r.arm.server] = (
                 r.arm.goal_id, self._clock() + self.params.arm_cancel_wait_s)
             self._lost_jobs[r.arm.goal_id] = _LostJob(robot, r.arm.server, r.arm.kind,
-                                                      self.order_of(robot), cleared=True)
+                                                      self.order_of(robot), cleared=True,
+                                                      bound=r.bound)
             r.arm = None
         if r.order:
             self._event("INFO", "ORDER_REQUEUED",
@@ -229,7 +233,7 @@ class OrderOrchestrator:
                 # 바구니 내용을 알 수 없으니 운영자가 확인해야 한다.
                 r.arm = None
                 self._lost_jobs[job.goal_id] = _LostJob(r.name, job.server, job.kind,
-                                                        self.order_of(r.name))
+                                                        self.order_of(r.name), bound=r.bound)
                 reason = f"{job.server} goal {job.goal_id} never reported"
                 self._fail(r, reason)
                 self._event("ERROR", "ARM_NO_RESULT", reason, r.name)
@@ -349,8 +353,8 @@ class OrderOrchestrator:
 
     def _still_bound(self, lost: _LostJob) -> bool:
         """고장 중에는 로봇 해제만이 주문을 떼어 간다. 해제 뒤 다시 묶인 같은 주문은 다른 일이다."""
-        return (bool(lost.order_id) and not lost.cleared
-                and self.order_of(lost.robot) == lost.order_id)
+        return (bool(lost.order_id) and self.order_of(lost.robot) == lost.order_id
+                and self._robots[lost.robot].bound == lost.bound)
 
     def _late_event(self, goal_id: int, lost: _LostJob, reported: str) -> None:
         if not lost.order_id:
@@ -394,6 +398,8 @@ class OrderOrchestrator:
             return
         record = pending[0]
         r.order = _BoundOrder(record.order_id, dict(record.items))
+        self._bind_seq += 1
+        r.bound = self._bind_seq
         r.last_order_id = record.order_id
         r.stage = FILLING
         self._event("INFO", "ORDER_BOUND", record.order_id, r.name)

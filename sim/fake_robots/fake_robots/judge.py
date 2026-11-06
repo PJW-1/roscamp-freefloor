@@ -64,7 +64,7 @@ class ScenarioJudge:
         self._unheld_counted: set[tuple[str, str]] = set()
         self._over: set[tuple[str, ...]] = set()
         self._left_start: set[str] = set()
-        self._start_cell: dict[str, object] = {}  # 다시 투입한 로봇이 놓인 지점
+        self._put_back: dict[str, tuple] = {}  # 다시 투입한 로봇 -> (놓인 지점, 면제 끝 시각)
         self._reinstated: set[str] = set()
         self.bound_after_reinstate = 0
         # 주문
@@ -147,10 +147,14 @@ class ScenarioJudge:
         """events.csv에 남기되 플릿 이벤트로 세면 안 되는 것을 기록한다."""
         self.event_rows.append((t, "NOTE", source, code, detail))
 
-    def put_back(self, robot: str, waypoint) -> None:
-        """관리자가 로봇을 이 지점에 다시 놓았다. 매니저가 다음 보고로 잡을 때까지 시작 칸과 같다."""
-        self._start_cell[robot] = waypoint
-        self._left_start.discard(robot)
+    def put_back(self, t: float, robot: str, waypoint) -> None:
+        """관리자가 로봇을 이 지점에 다시 놓았다. 매니저가 잡을 grace_s 동안만 면제한다."""
+        self._put_back[robot] = (waypoint, t + self.grace_s)
+
+    def _just_put_back(self, robot: str, x: float, y: float, t: float) -> bool:
+        spot = self._put_back.get(robot)
+        return (spot is not None and t < spot[1]
+                and self.site.nearest_waypoint(x, y) == spot[0])
 
     def on_board(self, order_ids: list[str]) -> None:
         self.board = list(order_ids)
@@ -263,7 +267,7 @@ class ScenarioJudge:
         cfg = self.scenario.robots.get(robot)
         if robot in self._left_start or cfg is None:
             return False
-        if self.site.nearest_waypoint(x, y) == self._start_cell.get(robot, cfg.start):
+        if self.site.nearest_waypoint(x, y) == cfg.start:
             return True
         self._left_start.add(robot)
         return False
@@ -271,7 +275,7 @@ class ScenarioJudge:
     def _check_unheld(self, t: float) -> None:
         current = set()
         for robot, (x, y) in self._positions().items():
-            if self._still_on_start_cell(robot, x, y):
+            if self._still_on_start_cell(robot, x, y) or self._just_put_back(robot, x, y, t):
                 continue
             zone = self._zone_of_pose(x, y)
             if self.site.distance_to_zone(x, y, zone) > EPS or self.holders.get(zone) == robot:

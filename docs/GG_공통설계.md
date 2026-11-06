@@ -92,7 +92,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `DEADLOCK_DETECTED` | ERROR | traffic | 대기 고리를 찾았다 |
 | `DEADLOCK_RETREAT` | ERROR | traffic | 로봇 1대가 아직 들어가지 않은 구역을 포기한다 |
 | `DEADLOCK_UNRESOLVED` | ERROR | traffic | 풀지 못했다. 관리자가 봐야 한다 |
-| `PLACEMENT_CONFLICT` | ERROR | traffic | 시작 때 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있다. 해결될 때까지 전원이 기다린다 |
+| `PLACEMENT_CONFLICT` | ERROR | traffic | 시작 때 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있다. 해결될 때까지 전원이 기다린다. 재투입한 로봇이면 그 구역들의 주인만 세운다(5절, detail에 이름) |
 | `RECOVERY_CONFLICT` | ERROR | traffic | 복구한 로봇이 다른 로봇이 쥔 구역 안에 있다 |
 | `ROBOT_NOT_REPORTING` | ERROR | traffic | `startup_wait_s`가 지나도 위치를 보고하고 멈춰 서지 않은 로봇이 있다(`PLACEMENT_CONFLICT`로 거부된 로봇은 빼고 센다). 전원이 기다린다 |
 | `ORDER_BOUND` | INFO | orchestrator | 주문을 로봇에 묶었다. detail은 주문 ID |
@@ -260,7 +260,7 @@ confirm_clear 거부(`accepted=false`, `reason`에 이유, 아무것도 바꾸�
 
 confirm_clear(관리자가 로봇을 치웠다): 구역 해제, OUT_OF_SERVICE, 이동 목표 취소. 그 로봇을 지정한 dispatch가 진행 중이면 실패(reason=ROBOT_REMOVED)로 돌려준다. 주문을 되돌리는 것은 orchestrator가 한다(`FleetManager`가 `on_robot_removed`를 부른다).
 
-reinstate(관리자가 치운 로봇을 다시 넣는다, 11-06 6번, `traffic/reinstate.py`): `OUT_OF_SERVICE`인 로봇만 받는다. 쥔 구역이 남았으면 거부한다(위치로 풀리지 않는 구역이고, 올라온 뒤 셋을 쥘 수 있다. `confirm_clear`로 먼저 푼다). 받아들이면 그 로봇의 기록을 새로 만들어(placed=false, 단계·목표·재시도 0) 맵 밖에 둔다. 다음 위치 보고 때 시작과 같은 절차로 올린다: MOVING이나 DOCKING 보고면 기다리고, 그 자리 구역을 못 잡으면 `PLACEMENT_CONFLICT`. 시작 때와 다른 점: 올라오기 전에도 다른 로봇은 멈추지 않는다(`_not_placed`에서 뺀다). 이미 운행 중이고, 치운 동안에도 잠금 없이 서 있던 로봇이기 때문이다. `/fleet/zones`와 heartbeat도 계속 나간다. 올라오기 전에는 호출 후보가 아니고 일도 받지 않는다. orders는 그 로봇의 바구니를 요청 값으로 두고 주문 없음, 재시도 0으로 시작한다. basket=NONE이면 주문을 받기 전에 출고 구역으로 보내 빈 바구니를 받는다(SwapCmd take_full=false, put_empty=true). 로봇을 치울 때 취소한 팔 작업의 결과가 늦게 오면, 그 로봇이 같은 주문을 다시 묶었어도 그 주문에 넣지 않고 `ARM_LATE_RESULT`로 알린다.
+reinstate(관리자가 치운 로봇을 다시 넣는다, 11-06 6번, `traffic/reinstate.py`): `OUT_OF_SERVICE`인 로봇만 받는다. 쥔 구역이 남았으면 거부한다(위치로 풀리지 않는 구역이고, 올라온 뒤 셋을 쥘 수 있다. `confirm_clear`로 먼저 푼다). 받아들이면 그 로봇의 기록을 새로 만들어(placed=false, 단계·목표·재시도 0) 맵 밖에 둔다. 다음 위치 보고 때 시작과 같은 절차로 올린다: MOVING이나 DOCKING 보고면 기다리고, 그 자리 구역을 못 잡으면 `PLACEMENT_CONFLICT`. 시작 때와 다른 점: 올라오기 전에도 다른 로봇은 멈추지 않는다(`_not_placed`에서 뺀다). 이미 운행 중이고, 치운 동안에도 잠금 없이 서 있던 로봇이기 때문이다. `/fleet/zones`와 heartbeat도 계속 나간다. 다만 남이 쥔 구역(충돌쌍 포함)에 보고돼 `PLACEMENT_CONFLICT`가 나면 그 주인 로봇을 세운다: 진행 중 목표를 취소하고 새 목표와 호출을 주지 않는다. 재투입 로봇이 맵에 오르거나 다시 치워지면 풀린다(11-06 리뷰). 올라오기 전에는 호출 후보가 아니고 일도 받지 않는다. orders는 그 로봇의 바구니를 요청 값으로 두고 주문 없음, 재시도 0으로 시작한다. basket=NONE이면 주문을 받기 전에 출고 구역으로 보내 빈 바구니를 받는다(SwapCmd take_full=false, put_empty=true). 잃은 팔 작업(치울 때 취소, 또는 `ARM_NO_RESULT`)의 결과가 늦게 오면, 그 로봇이 같은 주문을 다시 묶었어도 그 주문에 넣지 않고 `ARM_LATE_RESULT`로 알린다. 주문을 묶을 때마다 차례 번호를 매기고 잃은 작업에 남겨 비교한다.
 
 이동과 도킹의 재시도: 목표가 실패하면(거절과 현재 목표의 `CANCELED` 결과도 실패다) 시도 횟수를 하나 늘리고, `move_retry_wait_s`가 지날 때까지 그 로봇에 새 이동이나 도킹 목표를 보내지 않는다. 달리고 있는 목표를 연장하는 것은 막지 않는다. 기다리는 동안 구역은 쥐고 있다. 세 번째 시도까지 실패하면 ERROR(`GOAL_FAILED`)다.
 
@@ -351,7 +351,7 @@ robots:
   pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03} # report_delay_s(보고 지연, 시나리오 초), stop_error_m(정지 오차, 축마다 표준편차)도 쓸 수 있다. 기본 0
 arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
 dock: {duration_s: 3.0, error_cm: 1.0}
-faults: [] # comm_loss, nav_abort, stuck 유지. 추가: arm_fail(대상 arm, count), swap_partial(count), operator_remove(로봇을 코스에서 치우고 confirm_clear 호출), operator_reinstate(start 지점에 다시 놓고 reinstate 호출, basket 기본 EMPTY. 그 로봇을 치운 뒤에만). expect `bound_after_reinstate_min`: 다시 투입한 로봇이 그 뒤 묶은 주문 수의 하한
+faults: [] # comm_loss, nav_abort, stuck 유지. 추가: arm_fail(대상 arm, count), swap_partial(count), operator_remove(로봇을 코스에서 치우고 confirm_clear 호출), operator_reinstate(start 지점에 다시 놓고, 앞선 confirm_clear가 받아들여진 뒤 reinstate 호출, basket 기본 EMPTY. 그 로봇을 치운 뒤에만. 그 전의 stuck도 끝낸다). expect `bound_after_reinstate_min`: 다시 투입한 로봇이 그 뒤 묶은 주문 수의 하한
 expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders_held: 0, fifo_violations: 0, dual_arm_overlaps: 0,
   zone_holder_max: 1, released_without_position_check: 0, unheld_zone_pose: 0, events_include: []}
 ```
