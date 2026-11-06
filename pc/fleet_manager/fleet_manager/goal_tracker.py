@@ -44,6 +44,10 @@ class GoalTracker:
             return
         self._cancels[key] = _Cancel(now)
 
+    def canceling(self, key) -> bool:
+        """취소를 보냈고 결과는 아직이다."""
+        return key in self._cancels
+
     def retry_cancels(self, now: float, retry_s: float, warn_after: int) -> list:
         """때가 된 취소를 다시 요청한다. warn_after번을 막 채운 key를 한 번씩 돌려준다.
         수락을 기다리는 시간도 센다. goal은 그동안 돌고 있을 수 있다."""

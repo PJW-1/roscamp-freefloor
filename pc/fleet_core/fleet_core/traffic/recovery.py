@@ -84,6 +84,7 @@ class TrafficRecovery:
             if now - m.last_seen > self.params.comm_timeout_s:
                 m.comm = COMM_LOST
                 m.called = False
+                m.queue_since = None  # 두절 동안 줄을 섰는지 모른다
                 # 말 없는 로봇이 뒤 대기자에게 구역이 넘어가는 것을 막으면 안 된다.
                 self.zones.cancel_all_requests(m.name)
                 what = "pose, LOCALIZING" if m.robot_state == LOCALIZING else "state"

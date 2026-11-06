@@ -10,8 +10,9 @@
     풀린 뒤 blocked_rejoin_s 안에 같은 레인에서 다시 막히면 이어 센다.
 줄 서기(같은 레인이나 다음 레인 앞 queue_gap_m 안의 정상 로봇)는 막힘으로 치지 않는다.
 막힘을 연 뒤에 줄 서기가 되면 그동안 시계를 멈춘다.
-줄 서기가 blocked_timeout_s를 넘으면 막힘으로 친다.
+줄 서기가 blocked_timeout_s를 넘으면 막힘으로 친다. BLOCKED가 아닌 보고나 두절이 끼면 다시 잰다.
 표시 동안과 취소한 goal의 결과 전에는 다른 자동 해제가 쉬고, 여기서만 놓는다.
+결과 전에는 단계도 진행하지 않는다(controller._step_phase).
 heartbeat가 끊겨 로봇이 스스로 끝낸 이동(HEARTBEAT_LOST)도 여기서 다룬다.
 
 TrafficController에서 떼어 낸 부분이다. 제어기 상태를 쓰므로 혼자 쓰지 않는다.

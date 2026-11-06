@@ -57,6 +57,15 @@ def test_cancel_of_an_unknown_or_finished_goal_is_ignored():
     assert handle.cancels == 0
 
 
+def test_a_goal_is_canceling_from_the_cancel_until_its_end():
+    goals, handle = running()
+    assert not goals.canceling("k")
+    goals.cancel("k", 0.0)
+    assert goals.canceling("k")
+    goals.finished("k")
+    assert not goals.canceling("k")
+
+
 def test_rejected_goal_forgets_its_pending_cancel():
     goals = GoalTracker()
     goals.sent("k")
