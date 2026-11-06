@@ -151,6 +151,33 @@ def test_a_robot_waiting_for_its_cancel_result_stands_and_does_not_replan():
     assert core._consider_detour(m1, "F1") is True
 
 
+def queued_behind_a_runner(queued_for):
+    """A(r3)가 F2에서 달리고 B(r2)가 F1에서 그 뒤에 줄 서 BLOCKED를 보고한다. C(r1)는 F0."""
+    core, now = make({"r1": "F0", "r2": "F1", "r3": "F2"})
+    core._missions["r3"].goal = _Goal(MOVE, 50, 0)
+    m2 = core._missions["r2"]
+    m2.phase, m2.path, m2.idx, m2.dest = "TO_WORK", ["F1", "F2", "W"], 0, "WORK"
+    m2.goal, m2.robot_state, m2.queue_since = _Goal(MOVE, 51, 0), BLOCKED, 0.0
+    now[0] = queued_for
+    m1 = core._missions["r1"]
+    m1.phase, m1.dest, m1.path, m1.idx = "TO_WORK", "WORK", ["F0", "F1", "F2", "W"], 0
+    m1.dispatch = _Dispatch(3, "WORK")
+    return core, m1, m2
+
+
+def test_a_robot_queued_behind_a_runner_stands_for_the_time_it_has_queued():
+    # 파트 4 줄 서기: 막힘 기록 없이 BLOCKED. 고장이 아니라 기다린 시간으로 친다
+    core, m1, m2 = queued_behind_a_runner(2.0)
+    assert core._standing_wait_s(m2) == pytest.approx(2.0)
+    assert core._zone_penalty(m1, "F1", {})[0] == pytest.approx(2.0 * PARAMS.detour_speed_mps)
+    assert core._consider_detour(m1, "F1") is False  # 갓 줄 섰다. 돌아가지 않는다
+    assert path(core, "r1") == ["F0", "F1", "F2", "W"]
+    m2.block = _Block(("F1", "F2"))
+    assert core._standing_wait_s(m2) == math.inf  # 막힘 기록이 있으면 무한
+    m2.block, m2.goal = None, None
+    assert core._standing_wait_s(m2) == math.inf  # 목표 없이 BLOCKED도 무한
+
+
 def test_a_robot_that_waits_on_its_retry_stands_for_the_rest_of_it():
     core, now = make({"r1": "F0", "r2": "F1"})
     m = core._missions["r2"]
@@ -173,6 +200,36 @@ def test_it_goes_around_a_broken_robot():
     assert event.level == "INFO" and event.robot == "r1"
     assert "F1" in event.detail and "r2" in event.detail
     assert "F0 T2 T1 QW W" in event.detail
+
+
+def test_it_goes_around_a_broken_robot_further_on():
+    # 다음 구역은 비었지만 그 뒤 F2의 보유자가 고장이다. F1에 들어가면 돌 길이 없다
+    core, _ = make({"r1": "F0", "r2": "F2"})
+    core.on_robot_fault("r2", "x")
+    core.on_dispatch(1, "WORK", "r1")
+    out = core.tick()
+    assert path(core, "r1") == ["F0", "T2", "T1", "QW", "W"]
+    (event,) = codes(out, "DETOUR")
+    assert "F2 held by r2" in event.detail
+
+
+def test_a_broken_robot_further_on_with_no_way_around_is_waited_for():
+    core, _ = make({"r1": "F1", "r2": "W"})
+    core.on_robot_fault("r2", "x")
+    core.on_dispatch(1, "WORK", "r1")
+    out = core.tick()
+    assert path(core, "r1") == ["F1", "F2", "W"]
+    assert not codes(out, "DETOUR")
+
+
+def test_a_standing_robot_further_on_is_not_worth_a_detour_yet():
+    # 멀리 선 로봇은 도착할 때쯤 비킬 수 있다. 유한 벌점은 다음 구역만 본다
+    core, _ = make({"r1": "F0", "r2": "F2"})
+    at_station(core, "r2")
+    core.on_dispatch(1, "WORK", "r1")
+    out = core.tick()
+    assert path(core, "r1") == ["F0", "F1", "F2", "W"]
+    assert not codes(out, "DETOUR")
 
 
 def test_with_detours_off_it_waits_in_line():
@@ -294,6 +351,53 @@ def test_it_does_not_turn_back_at_the_same_waypoint():
     assert not codes(out, "DETOUR")
 
 
+def test_it_turns_back_when_the_new_way_can_no_longer_be_passed():
+    # 왕복 금지는 지금 길을 못 지날 때는 쉰다. 격리된 보유자 뒤에서 끝없이 서지 않는다
+    core, _ = make({"r1": "F2", "r2": "W", "r3": "T1"})
+    at_station(core, "r2")
+    core.on_dispatch(5, "OUTBOUND", "r1")
+    core.tick()
+    core.tick()
+    assert path(core, "r1") == ["F2", "T1", "T2", "QO", "O"]
+    assert core.zones.waiting_for("r1") == "TUN"
+    core.on_release("r2")
+    core.tick()
+    assert core._missions["r2"].goal is not None  # W 보유자는 달린다
+    core.on_robot_fault("r3", "x")  # TUN 보유자가 고장이다. 못 지난다
+    out = core.tick()
+    assert path(core, "r1")[:2] == ["F2", "W"]
+    (event,) = [e for e in codes(out, "DETOUR") if e.robot == "r1"]
+    assert "TUN held by r3" in event.detail
+    assert core.zones.waiting_for("r1") in (None, "W")
+
+
+def test_a_zone_given_up_again_at_the_same_waypoint_is_listed_once():
+    # 전수 검사에서 찾은 경우: 다른 규칙이 같은 지점에서 옛 길을 다시 주면 목록이 끝없이 길어졌다
+    core, _ = make({"r1": "F2", "r2": "W"})
+    at_station(core, "r2")
+    core.on_dispatch(5, "OUTBOUND", "r1")
+    core.tick()
+    m = core._missions["r1"]
+    assert m.detour_avoid == ("W",)
+    for _ in range(3):
+        m.path, m.idx, m.goal = core.site.plan("F2", "O"), 0, None
+        assert core._consider_detour(m, "W") is True
+        assert path(core, "r1") == ["F2", "T1", "T2", "QO", "O"]
+    assert m.detour_avoid == ("W",)
+
+
+def test_a_zone_given_up_further_on_does_not_make_the_path_impassable():
+    # 피한 구역이 지금 길 뒤쪽에 있어도 지금 길의 비용은 실제 비용이다(0.2 m 벌점)
+    core, _ = make({"r1": "F0", "r2": "F1"}, station_wait_estimate_s=1.0)
+    at_station(core, "r2")
+    m = core._missions["r1"]
+    m.phase, m.dest, m.dispatch = "TO_WORK", "WORK", _Dispatch(3, "WORK")
+    m.path, m.idx = ["F0", "F1", "F2", "W"], 0
+    m.detour_at, m.detour_avoid = "F0", ("F2",)
+    assert core._consider_detour(m, "F1") is False  # 돌아가는 길은 약 1.65 m 더 길다
+    assert path(core, "r1") == ["F0", "F1", "F2", "W"]
+
+
 def test_a_robot_that_holds_its_next_zone_keeps_its_path():
     core, _ = make({"r1": "F0", "r2": "F2"})
     core.on_dispatch(1, "WORK", "r1")
@@ -330,16 +434,16 @@ def test_the_same_inputs_give_the_same_detour():
 # ---- 가상 창고와 기록 재생 ----------------------------------------------------------------------
 
 
-def feature_world(detour, record=None):
-    """특징 지도에서 pinky1이 서쪽행 레인에서 막힌다. 시각은 우회가 나는 것으로 골랐다."""
+def feature_world(detour, record=None, at_s=42.0, duration_s=15.0):
+    """특징 지도에서 pinky1이 서쪽행 레인에서 막힌다. 기본 시각은 막힌 레인 우회가 나는 것."""
     robots = {"pinky1": {"start": "P-3", "speed_mps": 0.20, "pose_noise_m": 0.03},
               "pinky2": {"start": "P-2", "speed_mps": 0.18, "pose_noise_m": 0.03},
               "pinky3": {"start": "P-1", "speed_mps": 0.20, "pose_noise_m": 0.03}}
     world = SimWorld(site=load_lane_map(FEATURE), robots=robots,
                      params=replace(PARAMS, detour_enabled=detour), arm_s_per_item=4.0,
                      swap_step_s=4.0, dock_s=3.0,
-                     faults=[{"at_s": 42.0, "robot": "pinky1", "type": "blocked",
-                              "duration_s": 15.0}])
+                     faults=[{"at_s": at_s, "robot": "pinky1", "type": "blocked",
+                              "duration_s": duration_s}])
     if record is not None:
         world.core.record_to(record.append)
     world.run_until(world.done, timeout_s=900)
@@ -356,6 +460,15 @@ def test_in_the_warehouse_a_robot_goes_around_the_blocked_lane_and_it_replays(tm
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     result = replay.replay(path)
     assert result.same and result.compared, result
+
+
+def test_with_the_scenario_times_it_goes_around_the_robot_behind_the_block():
+    # feature_blocked_lane.yaml의 시각(46초, 30초). 막힌 레인 뒤에서 기다리는 로봇을 피한다.
+    # ROS 시나리오에서도 같은 우회가 났다. 막힌 레인 자체의 우회는 위 시험(42초, 15초)이 본다
+    world = feature_world(True, at_s=46.0, duration_s=30.0)
+    detours = [e for e in world.events if e.code == "DETOUR"]
+    assert detours and "F1 held by pinky2" in detours[0].detail
+    assert not [e for e in world.events if e.level == "ERROR"]
 
 
 def test_in_the_warehouse_without_detours_it_waits_and_still_finishes():

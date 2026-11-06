@@ -179,6 +179,11 @@ def test_a_scenario_can_choose_a_map_from_the_maps_folder():
     assert load_scenario(SCENARIOS / "feature_blocked_lane.yaml").robots["pinky1"].start
 
 
+def test_the_feature_block_scenario_expects_a_detour():
+    sc = load_scenario(SCENARIOS / "feature_blocked_lane.yaml")
+    assert "DETOUR" in sc.expect.events_include
+
+
 def test_an_unknown_map_name_is_refused(tmp_path):
     path = tmp_path / "x.yaml"
     path.write_text("map: no_such_map\n", encoding="utf-8")

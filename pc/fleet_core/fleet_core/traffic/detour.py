@@ -7,6 +7,7 @@
   - 달리는 로봇이 쥔 구역은 벌점이 없다.
 서 있음과 달림(_standing_wait_s):
   - 무한: 고장(ERROR, OUT_OF_SERVICE), 두절이나 복구 확인, 막힘 기록, BLOCKED 보고.
+    막힘 기록 없이 목표를 둔 채 줄 선 BLOCKED(파트 4 줄 서기)는 줄 선 시간이다.
   - 달린다: 열린 이동이나 도킹 goal이 있다.
   - 구역을 기다린다: 그 구역을 기다린 시간.
   - 재시도나 도착 확인을 기다린다: 남은 시간.
@@ -15,9 +16,10 @@
   - 그 밖(스테이션, 대기 칸, 할 일 대기): station_wait_estimate_s.
 고르는 때: 현재 구역 말고 쥔 것이 없어 다음 구역을 청할 때. 다음 구역을 이미 쥐었으면 안 바꾼다.
 막힌 로봇과 취소 결과를 기다리는 로봇(_held_for_block)은 다시 고르지 않는다.
-다음 구역에 벌점이 있거나 남은 경로에 막힌 레인이 있을 때만 계산한다.
+다음 구역에 벌점이 있거나, 남은 경로에 막힌 레인이나 못 비키는(무한) 보유자의 구역이 있을 때만 계산한다.
 새 길이 지금 길보다 싸야 바꾼다. 동점이면 그대로, 길이 없으면 그대로 기다린다.
 한 지점에서 포기한 다음 구역은 그 지점을 떠날 때까지 못 지난다(왕복 금지).
+지금 길을 못 지나면(비용 무한) 왕복 금지를 쉬고 다시 고른다.
 입력과 시계만 쓰므로 기록 재생에서 같은 결정이 나온다.
 
 TrafficController에서 떼어 낸 부분이다. 제어기 상태를 쓰므로 혼자 쓰지 않는다.
@@ -39,8 +41,11 @@ from fleet_core.traffic.mission import (
 class TrafficDetour:
     def _standing_wait_s(self, m: _Mission) -> float | None:
         """달리면 None, 서 있으면 예상 대기 시간(초). 못 비키면 inf."""
-        if m.fault or m.comm or m.block or m.robot_state == BLOCKED:
+        queued = m.robot_state == BLOCKED and m.goal is not None and m.queue_since is not None
+        if m.fault or m.comm or m.block or (m.robot_state == BLOCKED and not queued):
             return math.inf
+        if queued:
+            return max(0.0, self._clock() - m.queue_since)  # 줄 서기: 줄 선 시간
         if m.goal is not None:
             return None
         now = self._clock()
@@ -90,9 +95,16 @@ class TrafficDetour:
         shut = self._shut_lanes()
         tail = m.path[anchor:]
         shut_ahead = [key for key in zip(tail, tail[1:], strict=False) if key in shut]
-        if penalty <= 0.0 and not shut_ahead:
+        current = self._zone(here)
+        stuck_ahead = []  # 다음 구역 뒤의 못 비키는 보유자. 유한 벌점은 다음 구역만 본다
+        for zone in dict.fromkeys(self._zone(w) for w in tail):
+            if zone not in (current, following):
+                far, far_why = self._zone_penalty(m, zone, cache)
+                if far == math.inf:
+                    stuck_ahead.append(far_why)
+        if penalty <= 0.0 and not shut_ahead and not stuck_ahead:
             return False
-        avoid = set(m.detour_avoid)
+        avoid: set = set()
         parking = set(self.site.parking) - set(tail)
 
         def lane_cost(lane) -> float:
@@ -105,19 +117,21 @@ class TrafficDetour:
                 return math.inf
             return lane.length + self._zone_penalty(m, zone, cache)[0]
 
-        now_cost = 0.0
+        now_cost = 0.0  # 지금 길의 실제 비용. 왕복 금지는 넣지 않는다
         for a, b in zip(tail, tail[1:], strict=False):
             now_cost += lane_cost(self.site.lane(a, b))
+        if now_cost < math.inf:
+            avoid.update(m.detour_avoid)  # 지금 길을 못 지나면 왕복 금지는 쉰다
         found = self.site.cheapest(here, tail[-1], lane_cost)
         if found is None or found[0] >= now_cost or found[1] == tail:
             return False
         way = found[1]
-        current = self._zone(here)
         new_next = next((self._zone(w) for w in way if self._zone(w) != current), None)
-        if new_next != following:
+        if new_next != following and following not in m.detour_avoid:
             m.detour_avoid = (*m.detour_avoid, following)
         self._start_leg(m, m.phase, m.dest, way[-1], way=way)
         reasons = [why] if penalty > 0.0 else []
+        reasons += stuck_ahead
         reasons += [f"lane {a} to {b} blocked" for a, b in shut_ahead]
         route = " ".join(self.site.waypoint_id(w) for w in way)
         self._event("INFO", "DETOUR",
