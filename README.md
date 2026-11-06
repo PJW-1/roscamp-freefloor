@@ -170,7 +170,7 @@ cat /tmp/run1/summary.json
 | `auto_isolation` | 팔 고장 3회로 둘째 로봇이 작업대에서 ERROR. 플릿이 바로 격리하고 120초에 관리자가 치움 | 사람 없이 주문이 맨 앞으로 돌아가고(`ROBOT_ISOLATED`, `ORDER_REQUEUED` 1회), 앞서 간 로봇은 관리자 전에 출고(`shipped_before_operator` 1 이상). 치운 뒤 되돌린 주문부터 전부 끝냄 |
 | `feature_basic_orders` | `basic_orders`와 같고 특징 지도(`feature_map`)와 출발 칸만 다름 | 특징 지도에서 전부 출고(파트 5) |
 | `feature_blocked_lane` | `blocked_lane`과 같고 특징 지도, 출발 칸, 물체 시각(46초부터 30초)이 다름 | 막힌 레인을 다른 로봇이 돌아감(`DETOUR`), 전부 출고(파트 5) |
-| `feature_auto_isolation` | 특징 지도. 느린 pinky1(0.04 m/s)의 F2로 가는 이동이 3회 중단(`nav_abort`의 `target: F2`)돼 F1, F2를 쥔 채 레인 위에서 ERROR. 400초에 관리자가 치움 | 격리된 로봇의 구역(무한 벌점)을 좁은 통로로 돌아가(`DETOUR`) 격리 전 2건, 격리 뒤 관리자 전 4건, 6건 모두 관리자 전에 출고(`shipped_before_operator` 4 이상, 5.5번) |
+| `feature_auto_isolation` | 특징 지도. 느린 pinky1(0.04 m/s)의 F2로 가는 이동이 3회 중단(`nav_abort`의 `target: F2`)돼 F1, F2를 쥔 채 레인 위에서 ERROR. 400초에 관리자가 치움 | 판정: 격리 로봇을 피한 `DETOUR`(`detours_around_isolated` 1 이상), 격리 뒤 관리자 전 출고(`shipped_before_operator` 4 이상), 전부 출고. 실행 기록: 6판 모두 좁은 통로로 돌아가 6건 모두 관리자 전에 출고(5.5번) |
 
 `expect` 항목은 다음과 같습니다. 숫자는 정확히 일치해야 통과합니다(`_min`으로 끝나는 것은 그 값 이상).
 
@@ -184,6 +184,7 @@ cat /tmp/run1/summary.json
 | `direct_returns_min` | 출고 구역에서 대기 구간을 거치지 않고 작업공간으로 돌아간 횟수의 최솟값 |
 | `parked_while_backlog` | 묶이지 않은 주문이 로봇 수 이상인데 출고 구역에서 대기 구간으로 들어간 횟수 |
 | `shipped_before_operator_min` | 첫 `ROBOT_ISOLATED`부터 격리된 로봇의 첫 `ZONES_CLEARED` 전까지 출고(SHIPPED, PARTIAL)한 건수의 최솟값. 로봇 1대가 고장 나도 플릿이 계속 운행하는지 봅니다. 기본 0 |
+| `detours_around_isolated_min` | 격리된 로봇이 치워지기 전에 그 로봇이 쥔 구역을 피한 `DETOUR`(detail의 `held by <로봇>`) 수의 최솟값. 막힌 레인을 피한 `DETOUR`는 세지 않습니다. 기본 0 |
 | `zone_holder_max` | 한 구역에 실제로 동시에 있었던 로봇 수의 최댓값 |
 | `released_without_position_check` | 로봇이 아직 구역을 벗어나지 않았는데 해제된 횟수 |
 | `unheld_zone_pose` | 잠그지 않은 구역에 로봇이 있었던 횟수 |

@@ -92,6 +92,9 @@ class ScenarioJudge:
         self.shipped_before_operator = 0
         self._isolated: set[str] = set()  # source가 로봇이다
         self._operator_came = False
+        # 격리된 로봇(치우기 전)이 쥔 구역을 피한 DETOUR 수. detail의 'held by <로봇>'으로 본다
+        self.detours_around_isolated = 0
+        self._standing_isolated: set[str] = set()
 
     def _station_zones(self, action: str) -> set[str]:
         return {self.site.zone_of[s.dock] for s in self.site.stations.values()
@@ -126,8 +129,14 @@ class ScenarioJudge:
             self.error_codes.append(code)
         if code == "ROBOT_ISOLATED":
             self._isolated.add(source)
+            self._standing_isolated.add(source)
         elif code == "ZONES_CLEARED" and source in self._isolated:
             self._operator_came = True
+            self._standing_isolated.discard(source)
+        elif code == "DETOUR":
+            held = re.search(r"held by ([^,;\s]+)", detail)
+            if held and held.group(1) in self._standing_isolated:
+                self.detours_around_isolated += 1
         order = order_id_of(detail)
         if code == "ORDER_ACCEPTED" and order not in self.registered:
             self.registered.append(order)  # 시나리오 주문은 처음부터 등록돼 있다
@@ -404,6 +413,8 @@ class ScenarioJudge:
             "parked_while_backlog": exact(self.parked_while_backlog, ex.parked_while_backlog),
             "shipped_before_operator": at_least(self.shipped_before_operator,
                                                 ex.shipped_before_operator_min),
+            "detours_around_isolated": at_least(self.detours_around_isolated,
+                                                ex.detours_around_isolated_min),
             "timed_out": exact(timed_out, ex.timed_out),
             "unexpected_errors": {"value": len(unexpected), "expected": ex.unexpected_errors,
                                   "codes": unexpected,

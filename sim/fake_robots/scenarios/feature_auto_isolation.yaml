@@ -1,13 +1,6 @@
-# 특징 지도의 자동 격리(지시서 5.5): 레인 중간에 격리된 로봇을 나머지가 돌아간다.
-# pinky1은 첫 출고 뒤 작업대로 돌아가며 F2로 가는 이동(F1->F2 레인)이 세 번 중단돼 레인 위에서 ERROR가 된다.
-# 고장은 시각 대신 목표 지점(target: F2)으로 건다. 시각으로는 실행마다 다른 레인에 걸렸다.
-# 느린 로봇(0.04 m/s)이라 중단 3번(각 1초)에 0.12 m만 가서 F1을 놓지 않는다(release_distance_m 0.2).
-# 0.20 m/s면 0.26 m를 가서 F1을 놓고 F2만 쥐는데, 그러면 뒤 로봇이 F1에 들어가 갇힌다(일지 참고).
-# 플릿이 바로 격리한다(ROBOT_ISOLATED). F1, F2는 쥔 채 무한 벌점이라 못 지난다.
-# O에서 작업대로 가는 로봇은 좁은 통로로 돌아간다(DETOUR: F0 T2 T1 QW W). 주문은 사람 없이 전부 출고한다.
-# O-001, O-002는 격리(103초쯤) 전에, 나머지 4건은 격리 뒤 관리자 전에 나간다(198초쯤 끝).
-# O-002 출고(100초쯤)와 격리가 가까워 5가 될 수 있으므로 4 이상을 본다. 한 건이라도 관리자 뒤면 3이 된다.
-# 대기 줄 입구(F1)가 막혀 나머지는 주차하지 못한다. 400초에 운영자가 pinky1을 들어내고 끝난다.
+# 특징 지도의 자동 격리(지시서 5.5). 느린 pinky1이 F2로 가는 이동을 세 번 중단해
+# F1, F2를 쥔 채 레인 위에서 격리된다. 나머지는 좁은 통로로 돌아가 출고한다.
+# 심판: 격리 로봇을 피한 DETOUR 1 이상, 격리 뒤 관리자 전 출고 4 이상. 자세한 것은 작업 기록.
 map: feature_map
 seed: 7
 speed_factor: 5.0
@@ -40,6 +33,7 @@ expect:
   released_without_position_check: 0
   unheld_zone_pose: 0
   shipped_before_operator_min: 4
+  detours_around_isolated_min: 1
   events_include: [ROBOT_ISOLATED, GOAL_FAILED, DETOUR, ZONES_CLEARED, ORDER_SHIPPED]
   event_counts: {ROBOT_ISOLATED: 1, GOAL_FAILED: 1, ZONES_CLEARED: 1, ORDER_REQUEUED: 0, COMM_LOST: 0, ROBOT_NOT_REPORTING: 0}
   order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED}

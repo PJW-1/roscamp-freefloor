@@ -31,6 +31,7 @@ EXPECT_DEFAULTS = {
     "events_include": [],
     "event_counts": {},  # 코드: 정확히 몇 번 나와야 하는지
     "shipped_before_operator_min": 0,  # 격리 뒤 confirm_clear 전 출고(지시서 5.5)
+    "detours_around_isolated_min": 0,  # 격리된 로봇을 피한 DETOUR(치우기 전)
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
                   "arm", "dock", "faults", "expect", "map"}
@@ -115,6 +116,7 @@ class Expect:
     events_include: list = field(default_factory=list)
     event_counts: dict = field(default_factory=dict)
     shipped_before_operator_min: int = 0
+    detours_around_isolated_min: int = 0
 
 
 @dataclass(frozen=True)

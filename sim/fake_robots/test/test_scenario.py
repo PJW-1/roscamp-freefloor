@@ -302,6 +302,7 @@ def test_feature_auto_isolation_stops_mid_lane_and_ships_without_the_operator():
     assert abort.target == "F2", "the abort hits the F1->F2 lane, not a time"
     assert sc.expect.shipped_before_operator_min >= 4 and sc.expect.orders_shipped == len(sc.orders)
     assert "DETOUR" in sc.expect.events_include
+    assert sc.expect.detours_around_isolated_min >= 1
     assert sc.expect.event_counts["ROBOT_ISOLATED"] == 1
 
 
