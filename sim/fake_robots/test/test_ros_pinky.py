@@ -123,6 +123,19 @@ def test_nav_abort_hits_the_next_goals_only(harness, tmp_path):
     assert result_of(p.goal("QO")).result.success is True
 
 
+def test_a_nav_abort_comes_before_the_robot_reaches_the_release_distance(harness, tmp_path):
+    """관제는 해제 거리(0.2 m)를 지나야 선을 늘린다. 그 전에 중단해야 늘림과 겹치지 않는다."""
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}}, faults=[
+        {"at_s": 0, "robot": "pinky1", "type": "nav_abort", "count": 1}])
+    assert wait_until(lambda: p.states, 5.0)
+    x0, y0 = p.states[-1][1].pose.x, p.states[-1][1].pose.y
+    res = result_of(p.goal("S")).result
+    assert res.reason == MoveTo.Result.REASON_NAV_ABORTED
+    last = p.states[-1][1].pose
+    assert ((last.x - x0) ** 2 + (last.y - y0) ** 2) ** 0.5 < 0.1
+
+
 def test_a_nav_abort_is_not_lost_on_a_goal_superseded_before_it_fires(harness, tmp_path):
     """FMS가 선을 늘려 목표를 바꿔도 중단 횟수만큼 NAV_ABORTED가 난다."""
     p = start(harness, tmp_path, robots={
