@@ -134,6 +134,7 @@ class FaultSchedule:
     def __init__(self, faults, robot: str):
         self._own = [f for f in faults if f.robot == robot]
         self._abort_left = {id(f): f.count for f in self._own if f.type == "nav_abort"}
+        self.last_taken = None
 
     def comms_down(self, t: float) -> bool:
         return any(f.type == "comm_loss" and f.at_s <= t < f.at_s + f.duration_s
@@ -156,21 +157,23 @@ class FaultSchedule:
                    if f.type == "drift" and f.at_s <= t < f.at_s + f.duration_s)
 
     def take_nav_abort(self, t: float, target_id: str = "") -> bool:
-        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다. target이면 그 지점만."""
+        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다. target이면 그 지점만.
+
+        쓴 일정은 last_taken에 남는다(돌려줄 때 그 일정에).
+        """
+        self.last_taken = None
         for f in self._own:
             if (f.type == "nav_abort" and t >= f.at_s and self._abort_left[id(f)] > 0
                     and f.target in ("", target_id)):
                 self._abort_left[id(f)] -= 1
+                self.last_taken = f
                 return True
         return False
 
-    def give_back_nav_abort(self, target_id: str = "") -> None:
-        """중단이 나기 전에 끝난 목표의 고장 횟수를 돌려준다."""
-        for f in self._own:
-            if (f.type == "nav_abort" and self._abort_left[id(f)] < f.count
-                    and f.target in ("", target_id)):
-                self._abort_left[id(f)] += 1
-                return
+    def give_back_nav_abort(self, taken) -> None:
+        """중단이 나기 전에 끝난 목표의 고장 횟수를 그 목표가 쓴 일정에 돌려준다."""
+        if taken is not None and self._abort_left[id(taken)] < taken.count:
+            self._abort_left[id(taken)] += 1
 
 
 class ArmFaults:

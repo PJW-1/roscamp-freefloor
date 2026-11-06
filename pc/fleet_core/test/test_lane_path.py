@@ -9,12 +9,13 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
+import yaml
 from core_helpers import cmds, codes
 from fleet_core.common.commands import MoveCmd
 from fleet_core.common.params import FleetParams, load_params
 from fleet_core.manager import FleetManager
 from fleet_core.traffic.controller import TrafficController
-from fleet_core.traffic.lane_map import load_lane_map
+from fleet_core.traffic.lane_map import LaneMap, load_lane_map
 from fleet_core.traffic.mission import MOVE, _Goal
 
 REPO = Path(__file__).resolve().parents[3]
@@ -205,18 +206,114 @@ def test_a_report_pushed_sideways_before_a_turn_is_measured_on_the_lane_it_is_on
     assert core._error_lane(m) in (((4, 3), (5, 3)), ((5, 3), (6, 3)))
 
 
-@pytest.mark.parametrize("before, watched", [(0.14, False), (0.0, True)])
-def test_a_goal_starting_short_of_its_first_waypoint_has_no_lane_to_measure_yet(before, watched):
+@pytest.mark.parametrize("before, watched", [(0.14, ("P-6", "N")), (0.0, ("N", "S"))])
+def test_a_goal_starting_short_of_its_first_waypoint_is_measured_on_the_lane_in(before, watched):
     """FMS 재시작(test_fms_restart): 로봇이 P-6→N 위 N 앞 0.14 m에 섰고 새 경로는 N부터다.
     path 목표는 N→S까지 묶이므로 N에 닿기 전에 N→S로 재면 0.26 m 이탈로 세운다.
-    point는 첫 목표가 N까지라 보지 않는다. N에 선 로봇은 첫 레인으로 잰다."""
+    닿기 전에는 실제로 있는 들어오는 레인으로 잰다. N에 선 로봇은 첫 레인으로 잰다."""
     core, _ = make({"r1": "W"})
     m = core._missions["r1"]
     m.path, m.idx = ["N", "S", "L"], 0
     m.goal = _Goal(MOVE, 1, 2)
     lane, (x, y) = core.site.lane("P-6", "N"), xy(core, "N")
     m.x, m.y = x - lane.ux * before, y - lane.uy * before
-    assert core._error_lane(m) == (("N", "S") if watched else None)
+    assert core._error_lane(m) == watched
+
+
+def on_the_lane_into_t2(core, short):
+    """특징 지도: 경로는 T2부터(T2 T1 QW), 로봇은 들어오는 레인 F0→T2 위 T2 앞 short m.
+
+    F0→T2→T1은 예각이라 T2 앞의 로봇도 T2→T1에 투영하면 앞서 보인다(Codex 2, 3).
+    """
+    m = core._missions["r1"]
+    m.path, m.idx = ["T2", "T1", "QW"], 0
+    m.goal = _Goal(MOVE, 1, 2)
+    lane, (x, y) = core.site.lane("F0", "T2"), core.site.waypoint_pose("T2")
+    m.x, m.y = x - lane.ux * short, y - lane.uy * short
+    return m
+
+
+def feature_core():
+    feature = load_lane_map(REPO / "sim/fake_robots/maps/feature_map.yaml")
+    return TrafficController(feature, replace(load_params(), lane_goal_mode="path"), ["r1"],
+                             lambda: 0.0)
+
+
+def test_the_first_waypoint_not_reached_yet_stays_in_the_line():
+    core = feature_core()
+    m = on_the_lane_into_t2(core, 0.3)
+    s, _ = core.site.lane_progress("T2", "T1", m.x, m.y)
+    assert s > core.params.arrival_tolerance_m, "the case: it looks past T2 on T2 to T1"
+    assert core._first_ahead(m, 2) == 0, "T2 stays, the corner is not cut"
+
+
+def test_the_path_index_does_not_pass_a_first_waypoint_not_reached_yet():
+    core = feature_core()
+    m = on_the_lane_into_t2(core, 0.5)
+    s, _ = core.site.lane_progress("T2", "T1", m.x, m.y)
+    assert s > core.params.release_distance_m
+    core._track_progress(m)
+    assert m.idx == 0
+
+
+def test_short_of_the_first_waypoint_the_lane_error_is_measured_on_the_lane_in():
+    core = feature_core()
+    m = on_the_lane_into_t2(core, 0.3)
+    s, _ = core.site.lane_progress("T2", "T1", m.x, m.y)
+    assert s >= 0
+    assert core._error_lane(m) == ("F0", "T2")
+
+
+def watched_off(core, m):
+    """보고를 확인 횟수만큼 넣고 이탈로 세웠는지."""
+    for _ in range(core.params.release_confirm_samples):
+        core._watch_lane_error(m)
+    return m.off_lane_warned
+
+
+def test_drifting_off_the_lane_in_before_the_first_waypoint_is_caught():
+    """첫 지점 앞이라고 면제하지 않는다. 진입 레인 옆 0.3 m는 이탈이다(Codex P1)."""
+    core = feature_core()
+    m = on_the_lane_into_t2(core, 0.3)
+    lane = core.site.lane("F0", "T2")
+    m.x, m.y = m.x - lane.uy * 0.3, m.y + lane.ux * 0.3  # T1 반대쪽으로
+    assert core.site.lane_progress("T2", "T1", m.x, m.y)[0] < 0, "the case: short of T2"
+    assert core._error_lane(m) == ("F0", "T2")
+    assert watched_off(core, m)
+
+
+def test_a_normal_approach_on_the_lane_in_is_not_caught():
+    core = feature_core()
+    m = on_the_lane_into_t2(core, 0.3)
+    assert not watched_off(core, m), "T2 to T1 would read 0.25 m off"
+
+
+def test_past_the_first_waypoint_the_lane_error_keeps_its_rule():
+    core = feature_core()
+    m = on_the_lane_into_t2(core, 0.0)
+    out = core.site.lane("T2", "T1")
+    m.x, m.y = m.x + out.ux * 0.5 - out.uy * 0.3, m.y + out.uy * 0.5 + out.ux * 0.3
+    assert core._error_lane(m) == ("T2", "T1")
+    assert watched_off(core, m)
+
+
+def test_the_first_path_after_a_reinstate_keeps_a_waypoint_before_a_150_degree_turn():
+    """재투입 직후 놓인 자리부터 만든 첫 path: 첫 지점 앞 0.19 m, 약 150도 꺾임(Codex P2).
+
+    F0를 옮겨 F0→T2→T1을 150도로 만든다. T2→T1에 투영하면 0.16 m 앞서 보인다.
+    """
+    data = yaml.safe_load((REPO / "sim/fake_robots/maps/feature_map.yaml").read_text())
+    for wp in data["waypoints"]:
+        if wp["id"] == "F0":
+            wp["x"], wp["y"] = 1.399, 0.928
+    site = LaneMap(data, yaml.safe_dump(data))
+    a, b = site.lane("F0", "T2"), site.lane("T2", "T1")
+    assert math.degrees(math.acos(a.ux * b.ux + a.uy * b.uy)) == pytest.approx(150, abs=0.1)
+    core = TrafficController(site, replace(load_params(), lane_goal_mode="path"), ["r1"],
+                             lambda: 0.0)
+    m = on_the_lane_into_t2(core, 0.19)
+    assert core.site.lane_progress("T2", "T1", m.x, m.y)[0] > core.params.arrival_tolerance_m
+    assert core._first_ahead(m, 2) == 0
 
 
 def test_a_running_goal_is_extended_round_the_corner_when_the_next_zone_comes():

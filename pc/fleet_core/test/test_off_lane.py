@@ -420,7 +420,8 @@ def test_a_robot_on_a_detour_is_watched_and_resumed_on_its_new_lane():
     # path 모드(파트 7)는 꺾여도 쥔 데까지 묶어 T2를 지나 T1까지 간다
     target = "T1" if core.params.lane_goal_mode == "path" else "T2"
     assert [c.target_id for c in first] == [target]
-    beside_on(core, "r1", "F0", "T2", 0.05, OFF)
+    # 동쪽으로 밀면 들어오는 레인 O→F0 위라 F0로 오는 중으로 본다. 서쪽으로 민다
+    beside_on(core, "r1", "F0", "T2", 0.05, -OFF)
     out = core.tick()
     (warned,) = [e for e in events(out, "LANE_ERROR") if e.robot == "r1"]
     assert "F0 to T2" in warned.detail
