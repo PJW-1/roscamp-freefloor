@@ -28,6 +28,7 @@ flowchart LR
       blocking["blocking<br/>막힘"]
       detour["detour<br/>우회"]
       isolation["isolation<br/>자동 격리"]
+      offlane["off_lane<br/>레인 이탈"]
       mission["mission"]
       recovery["recovery"]
       zones["zones<br/>ZoneLocks"]
@@ -55,7 +56,8 @@ flowchart LR
   manager --> orch & ctrl & mission & commands & cvalid & ovalid
   ovalid --> cvalid
   orch --> commands
-  ctrl --> mission & recovery & zones & selector & commands & blocking & detour & isolation
+  ctrl --> mission & recovery & zones & selector & commands & blocking & detour & isolation & offlane
+  offlane --> mission
   blocking --> lanemap & mission
   detour --> mission
   isolation --> mission & commands
@@ -231,6 +233,9 @@ faults:
 | `LANE_BLOCKED`, `LANE_CLEARED` | WARN, INFO | `BLOCKED` 5초에 레인 표시와 취소, 풀림(파트 4) |
 | `BLOCKED_TOO_LONG` | ERROR | `BLOCKED` 60초(파트 4) |
 | `DETOUR` | INFO | 서 있는 보유자나 막힌 레인을 피해 길을 바꿈(파트 5) |
+| `LANE_ERROR` | WARN | 바뀐 뜻: 레인을 `lane_error_warn_m` 넘게 벗어나면 목표를 취소해 세우고 구역을 쥠(파트 3) |
+| `BACK_ON_LANE` | INFO | 세운 로봇이 레인에 돌아옴. 같은 목표를 다시 보냄(파트 3) |
+| `OFF_LANE` | ERROR | `off_lane_timeout_s`(20초) 안에 못 돌아옴. 자동 격리로 이어짐(파트 3) |
 | `ROBOT_ISOLATED` | ERROR | 지도에 오른 로봇이 ERROR가 되어 자동 격리. 주문은 바로 되돌림. 교환 중이면 그 결과까지, `ARM_NO_RESULT`면 `confirm_clear`까지 쥠(늦은 `took_full`이면 출고)(파트 5.5) |
 
 ## 실물로 교체
