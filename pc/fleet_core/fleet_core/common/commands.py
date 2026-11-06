@@ -98,7 +98,7 @@ class AssignmentView:
 class RobotStatusView:
     robot_id: str
     fsm_state: str  # 핑키가 보낸 값 그대로
-    task_type: str  # AssignmentView와 같음, 투입 전이면 빈 값
+    task_type: str  # AssignmentView와 같음, 코스 밖(투입 전, OUT_OF_SERVICE)이면 빈 값
     order_id: str
     fault: str  # NONE | ERROR | COMM_LOST | OUT_OF_SERVICE | RECOVERING
     fault_reason: str

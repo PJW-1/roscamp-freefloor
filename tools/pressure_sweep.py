@@ -15,7 +15,7 @@ tau는 report_delay_s(시나리오 초), eps는 pose_noise_m(축당 1 시그마)
     deadlocks       DEADLOCK_DETECTED 이벤트 수.
     lane errors     LANE_ERROR 이벤트 수: lane_error_warn_m보다 더 벗어난 보고.
     needs d         r + eps + v * (tau + tick). fleet_params.yaml의 규칙이며 v는 시나리오의
-                    최고 속도다. 행의 d가 이 값보다 크면 규칙은 그 실행을 보장하지 않는다.
+                    최고 속도다. 이 값이 그 행의 d보다 크면 규칙은 그 실행을 보장하지 않는다.
     pass            시나리오 자체의 판정. 압박 아래에서는 기대 이벤트 수가 어긋날 수 있다.
 """
 from __future__ import annotations

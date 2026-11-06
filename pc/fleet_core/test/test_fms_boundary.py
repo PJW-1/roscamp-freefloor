@@ -9,8 +9,16 @@ from pathlib import Path
 import fleet_core
 
 PACKAGE = Path(fleet_core.__file__).parent
-TRAFFIC = sorted(f"traffic.{p.stem}" for p in (PACKAGE / "traffic").glob("*.py")
-                 if p.stem != "__init__")
+
+
+def _package(name):
+    """패키지 자신(__init__.py)과 그 안의 모듈."""
+    return [name] + sorted(f"{name}.{p.stem}" for p in (PACKAGE / name).glob("*.py")
+                           if p.stem != "__init__")
+
+
+TRAFFIC = _package("traffic")
+ORDERS = _package("orders")
 ORDER_SIDE_NAMES = {
     "OrderRecord", "FillCmd", "SwapCmd", "ReportOrderCmd", "SHIPPED", "PARTIAL", "HELD",
     "OrderOrchestrator", "FleetManager",
@@ -38,6 +46,10 @@ def _is_module(name):
 
 def _order_side(module):
     return module in ("manager", "orders") or module.startswith("orders.")
+
+
+def _traffic_side(module):
+    return module == "traffic" or module.startswith("traffic.")
 
 
 def _tree(module):
@@ -81,14 +93,21 @@ def _package_imports(module):
     return _imports_of(_tree(module), module)
 
 
+def _parents(name):
+    """임포트할 때 먼저 실행되는 위 패키지. 맨 위 fleet_core는 ""."""
+    parts = name.split(".")
+    return [".".join(parts[:i]) for i in range(len(parts))]
+
+
 def _closure(*modules):
-    """`modules`에서 닿는 모든 fleet_core 모듈(자신 포함)."""
+    """`modules`에서 닿는 모든 fleet_core 모듈(자신과 위 패키지 포함)."""
     seen, stack = set(), list(modules)
     while stack:
         current = stack.pop()
         if current not in seen:
             seen.add(current)
             stack.extend(_package_imports(current)[0])
+            stack.extend(_parents(current))
     return seen
 
 
@@ -161,4 +180,15 @@ def test_a_package_import_counts_as_the_order_side_and_can_be_followed():
 
 def test_orders_do_not_import_traffic():
     """둘은 FleetManager가 실어 나르는 명령으로만 대화한다."""
-    assert not {m for m in _closure("orders.orchestrator") if m.startswith("traffic.")}
+    assert not {m for m in _closure(*ORDERS) if _traffic_side(m)}
+
+def test_a_module_brings_in_the_packages_above_it():
+    """서브모듈을 임포트하면 위 패키지의 __init__.py도 실행된다. 맨 위 fleet_core는 ""."""
+    assert {"traffic", ""} <= _closure("traffic.controller")
+    assert "" in _closure("manager")
+
+
+def test_both_sides_include_their_package_init():
+    assert "traffic" in TRAFFIC and "orders" in ORDERS
+    assert _traffic_side("traffic") and _traffic_side("traffic.zones")
+    assert not _traffic_side("orders") and not _traffic_side("")

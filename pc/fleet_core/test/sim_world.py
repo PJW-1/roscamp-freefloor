@@ -500,7 +500,7 @@ class SimWorld:
 
     def _check_releases(self, before):
         """구역은 보고된 자세가 구역 중심선에서 2r 밖일 때만 점유자를 떠난다.
-        그 선 위의 로봇은 구역에 닿을 수 있기 때문이다.
+        그 선 위의 로봇은 떠난 로봇에 닿을 수 없다.
         """
         after = self.core.zones.snapshot()
         least = 2 * self.params.robot_radius_m
