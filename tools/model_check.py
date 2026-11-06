@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Exhaustive check of the real TrafficController on a lane map, over every order of calls.
 
-    python3 tools/model_check.py --map sim/gg_sim/maps/oneway_shortcut.yaml --robots 3 --bundle off
+    python3 tools/model_check.py --map sim/fake_robots/maps/oneway_shortcut.yaml \
+        --robots 3 --bundle off
 
 The state is, per robot, its mission phase, what is left of its path, its running goal and where
 it stands, plus the zone locks and how many open calls there are. Orders are not in it. At every
@@ -55,13 +56,13 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "pc" / "gg_fleet_core"))
+sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
 
-from gg_fleet_core.common.params import load_params  # noqa: E402
-from gg_fleet_core.traffic.controller import TrafficController  # noqa: E402
-from gg_fleet_core.traffic.deadlock import find_cycle, wait_graph  # noqa: E402
-from gg_fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
-from gg_fleet_core.traffic.mission import DOCK, MOVE, _Dispatch, _Goal  # noqa: E402
+from fleet_core.common.params import load_params  # noqa: E402
+from fleet_core.traffic.controller import TrafficController  # noqa: E402
+from fleet_core.traffic.deadlock import find_cycle, wait_graph  # noqa: E402
+from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
+from fleet_core.traffic.mission import DOCK, MOVE, _Dispatch, _Goal  # noqa: E402
 
 PAST = 0.01  # how far beyond d a robot reports when it passes
 NAMED = 100  # goal ids of named dispatches start here, so they never meet an open call's
@@ -456,11 +457,11 @@ def _way_to(dead: list[int], parents, parent_events, event_list) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
     parser.add_argument("--map", default=None,
-                        help="lane map YAML (default: the one in gg_fleet_core)")
+                        help="lane map YAML (default: the one in fleet_core)")
     parser.add_argument("--robots", type=int, default=3)
     parser.add_argument("--bundle", choices=("file", "on", "off"), default="file",
                         help="two-way bundling: as the map says, or forced")
-    parser.add_argument("--start", default=None, help="comma-separated start nodes")
+    parser.add_argument("--start", default=None, help="comma-separated start waypoints")
     parser.add_argument("--max-states", type=int, default=0, help="stop early and say so")
     parser.add_argument("--stop-at-first", action="store_true",
                         help="stop at the first level with a deadlock, for a map too big to finish")

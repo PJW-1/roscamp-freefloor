@@ -12,12 +12,12 @@ FMS(fleet manager, RCS)는 핑키 플릿에 일을 나눠 주고(배분), 길을
 
 ```mermaid
 flowchart LR
-  subgraph fleet["gg_fleet (ROS 노드)"]
+  subgraph fleet["fleet_manager (ROS 노드)"]
     fmnode["fleet_manager_node"]
     adapters["adapters"]
     tracker["goal_tracker"]
   end
-  subgraph core["gg_fleet_core (ROS 없음)"]
+  subgraph core["fleet_core (ROS 없음)"]
     manager["manager<br/>FleetManager"]
     subgraph orders["orders"]
       orch["orchestrator<br/>OrderOrchestrator"]
@@ -37,8 +37,13 @@ flowchart LR
       contract["contract"]
     end
   end
-  subgraph sim["gg_sim (가짜 노드, 심판)"]
-    fakes["fake_*_node<br/>scenario_monitor_node"]
+  subgraph sim["fake_robots (가짜 노드, 심판)"]
+    fakes["fake_*_node"]
+    monitor["scenario_monitor_node"]
+    simcommon["common"]
+    scenario["scenario"]
+    judge["judge<br/>safety_meter"]
+    motion["motion"]
   end
   fmnode --> adapters & tracker & manager & lanemap & contract & params & commands
   adapters --> commands
@@ -46,10 +51,12 @@ flowchart LR
   orch --> commands
   ctrl --> mission & recovery & zones & selector & commands
   recovery --> mission & deadlock & commands
-  fakes --> contract & lanemap
+  fakes --> simcommon & motion & contract
+  monitor --> simcommon & judge & contract
+  simcommon --> scenario & contract & lanemap
 ```
 
-`orders`와 `traffic`은 서로 import하지 않고, `manager`가 `common/commands.py`의 명령으로 둘 사이를 잇습니다. `pc/gg_fleet_core/test/test_fms_boundary.py`가 이 경계를 검사합니다. `traffic`은 주문과 바구니를 모릅니다.
+`orders`와 `traffic`은 서로 import하지 않고, `manager`가 `common/commands.py`의 명령으로 둘 사이를 잇습니다. `pc/fleet_core/test/test_fms_boundary.py`가 이 경계를 검사합니다. `traffic`은 주문과 바구니를 모릅니다.
 
 ### ROS 노드 지도 (컴퓨터별)
 
@@ -58,7 +65,7 @@ flowchart TB
   web["화면 (브라우저)"]
   subgraph pcbox["관제 PC (유선)"]
     central["central<br/>중앙 담당, 지금은 가짜"]
-    fm["fleet_manager<br/>gg_fleet, 안에 orders + traffic"]
+    fm["fleet_manager<br/>fleet_manager, 안에 orders + traffic"]
   end
   subgraph pinky["핑키 Pi ×3 (Wi-Fi, /pinky1~3)"]
     fsm["pinky_fsm"]
@@ -92,23 +99,23 @@ flowchart TB
   a3 -- "/arm3/state" --> central
 ```
 
-실선은 토픽, 점선은 서비스, 굵은 선은 액션입니다. 시험 때는 같은 인터페이스를 내는 가짜 노드(`gg_sim`의 `fake_pinky_node` ×3, `fake_workcell_node`, `fake_arm_node`, `fake_vision_node`, `fake_central_node`)와 심판 `scenario_monitor_node`, `sim_clock_node`가 관제 PC에서 대신 뜹니다. 11-06 개선 지시서의 제안(`/fleet/reinstate`, `MoveTo`의 `path`, 상태 값 `BLOCKED`, Nav2 `FollowPath`)은 구현되는 파트에서 이 그림에 더합니다. 이름, 타입, QoS의 원본은 `interfaces/gg_interfaces/contract.yaml`입니다.
+실선은 토픽, 점선은 서비스, 굵은 선은 액션입니다. 시험 때는 같은 인터페이스를 내는 가짜 노드(`fake_robots`의 `fake_pinky_node` ×3, `fake_workcell_node`, `fake_arm_node`, `fake_vision_node`, `fake_central_node`)와 심판 `scenario_monitor_node`, `sim_clock_node`가 관제 PC에서 대신 뜹니다. 11-06 개선 지시서의 제안(`/fleet/reinstate`, `MoveTo`의 `path`, 상태 값 `BLOCKED`, Nav2 `FollowPath`)은 구현되는 파트에서 이 그림에 더합니다. 이름, 타입, QoS의 원본은 `interfaces/fleet_interfaces/contract.yaml`입니다.
 
 ## 폴더
 
 | 폴더 | 내용 | 상태 |
 |---|---|---|
-| `interfaces/gg_interfaces` | 메시지, 액션, 서비스, `contract.yaml`(이름, 타입, QoS의 단일 원본) | 초안 |
-| `pc/gg_fleet_core` | 관제 판단 로직. ROS를 쓰지 않는 순수 Python과 pytest. `manager.py`(`FleetManager`), `orders/`(주문), `traffic/`(교통), `common/`(명령, 파라미터, 계약), `data/`(기본 지도와 파라미터) | 동작 |
-| `pc/gg_fleet` | `gg_fleet_core`를 ROS에 연결하는 노드. 실행 파일 `fleet_manager_node`, 노드 이름 `fleet_manager` | 동작 |
-| `sim/gg_sim`, `sim/gg_sim/scenarios` | 가짜 핑키, 작업공간 서버, 출고 팔, 비전, 중앙, 시계, 심판 노드와 시나리오 | 동작 |
-| `sim/gg_sim/maps` | 비교용 일방통행 지도 2개. 기본 지도는 `pc/gg_fleet_core/gg_fleet_core/data/lane_map.yaml` | 동작 |
+| `interfaces/fleet_interfaces` | 메시지, 액션, 서비스, `contract.yaml`(이름, 타입, QoS의 단일 원본) | 초안 |
+| `pc/fleet_core` | 관제 판단 로직. ROS를 쓰지 않는 순수 Python과 pytest. `manager.py`(`FleetManager`), `orders/`(주문), `traffic/`(교통), `common/`(명령, 파라미터, 계약), `data/`(기본 지도와 파라미터) | 동작 |
+| `pc/fleet_manager` | `fleet_core`를 ROS에 연결하는 노드. 실행 파일 `fleet_manager_node`, 노드 이름 `fleet_manager` | 동작 |
+| `sim/fake_robots`, `sim/fake_robots/scenarios` | 가짜 핑키, 작업공간 서버, 출고 팔, 비전, 중앙, 시계, 심판 노드와 시나리오 | 동작 |
+| `sim/fake_robots/maps` | 비교용 일방통행 지도 2개. 기본 지도는 `pc/fleet_core/fleet_core/data/lane_map.yaml` | 동작 |
 | `tools` | 전수 검사(`model_check.py`), 기록 재생(`replay.py`), 지연·잡음 압박 시험(`pressure_sweep.py`), 격자 지도 변환(`convert_grid_map.py`) | 동작 |
-| `bringup/gg_bringup` | `pc.launch.py` | 동작 |
+| `bringup/iponic_bringup` | `pc.launch.py` | 동작 |
 | `scripts/check_interfaces.py` | 실행 중인 시스템을 `contract.yaml`과 비교 | 동작 |
 | `pc/central`, `pinky/*`, `arm/*` | 담당자가 채울 빈 패키지 | 비어 있음 |
 
-패키지 이름은 2026-11-06에 바꿨습니다(`fleet_core` → `gg_fleet_core`, `fleet_manager` → `gg_fleet`, `fleet_interfaces` → `gg_interfaces`, `fake_robots` → `gg_sim`, `iponic_bringup` → `gg_bringup`). 모듈별로 바꾼 표는 `docs/worklog_2026-11-06.md`에 있습니다. 낱말은 fleet(핑키 3대), station(작업공간·출고), waypoint(지점, 레인 그래프의 꼭짓점. ROS 노드와 헷갈리지 않게 "노드"라 부르지 않습니다), lane(레인), zone(구역, 잠금 단위), dock/parking으로 씁니다.
+패키지 이름(`fleet_interfaces`, `fleet_manager`, `fleet_core`, `fake_robots`, `iponic_bringup`)은 그대로이고, 2026-11-06에 패키지 안의 모듈만 역할에 맞게 나누고 이름을 바꿨습니다. 프로젝트 이름이 정해지지 않아 패키지에 접두어를 붙이지 않았습니다. 모듈별로 바꾼 표는 `docs/worklog_2026-11-06.md`에 있습니다. 낱말은 fleet(핑키 3대), station(작업공간·출고), waypoint(지점, 레인 그래프의 꼭짓점. ROS 노드와 헷갈리지 않게 "노드"라 부르지 않습니다), lane(레인), zone(구역, 잠금 단위), dock/parking으로 씁니다.
 
 가짜 노드는 다음과 같습니다.
 
@@ -127,7 +134,7 @@ ROS 없이 관제 로직만 시험합니다. Windows에서도 실행할 수 있�
 
 ```bash
 pip install pytest pyyaml
-PYTHONPATH=pc/gg_fleet_core python -m pytest pc/gg_fleet_core/test -q
+PYTHONPATH=pc/fleet_core python -m pytest pc/fleet_core/test -q
 ```
 
 ROS 2 Jazzy에서 전체를 빌드하고 시나리오를 실행합니다. 로봇 네트워크의 기본 도메인과 섞이지 않도록 도메인을 따로 지정합니다.
@@ -139,7 +146,7 @@ colcon build
 source install/setup.bash
 export ROS_DOMAIN_ID=43 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
-ros2 launch gg_bringup pc.launch.py use_fake:=true scenario:=basic_orders result_dir:=/tmp/run1
+ros2 launch iponic_bringup pc.launch.py use_fake:=true scenario:=basic_orders result_dir:=/tmp/run1
 cat /tmp/run1/summary.json
 ```
 
@@ -149,7 +156,7 @@ cat /tmp/run1/summary.json
 
 ## 시나리오
 
-`sim/gg_sim/scenarios/*.yaml`에 여섯 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
+`sim/fake_robots/scenarios/*.yaml`에 여섯 개가 있습니다. 모든 로봇은 대기 지점에서 빈 바구니를 싣고 시작합니다.
 
 | 이름 | 내용 | 확인하는 것 |
 |---|---|---|
@@ -195,10 +202,10 @@ faults:
 ## 실물로 교체
 
 ```bash
-ros2 launch gg_bringup pc.launch.py use_fake:=true fake_robots:="pinky2 pinky3"   # pinky1만 실물
-ros2 launch gg_bringup pc.launch.py use_fake:=true fake_arms:="arm3"              # 작업공간 서버와 비전만 실물
-ros2 launch gg_bringup pc.launch.py use_fake:=true fake_arms:="arm1 arm2"         # arm3만 실물
-ros2 launch gg_bringup pc.launch.py use_fake:=false                               # 전부 실물
+ros2 launch iponic_bringup pc.launch.py use_fake:=true fake_robots:="pinky2 pinky3"   # pinky1만 실물
+ros2 launch iponic_bringup pc.launch.py use_fake:=true fake_arms:="arm3"              # 작업공간 서버와 비전만 실물
+ros2 launch iponic_bringup pc.launch.py use_fake:=true fake_arms:="arm1 arm2"         # arm3만 실물
+ros2 launch iponic_bringup pc.launch.py use_fake:=false                               # 전부 실물
 ```
 
 `fake_arms`에서 arm1과 arm2는 같이 쓰거나 같이 뺍니다. 서버 하나(`/workcell/fill_basket`)가 두 팔을 맡기 때문이고, 하나만 쓰면 launch가 오류로 멈춥니다. 두 이름을 쓰면 가짜 작업공간 서버와 비전 2개가, arm3을 쓰면 가짜 출고 팔이 뜹니다.
@@ -209,11 +216,11 @@ ros2 launch gg_bringup pc.launch.py use_fake:=false                             
 |---|---|---|
 | 토픽, 액션, 서비스 이름 | `contract.yaml`의 `name` | 없음 |
 | QoS | `contract.yaml`의 `qos_profiles` | 없음 |
-| 메시지 필드 | `interfaces`의 정의, `gg_fleet/adapters.py`, `sim/gg_sim`에서 그 메시지를 쓰는 노드 | 이 파일들만. 타입을 통째로 바꾸면 `fleet_manager_node.py`의 타입 지정도 고칩니다. |
-| 로봇 상태 값 | `RobotState.msg`의 상수, `sim/gg_sim/gg_sim/judge.py`의 `IDLE` 비교 | 이 파일들만. `gg_fleet_core`는 이 값으로 판단하지 않습니다. |
+| 메시지 필드 | `interfaces`의 정의, `fleet_manager/adapters.py`, `sim/fake_robots`에서 그 메시지를 쓰는 노드 | 이 파일들만. 타입을 통째로 바꾸면 `fleet_manager_node.py`의 타입 지정도 고칩니다. |
+| 로봇 상태 값 | `RobotState.msg`의 상수, `sim/fake_robots/fake_robots/judge.py`의 `IDLE` 비교 | 이 파일들만. `fleet_core`는 이 값으로 판단하지 않습니다. |
 | 팔 상태 값 | `ArmState.msg`의 상수, `judge.py`의 `PLACING` | 이 파일들만 |
-| 이벤트 코드 | `gg_fleet_core`, `fake_central_node.py`, `judge.py`, 시나리오의 `events_include` | 이 파일들만 |
-| 관제와 FSM의 역할 경계 | `gg_fleet`의 `fleet_manager_node.py`와 `adapters.py` | `gg_fleet_core`는 수정하지 않음 |
+| 이벤트 코드 | `fleet_core`, `fake_central_node.py`, `judge.py`, 시나리오의 `events_include` | 이 파일들만 |
+| 관제와 FSM의 역할 경계 | `fleet_manager`의 `fleet_manager_node.py`와 `adapters.py` | `fleet_core`는 수정하지 않음 |
 | 지점 좌표와 원점 | `lane_map.yaml`의 `waypoints`, `origin_m` | 없음 |
 | 레인 폭과 레인 시작 판정 | `lane_map.yaml`의 `half_width_m`, `lane_entry_m` | 없음 |
 | 레인과 양방향 구간 | `lane_map.yaml`의 `lanes`, `two_way`, `bundle_two_way` | 없음 |
@@ -225,7 +232,7 @@ ros2 launch gg_bringup pc.launch.py use_fake:=false                             
 | 로봇 이름과 대수 | `pc.launch.py`의 `robots`, `contract.yaml`의 `placeholders` | 없음 |
 | 작업공간과 출고 구역, 대기 지점 | `lane_map.yaml`의 `stations`, `parking` | 없음 |
 
-`lane_map.yaml`과 `fleet_params.yaml`은 `pc/gg_fleet_core/gg_fleet_core/data/`에 있습니다. 설치된 기본값 대신 다른 파일을 쓰려면 launch 인자 `map_file`, `params_file`, `contract_file`을 지정합니다.
+`lane_map.yaml`과 `fleet_params.yaml`은 `pc/fleet_core/fleet_core/data/`에 있습니다. 설치된 기본값 대신 다른 파일을 쓰려면 launch 인자 `map_file`, `params_file`, `contract_file`을 지정합니다.
 
 ## 패키지를 추가할 때
 

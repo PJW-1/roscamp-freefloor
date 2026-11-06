@@ -14,7 +14,7 @@
 |---|---|---|
 | 컴포넌트 | 설계에서 역할 하나로 부르는 덩어리. 프로세스 하나일 수도 있고 여럿일 수도 있다 | FMS, central, 핑키 |
 | 노드 | ROS 2 그래프의 참가자. 토픽, 서비스, 액션은 노드가 주고받는다 | `fleet_manager`, `fake_pinky_node` |
-| 프로세스 | 운영체제에서 실행 중인 프로그램 하나. 죽으면 그 안의 노드와 모듈이 함께 멈춘다 | `ros2 run gg_fleet fleet_manager_node` |
+| 프로세스 | 운영체제에서 실행 중인 프로그램 하나. 죽으면 그 안의 노드와 모듈이 함께 멈춘다 | `ros2 run fleet_manager fleet_manager_node` |
 | 컴퓨터 | 프로세스가 도는 장치 | 관제 PC, 핑키의 Raspberry Pi 4B, 팔 PC |
 | 모듈 | 프로세스 안의 파이썬 코드 묶음. 서로 파이썬 호출로 부르고 ROS를 쓰지 않는다 | `traffic`, `orders` |
 | 플릿(fleet) | 핑키 3대 | `pinky1`~`pinky3` |
@@ -28,7 +28,7 @@
 
 FMS(fleet manager, RCS)는 핑키 플릿에 일을 나눠 주고(배분), 길을 정리하고(교통), 스테이션에 작업을 요청한다(핸드셰이크). 팔의 동작 자체는 스테이션이 한다. 프로세스 하나, 안에 orders와 traffic 두 모듈.
 
-FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실행 파일 `fleet_manager_node`)이고, 그 안에 모듈 2개(`orders`, `traffic`)와 둘을 잇는 `FleetManager`(`manager.py`)가 있다. v17 그림은 FMS 안을 core, pinky, arm 세 모듈로 그렸다. core와 arm이 `orders`에, pinky가 `traffic`에 해당한다. 패키지 이름은 2026-11-06에 `gg_` 접두로 바꿨다(11절).
+FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실행 파일 `fleet_manager_node`)이고, 그 안에 모듈 2개(`orders`, `traffic`)와 둘을 잇는 `FleetManager`(`manager.py`)가 있다. v17 그림은 FMS 안을 core, pinky, arm 세 모듈로 그렸다. core와 arm이 `orders`에, pinky가 `traffic`에 해당한다. 패키지 이름은 그대로이고 2026-11-06에 패키지 안의 모듈만 나눴다(11절).
 
 ### 컴포넌트
 
@@ -38,10 +38,10 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 |---|---|---|---|---|---|
 | 화면(고객, 관리자) | 없음. central과 HTTP로 잇는 것은 제안(v17) | 관제 PC(제안) | 없음 | 주문과 조작 입력, 상태 표시 | central |
 | central | `pc/central`은 빈 패키지. 시험: `fake_central_node` | 관제 PC | 주문, 재고 기록, 이력. DB는 제안이고 central만 쓴다 | `/central/submit_order`, `/central/set_run_mode`, `/central/report_order` 서비스. `/central/orders`, `/central/events` 발행 | 계획: `/fleet/confirm_clear` 호출, `/fleet/robots`, `/fleet/assignments`, `/fleet/zones` 구독. `fake_central_node`는 이 중 아무것도 하지 않는다(11절) |
-| FMS (`fleet_manager`) | `pc/gg_fleet`의 노드 1개와 `pc/gg_fleet_core` | 관제 PC | 노드 자체가 가진 것은 진행 중인 목표 핸들, 결과를 기다리는 취소, 답을 받지 못한 보고, 액션 서버를 찾은 로봇 목록, 마지막으로 낸 `/fleet/zones`와 `/fleet/assignments`, 시작 침묵 기한이다. 나머지는 아래 두 모듈. 프로세스가 죽으면 전부 사라진다(7절) | `/fleet/robots`, `/fleet/assignments`, `/fleet/zones`, `/fleet/heartbeat`, `/central/events` 발행. `/fleet/confirm_clear` 서비스 | `/{pinky}/move_to`, `/{pinky}/dock`, `/workcell/fill_basket`, `/arm3/swap_basket` 액션. `/central/report_order` 서비스. `/central/orders`, `/{pinky}/state` 구독 |
-| `orders` | 모듈 `gg_fleet_core/orders/orchestrator.py`(`OrderOrchestrator`) | FMS 안 | 대기 주문, 로봇별 묶인 주문과 담은 것·결품, `basket[robot]`, 팔 작업과 재시도 횟수, `ARM_NO_RESULT`를 낸 뒤 늦은 결과를 기다리는 팔 작업 | `on_order_board`, `on_fill_result`, `on_swap_result`, `on_dispatch_feedback`, `on_dispatch_result`, `on_robot_removed` | 명령을 내놓는다: `DispatchCmd`, `CancelDispatchCmd`, `ReleaseCmd`, `RobotFaultCmd`, `FillCmd`, `SwapCmd`, `ReportOrderCmd` |
-| `traffic` | 모듈 `gg_fleet_core/traffic/`: `controller.py`(`TrafficController`), `mission.py`(로봇별 기록), `recovery.py`(통신 두절, 복구, 교착 후퇴, confirm_clear), `zones.py`(`ZoneLocks`), `selector.py`(`RobotSelector`), `deadlock.py`, `lane_map.py`(`LaneMap`) | FMS 안 | 로봇별 임무 단계, 경로, 진행 중 목표, 고장. 구역 잠금과 대기열. 열린 호출. 주문과 바구니는 모른다 | `on_robot_state`, `on_move_result`, `on_goal_rejected`, `on_dock_result`, `on_dispatch`, `on_dispatch_cancel`, `on_release`, `on_run_mode`, `on_robot_fault`, `confirm_clear` | 명령을 내놓는다: `MoveCmd`, `DockCmd`, `CancelCmd`, `DispatchFeedback`, `DispatchResult` |
-| `FleetManager` | 클래스 `gg_fleet_core/manager.py` | FMS 안 | 목표 번호, 호출 하나 동안 고정된 시각, 기록 대상 | 노드가 부르는 입구. `tick()`, 뷰, `record_to` | 두 모듈 |
+| FMS (`fleet_manager`) | `pc/fleet_manager`의 노드 1개와 `pc/fleet_core` | 관제 PC | 노드 자체가 가진 것은 진행 중인 목표 핸들, 결과를 기다리는 취소, 답을 받지 못한 보고, 액션 서버를 찾은 로봇 목록, 마지막으로 낸 `/fleet/zones`와 `/fleet/assignments`, 시작 침묵 기한이다. 나머지는 아래 두 모듈. 프로세스가 죽으면 전부 사라진다(7절) | `/fleet/robots`, `/fleet/assignments`, `/fleet/zones`, `/fleet/heartbeat`, `/central/events` 발행. `/fleet/confirm_clear` 서비스 | `/{pinky}/move_to`, `/{pinky}/dock`, `/workcell/fill_basket`, `/arm3/swap_basket` 액션. `/central/report_order` 서비스. `/central/orders`, `/{pinky}/state` 구독 |
+| `orders` | 모듈 `fleet_core/orders/orchestrator.py`(`OrderOrchestrator`) | FMS 안 | 대기 주문, 로봇별 묶인 주문과 담은 것·결품, `basket[robot]`, 팔 작업과 재시도 횟수, `ARM_NO_RESULT`를 낸 뒤 늦은 결과를 기다리는 팔 작업 | `on_order_board`, `on_fill_result`, `on_swap_result`, `on_dispatch_feedback`, `on_dispatch_result`, `on_robot_removed` | 명령을 내놓는다: `DispatchCmd`, `CancelDispatchCmd`, `ReleaseCmd`, `RobotFaultCmd`, `FillCmd`, `SwapCmd`, `ReportOrderCmd` |
+| `traffic` | 모듈 `fleet_core/traffic/`: `controller.py`(`TrafficController`), `mission.py`(로봇별 기록), `recovery.py`(통신 두절, 복구, 교착 후퇴, confirm_clear), `zones.py`(`ZoneLocks`), `selector.py`(`RobotSelector`), `deadlock.py`, `lane_map.py`(`LaneMap`) | FMS 안 | 로봇별 임무 단계, 경로, 진행 중 목표, 고장. 구역 잠금과 대기열. 열린 호출. 주문과 바구니는 모른다 | `on_robot_state`, `on_move_result`, `on_goal_rejected`, `on_dock_result`, `on_dispatch`, `on_dispatch_cancel`, `on_release`, `on_run_mode`, `on_robot_fault`, `confirm_clear` | 명령을 내놓는다: `MoveCmd`, `DockCmd`, `CancelCmd`, `DispatchFeedback`, `DispatchResult` |
+| `FleetManager` | 클래스 `fleet_core/manager.py` | FMS 안 | 목표 번호, 호출 하나 동안 고정된 시각, 기록 대상 | 노드가 부르는 입구. `tick()`, 뷰, `record_to` | 두 모듈 |
 | 핑키 FSM | `pinky/pinky_fsm`은 빈 패키지. 시험: `fake_pinky_node` | 핑키 Pi 4B | 진행 중인 목표, FSM 상태, 위치 | `/{pinky}/move_to`, `/{pinky}/dock` 액션. `/{pinky}/state` 발행 | `/{pinky}/navigate_to_pose`(Nav2), pinky_dock. `/fleet/heartbeat` 구독 |
 | 핑키 내부 | `pinky_dock`은 빈 패키지, `pinky_nav_config`는 자리표시 launch뿐이다. Nav2 + AMCL, `pinky_bringup`은 제조사 패키지 | 핑키 Pi 4B | 지도 위 위치 | `/{pinky}/navigate_to_pose`, `/odom`, `/scan` | `/cmd_vel` |
 | workcell | 없음. 시험: `fake_workcell_node`. 구조는 팔 담당이 정한다. v17은 FMS의 arm 모듈과 `arm_planner`(임시 이름, 제안)로 그렸다 | 팔 PC 중 한 곳 | 두 팔의 작업과 재고 영역 | `/workcell/fill_basket` 액션 | arm_control |
@@ -105,7 +105,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `ORDER_REJECTED`, `ORDER_PARTIAL`, `ORDER_HELD` | WARN | central | 거절, 일부 출고, 보류 |
 | `OUT_OF_STOCK`, `STOCK_MISMATCH` | WARN | central | 재고 기록도 0, 기록은 있는데 실제로 없음 |
 
-### 파라미터 (`pc/gg_fleet_core/gg_fleet_core/data/fleet_params.yaml`)
+### 파라미터 (`pc/fleet_core/fleet_core/data/fleet_params.yaml`)
 
 전부 실물로 재기 전의 값이다. 표의 "추정"은 파일에도 그렇게 적혀 있다는 뜻이다.
 
@@ -155,7 +155,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 - 모든 핑키는 빈 바구니를 싣고 시작한다.
 - 결품이면 담긴 것만 출고(`ship_partial`), 하나도 못 담으면 보류(HELD)하고 빈 바구니로 다음 일을 한다.
 
-## 3. 지도 (`pc/gg_fleet_core/gg_fleet_core/data/lane_map.yaml`, 임시)
+## 3. 지도 (`pc/fleet_core/fleet_core/data/lane_map.yaml`, 임시)
 이 배치는 임시다(2절). 실제 지도가 나오면 이 파일만 바꾼다. 2026-11-05 맵 아키텍처 논의에서 정할 항목은 `09_맵_아키텍처_결정_항목.txt`에 있다.
 
 **로봇은 지점 사이를 어느 방향으로든 직선으로 간다. 대각선을 못 가는 점유 격자가 아니다.** 일방통행 한 바퀴였던 이전 지도에는 교착이 생길 곳이 없어, 양방향 구간과 교차가 있는 지도로 바꿨다(사용자 결정, 2026-11-05). 11-05 PDF는 지도 회의에 요소 하나만 제안하자고 했고 이 지도에는 둘이 있다.
@@ -167,16 +167,16 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 - **구역(잠금 단위):** 지점마다 구역 하나다. 레인은 끝 지점의 구역에 속한다. 그래서 한 지점으로 들어오는 레인들은 잠금 하나와 FIFO 하나를 함께 쓴다. 들어오는 레인이 하나면 레인 하나가 잠금 하나다.
 - **양방향 구간:** `two_way`로 적은 한 쌍(a→b, b→a)은 두 끝 지점의 구역을 하나로 합친다(`bundle_two_way`, 전수 검사에서 끌 수 있다). 같은 쌍을 레인 두 줄로 적으면 지도를 거부한다.
 - **충돌쌍:** 두 구역의 레인이 2r보다 가까이 지나면 동시 점유 금지 쌍으로 자동 계산한다. 지점을 공유하는 레인은 그 지점을 떠나는 쪽의 처음 d를 빼고 잰다. 앞 로봇은 d를 지나야 뒤 구역을 놓으므로 그 구간은 겹칠 수 없기 때문이다. 양방향 쌍 자신은 뺀다. 기본 지도의 충돌쌍은 `{AVENUE, S}` 하나다.
-- 비교용 지도는 `sim/gg_sim/maps/`에 있다. `oneway_loop`는 이전 지도를 변환한 일방통행, `oneway_shortcut`은 거기에 양방향 지름길을 하나 넣은 것이다. 격자 지도는 시험 자료(`pc/gg_fleet_core/test/data/grid_cells.yaml`)로만 남았다.
+- 비교용 지도는 `sim/fake_robots/maps/`에 있다. `oneway_loop`는 이전 지도를 변환한 일방통행, `oneway_shortcut`은 거기에 양방향 지름길을 하나 넣은 것이다. 격자 지도는 시험 자료(`pc/fleet_core/test/data/grid_cells.yaml`)로만 남았다.
 - 전수 검사(`tools/model_check.py`, 실제 `TrafficController`를 호출 순서마다 돌림)의 결과는 11절에 있다.
 - 약점: 대로 전체가 잠금 하나이므로 대로에서 멈춘 로봇 1대는 그 이동을 모두 막는다.
 
-## 4. 인터페이스 (`interfaces/gg_interfaces`, FMS 통합 구조 기준)
+## 4. 인터페이스 (`interfaces/fleet_interfaces`, FMS 통합 구조 기준)
 계층: 사용자 → central → FMS → 핑키 / workcell(arm1·arm2) / arm3. central은 로봇을 직접 움직이지 않고, 로봇은 central을 모른다. 핑키 파트는 팔을 모르고 팔 파트는 핑키를 모른다.
 
 **FMS 안의 연결은 ROS가 아니라 파이썬 호출이다.** `orders`와 `traffic`은 한 프로세스(노드 `fleet_manager`)의 두 모듈이므로 둘 사이에 액션, 서비스, 토픽을 두지 않는다. 합치기 전 판에 있던 `/fleet/dispatch` 액션, `/fleet/release` 서비스, `/fleet/events`, `/orchestrator/assignments`, `/orchestrator/zones`, `/orchestrator/{arm}/*`, `/orchestrator/confirm_clear`는 만들지 않는다. `Dispatch.action`과 `Release.srv`도 만들지 않는다.
 
-FMS 내부 호출 (파이썬, `gg_fleet_core` 패키지):
+FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `on_dispatch(goal_id, station_id, robot_id="")`: orchestrator → traffic. 로봇을 스테이션으로 보내 달라는 요청. `robot_id`가 비면 traffic이 고른다.
 - `on_dispatch_cancel(goal_id)`: orchestrator → traffic. 아직 끝나지 않은 요청을 취소한다.
 - `on_release(robot)`: orchestrator → traffic. 스테이션에서 할 일이 끝난 로봇을 놓아준다.
@@ -187,7 +187,7 @@ FMS 내부 호출 (파이썬, `gg_fleet_core` 패키지):
 - `on_robot_removed(robot)`: `confirm_clear`가 받아들여지면 orchestrator에 알린다. 담기나 교환 중이면 돌려줄 dispatch가 이미 끝나 있기 때문이다.
 - `on_robot_fault(robot, reason)`: 팔 재시도가 소진되어 orchestrator가 ERROR로 판단하면 traffic에 알린다. 통신 두절 판단과 호출 후보, "남은 로봇 없음" 판단이 이 상태를 본다.
 
-바깥 인터페이스 (`contract.yaml` 0.3-gg-draft와 같다. 11-05 구조 변경으로 기존 항목의 이름, 타입, QoS는 바뀌지 않았고, 더한 것은 11-05 지시서 4, 5번의 `/fleet/robots`와 heartbeat 둘이다. 11-06에 인터페이스 패키지가 `gg_interfaces`가 되어 타입 이름의 앞부분이 `fleet_interfaces/`에서 `gg_interfaces/`로 바뀌었고, heartbeat 토픽은 `/fms/heartbeat`에서 `/fleet/heartbeat`가 됐다. 둘 다 이름만 바뀌었고 필드와 QoS는 같다):
+바깥 인터페이스 (`contract.yaml` 0.3-draft와 같다. 11-05 구조 변경으로 기존 항목의 이름, 타입, QoS는 바뀌지 않았고, 더한 것은 11-05 지시서 4, 5번의 `/fleet/robots`와 heartbeat 둘이다. 11-06에 heartbeat 토픽만 `/fms/heartbeat`에서 `/fleet/heartbeat`로 이름이 바뀌었고 필드와 QoS는 같다):
 - `/central/submit_order` SubmitOrder 서비스: UI → central. 재고 기록에 없거나 용량 초과면 거절
 - `/central/set_run_mode` 서비스: UI → central (RUN / PAUSE / STOP)
 - `/central/orders` OrderBoard 토픽(run_mode, 최종 보고가 안 된 주문을 오래된 순서로): central → FMS
@@ -226,10 +226,10 @@ run_mode는 FMS가 OrderBoard로 받는다. 삭제된 것: TaskBoard, StationCou
 - 구역마다 FIFO다. 충돌쌍에는 FIFO를 넓혀 쌍 전체의 요청 순서를 따른다. 한쪽이 계속 바빠도 다른 쪽이 굶지 않게 하려는 것이고, 지시서의 "레인별 FIFO"보다 넓다. 이 순서로 대기 고리가 생기는지는 지도마다 전수 검사로 본다(11절).
 - 해제: 로봇 위치 p를 그 구역을 떠나는 레인(시작 지점 p_i, 단위 벡터 u)에 투영해 s = (p − p_i)·u를 구한다. s > d(`release_distance_m`)가 `release_confirm_samples`번 연속이면 해제한다. 떠나는 레인이 경로에 없으면(앞쪽 구역, 손으로 옮긴 로봇) 구역 중심선에서 d 이상이어야 한다.
 - 근거식: d ≥ r + ε + v·(τ + tick), d ≥ 2r + ε. r은 반경, ε은 위치 오차, v는 속도, τ는 보고 지연, tick은 관제 주기다. 뒤의 식은 앞 로봇이 해제 지점 근처에 서고 뒤 로봇이 지점까지 오는 경우이고, 시험으로 만들지는 않았다. d ≤ 2r이면 `TrafficController`가 시작을 거부한다. d는 실측 전 값이다. 압박 시험 표는 작업 기록 7번에 있고, 실측 ε과 τ가 나오면 그 표로 d를 정한다.
-- 이탈 e = |(p − p_i) − s·u|는 해제 조건이 아니다. 이동 목표 중에 `lane_error_warn_m`을 넘는 보고가 `release_confirm_samples`번 이어지면 목표당 한 번 `LANE_ERROR`만 낸다. 경로의 첫 노드로 가는 목표는 기준이 될 레인이 없어 보지 않는다. 목표를 연장하거나 다시 보내면 새 목표다. 횟수를 0부터 다시 세므로, 이탈이 이어지면 새 목표에서 다시 나오고 그 횟수를 채우기 전에 목표가 바뀌면 나오지 않을 수 있다. 05 레인 시뮬과 같다. 레인을 크게 벗어난 로봇도 s > d면 해제한다는 뜻이므로, 실측 e를 본 뒤 다시 판단한다(13절).
+- 이탈 e = |(p − p_i) − s·u|는 해제 조건이 아니다. 이동 목표 중에 `lane_error_warn_m`을 넘는 보고가 `release_confirm_samples`번 이어지면 목표당 한 번 `LANE_ERROR`만 낸다. 경로의 첫 지점으로 가는 목표는 기준이 될 레인이 없어 보지 않는다. 목표를 연장하거나 다시 보내면 새 목표다. 횟수를 0부터 다시 세므로, 이탈이 이어지면 새 목표에서 다시 나오고 그 횟수를 채우기 전에 목표가 바뀌면 나오지 않을 수 있다. 05 레인 시뮬과 같다. 레인을 크게 벗어난 로봇도 s > d면 해제한다는 뜻이므로, 실측 e를 본 뒤 다시 판단한다(13절).
 - 가장 짧은 레인이 d 이하이면 레인 끝에 서도 해제되지 않으므로 `TrafficController`가 시작을 거부한다. 기본 지도의 가장 짧은 레인은 0.4 m다.
 
-시작과 재시작: 전원이 지도에 올라야 움직이기 시작한다. 로봇은 위치를 보고하고 `MOVING`이나 `DOCKING`이 아닐 때 지도에 오른다. `startup_wait_s`가 지나도 안 오른 로봇이 있으면 `ROBOT_NOT_REPORTING`을 낸다. 아래의 `PLACEMENT_CONFLICT`로 거부된 로봇은 이미 보고했으므로 여기서 세지 않는다. 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있으면 지도에 올리지 않고 `PLACEMENT_CONFLICT`를 내며, 그 로봇이 움직이거나 관리자가 치울 때까지 **전원이 기다린다**(정책, 팀 확인 필요). 노드에서 d보다 멀리 서 있으면 먼저 그 레인의 끝으로 간다. 전원이 오르기 전에는 `/fleet/zones`를 내지 않는다. FMS는 잠금을 아직 모르며, 모르는 것과 빈 것은 다르다.
+시작과 재시작: 전원이 지도에 올라야 움직이기 시작한다. 로봇은 위치를 보고하고 `MOVING`이나 `DOCKING`이 아닐 때 지도에 오른다. `startup_wait_s`가 지나도 안 오른 로봇이 있으면 `ROBOT_NOT_REPORTING`을 낸다. 아래의 `PLACEMENT_CONFLICT`로 거부된 로봇은 이미 보고했으므로 여기서 세지 않는다. 다른 로봇이 쥔 구역이나 그 충돌쌍에 서 있으면 지도에 올리지 않고 `PLACEMENT_CONFLICT`를 내며, 그 로봇이 움직이거나 관리자가 치울 때까지 **전원이 기다린다**(정책, 팀 확인 필요). 지점에서 d보다 멀리 서 있으면 먼저 그 레인의 끝으로 간다. 전원이 오르기 전에는 `/fleet/zones`를 내지 않는다. FMS는 잠금을 아직 모르며, 모르는 것과 빈 것은 다르다.
 
 교착 처리: 대기 고리가 있는 동안 새 호출과 새 이동 단계를 내지 않는다. 이미 보낸 이동 목표는 그대로 두고, 아래의 포기 대상 로봇만 목표를 취소한다. 고리가 생기고 `deadlock_grace_s`가 지나면 우선순위가 가장 낮은 로봇 1대에서 아직 들어가지 않은 구역을 포기 대상으로 정하고, 대상이 있으면 이동 목표를 취소한다(`DEADLOCK_RETREAT`). 실제 해제는 `recover_check_s` 뒤에 위치 보고로 벗어난 것이 확인된 구역만 한다. 들어간 구역에서 물러나는 동작은 없다. 포기할 구역이 없으면 바로 `DEADLOCK_UNRESOLVED`로 알린다. 재확인 때 구역이 하나라도 해제되면 이 이벤트는 나지 않는다. 아무것도 해제하지 못했어도 대상 중 하나라도 해제 여유 밖에 있으면 재확인을 반복하며, 이 대기에는 시간 제한이 없다. 아무것도 해제하지 못했고 모든 대상의 해제 여유 안에 들어가 있으면 `DEADLOCK_UNRESOLVED`로 알린다(7절, SR-13과 다른 점은 12절).
 우선순위 입력: 스테이션에 서 있는지(AT_STATION)와 출고 구역으로 가는 요청을 받았는지만 본다. 주문과 바구니는 보지 않는다.
@@ -276,7 +276,7 @@ zones_view(); robot_view(robot); status_view(robot)
 ## 5-1. 주문 진행 규칙 (`orders`, FleetCore에서 옮긴 것)
 주문 배정:
 - **주문은 핑키가 WORK 도크에 도킹을 마친 순간 묶는다.** WORK 요청의 결과가 success로 오면 그 robot_id에 대기 주문 맨 앞을 묶고 `ORDER_BOUND`를 낸다. 그 전에는 "호출"만 한다. 도크 도착 순서가 곧 작업 순서이므로, 이렇게 해야 주문이 등록 순서대로 처리되고 도중에 고장 난 로봇이 주문을 쥐고 있지 않는다.
-- 열어 두는 WORK 요청 수 = 아직 묶이지 않은 주문 수. 묶이지 않은 주문이 줄면 남는 요청을 `on_dispatch_cancel`로 취소한다(대기 구간 복귀는 5절의 `commit` 노드 규칙).
+- 열어 두는 WORK 요청 수 = 아직 묶이지 않은 주문 수. 묶이지 않은 주문이 줄면 남는 요청을 `on_dispatch_cancel`로 취소한다(대기 구간 복귀는 5절의 `commit` 지점 규칙).
 
 주문 상태: PENDING, BOUND, FILLING, TO_OUTBOUND, SWAPPING, 종료(SHIPPED, PARTIAL, HELD). 바구니 상태 `basket[robot]`: EMPTY, FULL, NONE. 모든 핑키는 EMPTY로 시작한다.
 
@@ -323,7 +323,7 @@ order_of(robot); robot_view(robot)
 
 FMS(`FleetManager`, 노드 `fleet_manager`): 두 모듈을 묶어 명령을 서로에게 전달하고, 바깥 ROS 인터페이스를 맡는다. 중계 노드가 없으므로 합치기 전 판의 confirm_clear 콜백 그룹 문제는 사라진다. `FleetManager`는 한 호출 동안 시각을 한 번만 읽고, `record_to(write)`로 모든 입력과 그 결과를 JSON 한 줄씩 남긴다(`fleet_manager_node --record PATH`, `pc.launch.py record:=PATH`). 형식은 `tools/replay.py` 머리말에 있다. 노드가 직접 내는 `CANCEL_UNCONFIRMED`, `ORDER_REPORT_REFUSED`와 그 판단의 근거인 central의 보고 답, 취소 요청의 답은 코어를 거치지 않으므로 기록에 없고 재생에서 비교하지 않는다. 두 이벤트는 `/central/events`로 나가므로 bag에는 남는다. `robots_view()`가 `/fleet/robots`의 내용을 만든다.
 
-## 6. 시나리오 형식 (`sim/gg_sim/scenarios/*.yaml`)
+## 6. 시나리오 형식 (`sim/fake_robots/scenarios/*.yaml`)
 ```yaml
 seed: 7
 speed_factor: 5.0
@@ -349,7 +349,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 심판 추가 항목: `fifo_violations`(ORDER_BOUND 순서가 등록 순서와 다르거나 SHIPPED/PARTIAL 순서가 묶인 순서와 다르면 위반. ORDER_REQUEUED된 주문은 다음에 묶이는 주문이어야 하고, 되돌림 없이 두 번 묶이면 위반), `dual_arm_overlaps`(arm1과 arm2가 동시에 PLACING. 양쪽 팔이 필요한 주문인데 PLACING이 안 보이면 실패. 2026-11-04에 양팔 동시 계획으로 정했으므로 이 항목의 의미가 바뀐다: 동시 PLACING은 허용, 충돌만 위반. 가짜 workcell과 심판을 그에 맞춰 고치기 전까지 기대값은 참고용), `unexpected_errors`(시나리오가 예상하지 않은 ERROR 이벤트), `order_results`(주문별 결과), 시간 초과는 시나리오가 예상한 경우 외에는 실패.
 
 ## 7. 알려진 약점 (이번 작업에서 고치지 않고 문서에 남김)
-- `arrival_tolerance_m` 안에 멈춰 도착으로 쳤는데 레인 진행이 `s ≤ d`이면 뒤 구역이 해제되지 않아 조용히 멈출 수 있다. 가장 짧은 레인에서 d를 뺀 값이 허용치보다 작은 지도에서만 생긴다. 기본 지도는 0.4 m에서 0.2 m를 빼 0.2 m이므로 0.15 m에 해당하지 않고, 시험으로 고정했다. 시험 격자(0.33 m)와 `sim/gg_sim/maps/oneway_*.yaml`은 조건을 만족하지 않는다. 시작할 때 막지 않는다.
+- `arrival_tolerance_m` 안에 멈춰 도착으로 쳤는데 레인 진행이 `s ≤ d`이면 뒤 구역이 해제되지 않아 조용히 멈출 수 있다. 가장 짧은 레인에서 d를 뺀 값이 허용치보다 작은 지도에서만 생긴다. 기본 지도는 0.4 m에서 0.2 m를 빼 0.2 m이므로 0.15 m에 해당하지 않고, 시험으로 고정했다. 시험 격자(0.33 m)와 `sim/fake_robots/maps/oneway_*.yaml`은 조건을 만족하지 않는다. 시작할 때 막지 않는다.
 - 이동이나 도킹 서버를 찾은 뒤 사라지면 로봇은 구역을 쥔 채 `move_retry_wait_s`마다 다시 보낸다. 시간 제한은 없고 `GOAL_NOT_SENT`를 한 번 낼 뿐이다. 서버가 돌아올지 관리자가 치울지는 사람이 본다.
 - 교착 포기 대상 로봇의 위치 보고가 끊기면 해제에 필요한 보고가 모자라 `_finish_retreat`가 재확인을 반복한다. `comm_timeout_s`가 지나 `COMM_LOST`가 되면 그 로봇의 대기 요청이 모두 취소되어 원래 대기 고리가 끊어지고, 고리가 하나도 남지 않으면 `_check_deadlock`이 재확인 상태를 지운다. 다른 고리가 남아 있으면 재확인이 이어질 수 있고, 그동안 새 호출과 새 이동 단계도 나가지 않는다. 옛 입출고 코드에는 이 재확인을 끝내는 수정이 있지만 GG 코드에는 들어오지 않았다.
 - FMS가 멈추면 주문 진행, 구역 잠금, 교착 처리가 함께 멈춘다. 화면에 로봇 상태가 오지 않고 `confirm_clear`와 STOP/PAUSE도 전달되지 않는다. 중앙이 직접 내는 이벤트는 계속 나온다. 한 프로세스로 합친 대가다. 핑키는 `/fleet/heartbeat`가 끊기면 스스로 선다(제안, 4절). 팔의 목표는 이 대상이 아니라 담기 중에 FMS가 죽으면 팔은 하던 일을 계속한다. 비상 정지는 FMS에 기대지 않도록 따로 정해야 한다(SR-36, 13절).
@@ -390,7 +390,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 - 실행 위치는 2026-11-04에 정했다: Nav2는 핑키 Pi, 상품 인식과 workcell은 팔 PC.
 
 ## 11. 코드의 현재 상태 (저장소 `PJW-1/roscamp-repo-2`, 브랜치 `fms-work-order`, 2026-11-06)
-**FMS는 코드에서도 두 모듈로 나뉘었다.** 11-05에 `FleetCore`와 `fleet_manager_node`를 `orchestrator_core`, `traffic_core`, `FmsCore`, `fms_node`로 나눴고, 11-06 개선 지시서 0.5번에서 이름과 폴더를 역할에 맞췄다. 지금은 `pc/gg_fleet_core/gg_fleet_core/` 안에 `manager.py`(`FleetManager`), `orders/orchestrator.py`(`OrderOrchestrator`), `traffic/`(`controller.py`의 `TrafficController`와 `mission.py`, `recovery.py`, `zones.py`, `selector.py`, `deadlock.py`, `lane_map.py`), `common/`(`commands.py`, `params.py`, `contract.py`, `contract_check.py`), `data/`가 있고, 노드는 `pc/gg_fleet/gg_fleet/fleet_manager_node.py`(노드 이름 `fleet_manager`)다. 바꾼 이름의 전체 표는 `docs/worklog_2026-11-06.md`에 있다. 동작은 바꾸지 않았다. 전체 시험은 경계 시험 1건이 늘어 874건이 모두 통과했고, 로봇 2대 전수 검사 다섯 경우의 숫자가 0.5 전과 같다. 옛 호출 방식을 쓰는 시험을 그대로 돌리려고 시험 폴더에 얇은 `legacy_core.py`만 남겼다. 경계는 `test_fms_boundary.py`가 import 그래프로 검사한다: `traffic` 패키지의 어느 모듈도 `orders`나 `manager`에 닿지 않는다.
+**FMS는 코드에서도 두 모듈로 나뉘었다.** 11-05에 `FleetCore`와 `fleet_manager_node`를 `orchestrator_core`, `traffic_core`, `FmsCore`, `fms_node`로 나눴고, 11-06 개선 지시서 0.5번에서 이름과 폴더를 역할에 맞췄다. 지금은 `pc/fleet_core/fleet_core/` 안에 `manager.py`(`FleetManager`), `orders/orchestrator.py`(`OrderOrchestrator`), `traffic/`(`controller.py`의 `TrafficController`와 `mission.py`, `recovery.py`, `zones.py`, `selector.py`, `deadlock.py`, `lane_map.py`), `common/`(`commands.py`, `params.py`, `contract.py`, `contract_check.py`), `data/`가 있고, 노드는 `pc/fleet_manager/fleet_manager/fleet_manager_node.py`(노드 이름 `fleet_manager`)다. 바꾼 이름의 전체 표는 `docs/worklog_2026-11-06.md`에 있다. 지도 파일의 키 이름(`nodes:` → `waypoints:`, 옛 키는 로더가 거절한다)과 heartbeat의 이름 말고 동작은 바꾸지 않았다. 전체 시험은 경계 시험 2건이 늘어 875건이 모두 통과했고, 로봇 2대 전수 검사 다섯 경우의 숫자가 0.5 전과 같다. 옛 호출 방식을 쓰는 시험을 그대로 돌리려고 시험 폴더에 얇은 `legacy_core.py`만 남겼다. 경계는 `test_fms_boundary.py`가 import 그래프로 검사한다: `traffic` 패키지의 어느 모듈도 `orders`나 `manager`에 닿지 않는다.
 
 | 항목 | 코드 |
 |---|---|
@@ -407,18 +407,18 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 | 기록과 재생 | `fleet_manager_node --record`, `tools/replay.py` |
 | 중앙과 FMS 사이 | `fleet_manager` 노드가 `/fleet/*`, `/central/events`를 발행하고 `/fleet/confirm_clear`를 제공한다. 가짜 중앙은 `/fleet/*`를 구독하지 않고, 심판 `scenario_monitor`가 구독하며 관리자 역할로 confirm_clear를 부른다 |
 | 중앙과 팔 사이 | `contract.yaml`에 `/{arm}/state`, `/{arm}/vision/items`가 있다. FMS는 이 토픽을 판단에 쓰지 않는다. `scenario_monitor`가 심판으로 `/{arm}/state`를 구독한다 |
-| 인터페이스 | `contract.yaml` 0.3-gg-draft. 11-05에 더한 것은 `/fleet/robots`, `/fms/heartbeat`(11-06에 `/fleet/heartbeat`로 이름 변경) 둘이다. 11-06에 인터페이스 패키지 이름이 `gg_interfaces`가 되어 타입 이름의 앞부분이 바뀌었다. 토픽, 서비스, 액션의 이름과 필드, QoS는 그대로다 |
+| 인터페이스 | `contract.yaml` 0.3-draft. 11-05에 더한 것은 `/fleet/robots`, `/fms/heartbeat`(11-06에 `/fleet/heartbeat`로 이름 변경) 둘이다. 토픽, 서비스, 액션의 이름과 필드, QoS는 heartbeat 이름 말고 그대로다 |
 | 양팔 규칙 | `README.md`, `fake_workcell_node`, 심판 `dual_arm_overlaps`는 아직 동시 PLACING을 위반으로 본다. 지시서가 심판을 고치지 말라고 했으므로 그대로 뒀고 2026-11-04 결정(6절)과 다르다 |
 | 중앙, 핑키, 팔 | `pc/central`, `pinky/*`, `arm/*`는 빈 패키지이고 가짜 노드만 동작한다 |
 | GitHub | 개인 저장소 브랜치에만 올렸다. 팀 저장소 `addinedu-roscamp-16th/roscamp-repo-2`에는 올리지 않았다 |
 
-검증은 세 층이다(11-05 PDF). 같은 규칙을 전수 검사(`tools/model_check.py`, 설계), 가짜 노드 시나리오(`sim/gg_sim/scenarios`, 통합), 기록 재생(`tools/replay.py`, 현장)으로 확인한다. 실물 기록은 아직 없어서 세 번째 층은 가짜 노드의 기록으로만 돌렸다. 이 프로토타입의 숫자는 모두 가짜 로봇에서 나온 것이다.
+검증은 세 층이다(11-05 PDF). 같은 규칙을 전수 검사(`tools/model_check.py`, 설계), 가짜 노드 시나리오(`sim/fake_robots/scenarios`, 통합), 기록 재생(`tools/replay.py`, 현장)으로 확인한다. 실물 기록은 아직 없어서 세 번째 층은 가짜 노드의 기록으로만 돌렸다. 이 프로토타입의 숫자는 모두 가짜 로봇에서 나온 것이다.
 
 결과(전부 가짜 로봇. 숫자를 얻은 코드는 줄마다 적었다):
 
 | 검증 | 결과 |
 |---|---|
-| 단위·통합 시험 | 11-06 0.5 정리 뒤의 트리. 874건, 실패 0, 오류 0, 건너뜀 0(`gg_fleet_core` 536, `gg_sim` 262, `gg_fleet` 76, `colcon test` 721 s). 0.5 전(`86b1fe1`)은 873건이고, 늘어난 1건은 경계 시험이다 |
+| 단위·통합 시험 | 11-06 0.5 정리 뒤의 트리. 875건, 실패 0, 오류 0, 건너뜀 0(`fleet_core` 537, `fake_robots` 262, `fleet_manager` 76, `colcon test` 717 s). 0.5 전(`86b1fe1`)은 873건이고, 늘어난 2건은 경계 시험이다 |
 | 시나리오 6개(기본 지도, 실제 launch) | 0.5 정리 뒤의 트리(위 시험 안에서 실행). 전부 심판 통과(시나리오 파일의 기대값과 같음), 조기 해제 0, near 0. 출고는 `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6, `operator_recovery` 4/4 |
 | 전수 검사, 로봇 2대 (상태, 교착, 기아) | `fa94eb6`. 11-06에 `86b1fe1`과 0.5 정리 뒤의 트리에서 다시 돌려 같은 값을 얻었다. `oneway_loop` (34407, 0, 0). `oneway_shortcut` 묶음 끔 (69497, 36, 30), 켬 (62615, 0, 0). 기본 지도 끔 (36573, 432, 396), 켬 (37078, 0, 0). 충돌쌍을 넘는 FIFO에서도 켬은 0이다 |
 | 전수 검사, 로봇 3대 | `oneway_loop`은 `c9f46ab` 전의 복사본, 나머지는 `c9f46ab`이고, 기본 지도 묶음 켬만 `fc133b1`(코드는 `b6d75d9`와 같다)에서 다시 돌려 같은 값을 얻었다. `oneway_loop` (6295143, 0, 0), 끝까지. 기본 지도 묶음 켬 (5074536, 0, 0), 끝까지. `oneway_shortcut` 묶음 켬 (15871223, 0, 0), 끝까지. `oneway_shortcut`과 기본 지도의 묶음 끔은 교착이 나오는 것까지 확인했다(첫 교착에서 멈춤). 표는 작업 기록 3번 |
@@ -490,4 +490,4 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 | 저장소 `README` | 양팔 규칙(`dual_arm_overlaps`)은 이전 정의를 따른다(6절, 11절). 나머지는 이 문서와 같다. |
 | `05_관제_시뮬레이션_레인.html` | 조기 해제와 근접의 정의는 같다(`safety_meter.py`). 지도와 숫자는 그 시뮬의 것이다. |
 | `시스템_아키텍처.html` v17 | 이 문서와 같은 계층을 쓴다. FMS 안을 core, pinky, arm 세 모듈로 그렸다(0절의 대응). workcell을 FMS에 합치고 arm_planner를 두는 그림이지만, 코드는 `/workcell/fill_basket` 클라이언트만 둔다(지시서 9번). "모듈 분리를 시작하지 않았다", "공통 설계 문서는 합치기 전 구조"라는 문장은 이제 맞지 않는다. MAP 부분은 이전 격자 지도이고 3절과 다르다. |
-| `교통파트_지금할일_2026-11-05` | 지도 회의에 요소 하나만 넣자고 했고 기본 지도에는 둘(양방향 구간, 교차)이 있다(3절). `/fleet/assignments`에 필드를 더하자고 했고 코드는 `/fleet/robots`를 따로 둔다(지시서 4번). 코드 이름 `gg_fleet_core`를 바꾸자고 했고 그대로 뒀다(11절). 표의 `(149238, 0, 0)`은 이전 지도의 값이다. |
+| `교통파트_지금할일_2026-11-05` | 지도 회의에 요소 하나만 넣자고 했고 기본 지도에는 둘(양방향 구간, 교차)이 있다(3절). `/fleet/assignments`에 필드를 더하자고 했고 코드는 `/fleet/robots`를 따로 둔다(지시서 4번). 코드 이름 `fleet_core`를 바꾸자고 했고 그대로 뒀다(11절). 표의 `(149238, 0, 0)`은 이전 지도의 값이다. |

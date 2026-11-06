@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Play back a record of the FMS on the two cores, with no ROS, and compare what comes out.
 
-    ros2 run gg_fleet fleet_manager_node --record run.jsonl   (or record:=run.jsonl on pc.launch.py)
+    ros2 run fleet_manager fleet_manager_node --record run.jsonl
+        (or record:=run.jsonl on pc.launch.py)
     python3 tools/replay.py run.jsonl
 
 The first line says what the core was started with: robots, parameters, the map itself and its
@@ -41,12 +42,12 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "pc" / "gg_fleet_core"))
+sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
 
-from gg_fleet_core.common.commands import OrderRecord  # noqa: E402
-from gg_fleet_core.common.params import FleetParams  # noqa: E402
-from gg_fleet_core.manager import FleetManager  # noqa: E402
-from gg_fleet_core.traffic.lane_map import LaneMap  # noqa: E402
+from fleet_core.common.commands import OrderRecord  # noqa: E402
+from fleet_core.common.params import FleetParams  # noqa: E402
+from fleet_core.manager import FleetManager  # noqa: E402
+from fleet_core.traffic.lane_map import LaneMap  # noqa: E402
 
 
 @dataclass(frozen=True)

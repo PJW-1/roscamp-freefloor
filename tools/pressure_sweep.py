@@ -5,7 +5,7 @@
     python3 tools/pressure_sweep.py --out /some/dir --d 0.2 0.1 --tau 0 0.5 --eps 0 0.05
 
 tau is report_delay_s, in scenario seconds, and eps is pose_noise_m, one sigma per axis. Each row
-is a real run of `ros2 launch gg_bringup pc.launch.py` with fake robots, so the workspace has
+is a real run of `ros2 launch iponic_bringup pc.launch.py` with fake robots, so the workspace has
 to be built and sourced. Every run gets its own domain from --first-domain up, never reaches the
 robot network (LOCALHOST), and keeps its files under --out.
 
@@ -35,11 +35,11 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "pc" / "gg_fleet_core"))
+sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
 
-from gg_fleet_core.common.params import DEFAULT_PARAMS  # noqa: E402
+from fleet_core.common.params import DEFAULT_PARAMS  # noqa: E402
 
-SCENARIOS = REPO / "sim" / "gg_sim" / "scenarios"
+SCENARIOS = REPO / "sim" / "fake_robots" / "scenarios"
 ROBOT_NETWORK_DOMAIN = 6
 RADIUS_M = yaml.safe_load(DEFAULT_PARAMS.read_text(encoding="utf-8"))["robot_radius_m"]
 TOP_SPEED_MPS = 0.2
@@ -156,7 +156,7 @@ def run_case(case: Case, domain: int, out: Path, wall_s: float) -> Row:
     scenario = folder / "scenario.yaml"
     scenario.write_text(yaml.safe_dump(variant(data, case.tau, case.eps, case.stop)),
                         encoding="utf-8")
-    command = ["ros2", "launch", "gg_bringup", "pc.launch.py", "use_fake:=true",
+    command = ["ros2", "launch", "iponic_bringup", "pc.launch.py", "use_fake:=true",
                f"scenario:={scenario}", f"result_dir:={folder}",
                f"params_file:={write_params(folder / 'params.yaml', case.d)}"]
     with (folder / "launch.log").open("w", encoding="utf-8") as log:

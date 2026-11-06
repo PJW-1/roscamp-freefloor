@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn the old cell map into a lane map, one waypoint per cell, its zones kept as lock units.
 
-Used once, to make pc/gg_fleet_core/test/data/grid_cells.yaml, which keeps the older tests on the
+Used once, to make pc/fleet_core/test/data/grid_cells.yaml, which keeps the older tests on the
 layout they were written for. The grid file is pc/fleet_core/fleet_core/data/site_map.yaml in
 commit d511c57.
 
@@ -32,8 +32,8 @@ def main(path: str) -> None:
     def flow(items):
         return yaml.safe_dump(items, default_flow_style=True, width=1000).strip()
 
-    print("# The old 12 x 7 cell map as a lane map. One node per cell, 0.33 m lanes, one-way, its")
-    print("# zones kept as lock units. Made by tools/convert_grid_map.py for the older tests.")
+    print("# The old 12 x 7 cell map as a lane map. One waypoint per cell, 0.33 m lanes, one-way,")
+    print("# its zones kept as lock units. Made by tools/convert_grid_map.py for the older tests.")
     print(f"half_width_m: {size / 2}  # half a cell: a robot belongs to the nearer cell, as before")
     print(f"lane_entry_m: {size}  # a zone is its cells, not the lanes leading to them")
     print(f"origin_m: {flow([ox, oy])}")
