@@ -88,9 +88,9 @@ class ScenarioJudge:
         self._from_outbound: set[str] = set()
         self.direct_returns = 0
         self.parked_while_backlog = 0
-        # 자동 격리: 첫 ROBOT_ISOLATED부터 다음 ZONES_CLEARED 전까지 출고한 수
+        # 자동 격리: 첫 ROBOT_ISOLATED부터 격리된 로봇의 첫 ZONES_CLEARED 전까지 출고한 수
         self.shipped_before_operator = 0
-        self._isolated = False
+        self._isolated: set[str] = set()  # source가 로봇이다
         self._operator_came = False
 
     def _station_zones(self, action: str) -> set[str]:
@@ -125,8 +125,8 @@ class ScenarioJudge:
         if level == "ERROR":
             self.error_codes.append(code)
         if code == "ROBOT_ISOLATED":
-            self._isolated = True
-        elif code == "ZONES_CLEARED" and self._isolated:
+            self._isolated.add(source)
+        elif code == "ZONES_CLEARED" and source in self._isolated:
             self._operator_came = True
         order = order_id_of(detail)
         if code == "ORDER_ACCEPTED" and order not in self.registered:

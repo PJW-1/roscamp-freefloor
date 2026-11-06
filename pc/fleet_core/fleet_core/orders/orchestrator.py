@@ -101,6 +101,7 @@ class _Robot:
     arm: _ArmJob | None = None
     arm_retry_at: float = 0.0  # 실패나 거절 뒤 이 시각 전에는 새 팔 goal 없음
     attempts: int = 0
+    isolated: str = ""  # 격리 이유. 해제(confirm_clear)로 지운다
 
 
 class OrderOrchestrator:
@@ -179,6 +180,9 @@ class OrderOrchestrator:
         if took_full and r.basket == FULL:
             r.basket = NONE
             self._report_shipped(r)
+        if r.isolated:
+            self._requeue_isolated(r)  # 가져가지 못했으면 이제 되돌린다
+            return
         if put_empty_done and r.basket == NONE:
             r.basket = EMPTY
             r.attempts = 0
@@ -194,6 +198,7 @@ class OrderOrchestrator:
         r = self._robots.get(robot)
         if r is None:
             return
+        r.isolated = ""
         if r.arm:
             self._drop_arm(r)
         if r.order:
@@ -205,21 +210,30 @@ class OrderOrchestrator:
         self._sync_calls()
 
     def on_robot_isolated(self, robot, reason) -> None:
-        """교통이 로봇을 격리했다(지시서 5.5). 주문은 사람 없이 바로 대기 맨 앞으로 간다.
+        """교통이 로봇을 격리했다(지시서 5.5). 주문은 사람 없이 대기로 돌아간다.
 
-        등록 순서 자리가 곧 맨 앞이다. 묶인 주문은 언제나 대기 주문보다 먼저 등록됐다.
-        결과 없는 팔 작업(ARM_NO_RESULT)이 그 주문에 걸려 있으면 팔이 일을 끝냈을 수 있다.
-        되돌리면 두 번 출고될 수 있어, 그때만 주문을 두고 confirm_clear를 기다린다.
+        자리는 등록 순서다. 묶을 때 늘 대기 맨 앞을 쓰므로, 되돌린 주문은 한 번도 묶이지 않은
+        주문보다 앞서고 되돌린 주문끼리는 등록 순서를 지킨다.
+        두 번 출고를 막는 예외 둘: 결과 없는 팔 작업(ARM_NO_RESULT)이 그 주문에 걸려 있으면
+        confirm_clear까지, 교환 중이면 그 결과까지 주문을 둔다. 팔이 이미 바구니를 가져갔을 수 있다.
         """
         r = self._robots.get(robot)
         if r is None or self._result_still_due(r):
             return
+        r.isolated = reason
+        if r.arm and r.arm.kind == SWAP and r.order:
+            if r.arm.canceled_at is None:
+                self._cancel_arm(r)
+            return  # on_swap_result나 ARM_NO_RESULT 규칙이 이어 받는다
         if r.arm:
-            self._drop_arm(r, isolated=True)
+            self._drop_arm(r, isolated=True)  # 늦게 담긴 품목은 이 로봇 바구니에 남는다
+        self._requeue_isolated(r)
+
+    def _requeue_isolated(self, r: _Robot) -> None:
         if r.order:
             self._event("INFO", "ORDER_REQUEUED",
                         f"{r.order.order_id} was bound, basket held {r.order.placed}, "
-                        f"robot isolated: {reason}", robot)
+                        f"robot isolated: {r.isolated}", r.name)
             r.order = None
         r.basket = NONE  # 바구니 안 물건은 로봇과 함께 남는다. 사람이 치운다
         r.stage = ""

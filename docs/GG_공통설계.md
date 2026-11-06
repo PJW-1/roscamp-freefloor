@@ -59,7 +59,7 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `DOCKING` | 임무 단계 | dock 목표 실행 중 |
 | `AT_STATION` | 임무 단계 | 도크에 서서 `on_dispatch`(robot_id 지정)나 `on_release`를 기다린다 |
 | `NONE` | `fault` | 문제 없음 |
-| `ERROR` | `fault` | 격리됐다(5절 자동 격리). 구역은 쥐고 주문은 이미 되돌렸다. 관리자는 치우고 `confirm_clear`만 한다. 이유는 `fault_reason` |
+| `ERROR` | `fault` | 지도에 오른 로봇이면 격리됐다(5절 자동 격리). 구역은 쥐고 주문은 대개 이미 되돌렸다. 예외: 시작 때 `PLACEMENT_CONFLICT`는 지도에 없어 격리하지 않는다. `ARM_NO_RESULT`와 격리 때 교환 중이던 로봇은 결과나 `confirm_clear`까지 주문을 쥔다(5-1절). 관리자는 치우고 `confirm_clear`만 한다. 이유는 `fault_reason` |
 | `COMM_LOST` | `fault` | 보고가 `comm_timeout_s` 동안 없다. 판단은 멈추지 않고 그 로봇의 요청만 취소한다 |
 | `RECOVERING` | `fault` | 보고가 돌아왔고 `recover_check_s` 뒤에 위치를 확인한다 |
 | `OUT_OF_SERVICE` | `fault` | 관리자가 치웠다(`confirm_clear`). 되돌리는 코드는 없다(13절) |
@@ -337,7 +337,7 @@ SWAPPING(OUTBOUND 요청의 결과를 받은 뒤):
 
 STOP: 팔 작업을 취소한다. RUN으로 돌아오면 남은 일부터 다시 한다. PAUSE: 진행 중인 것은 끝내고 새 명령을 내지 않는다.
 
-자동 격리(`on_robot_isolated`, 5절): 교통이 `RobotIsolated`를 보내면 사람을 기다리지 않고 그 로봇의 주문을 대기 맨 앞으로 되돌린다(`ORDER_REQUEUED`, detail에 바구니에 담겨 있던 품목과 격리 이유). 등록 순서 자리가 맨 앞이다. 주문은 대기 주문 중 가장 앞의 것부터 묶이므로 묶였던 주문은 언제나 대기 주문보다 먼저 등록됐다. 바구니는 NONE으로 둔다. 담겨 있던 품목은 물리적으로 그 로봇에 남고, 같은 품목을 다른 로봇이 다시 담는다. 남은 바구니와 재고는 관리자가 치우며 맞춘다. 진행 중인 팔 작업은 로봇 제거와 같이 취소하고 기억한다(늦은 결과는 `ARM_LATE_RESULT`, detail은 "after the isolation"). 예외: `ARM_NO_RESULT`로 포기한 작업이 지금 묶인 주문에 걸려 있으면 되돌리지 않는다. 팔이 일을 끝냈을 수 있어(교환이면 이미 출고) 되돌리면 두 번 담기거나 출고될 수 있기 때문이다. 이 주문은 늦은 결과로 출고되거나 `confirm_clear` 때 되돌아간다.
+자동 격리(`on_robot_isolated`, 5절): 교통이 `RobotIsolated`를 보내면 사람을 기다리지 않고 그 로봇의 주문을 대기 맨 앞으로 되돌린다(`ORDER_REQUEUED`, detail에 바구니에 담겨 있던 품목과 격리 이유). 자리는 등록 순서다. 주문은 늘 대기 맨 앞의 것을 묶으므로, 되돌린 주문은 한 번도 묶이지 않은 주문보다 앞서고, 되돌린 주문끼리는 등록 순서를 지킨다(먼저 되돌린 것이 뒤에 등록됐으면 나중에 되돌린 것이 앞선다). 바구니는 NONE으로 둔다. 담겨 있던 품목은 물리적으로 그 로봇에 남고, 같은 품목을 다른 로봇이 다시 담는다. 남은 바구니와 재고는 관리자가 치우며 맞춘다. 진행 중인 담기 작업은 로봇 제거와 같이 취소하고 기억하며 주문은 바로 되돌린다. 늦게 담긴 품목은 격리된 로봇 바구니에 남아 출고되지 않는다(늦은 결과는 `ARM_LATE_RESULT`, detail은 "after the isolation"). 진행 중인 교환 작업은 취소만 보내고 주문은 그 결과까지 쥔다. 팔이 이미 바구니를 가져갔을 수 있기 때문이다. `took_full=true`면 제시간 결과처럼 SHIPPED(결품이 있으면 PARTIAL)로 보고하고 되돌리지 않는다. `took_full=false`면 그때 되돌린다(보통 1초 안). `arm_cancel_wait_s` 안에 결과가 없으면 `ARM_NO_RESULT` 규칙을 따른다(로봇은 이미 격리돼 다시 격리하지 않는다). 두 경우 모두 바구니는 NONE이 되고 로봇을 놓아주지 않는다. 예외: `ARM_NO_RESULT`로 포기한 작업이 지금 묶인 주문에 걸려 있으면 되돌리지 않는다. 팔이 일을 끝냈을 수 있어(교환이면 이미 출고) 되돌리면 두 번 담기거나 출고될 수 있기 때문이다. 이 주문은 늦은 결과로 출고되거나 `confirm_clear` 때 되돌아간다.
 
 로봇 제거(`on_robot_removed`): 묶인 주문이 아직 출고 전이면 대기 주문의 맨 앞(등록 순서 유지)으로 되돌리고 `ORDER_REQUEUED`를 낸다. detail에 담겨 있던 품목을 적는다(되돌리거나 재고를 고치는 것은 관리자 몫). 진행 중이던 팔 작업으로 담긴 품목은 detail에 들어가지 않으므로, 실제 바구니는 관리자가 직접 확인한다. 그 로봇의 팔 작업이 진행 중이면 취소를 보내고 위의 취소 대기 규칙을 따른다. 취소한 작업의 결과가 늦게 와도 주문과 바구니에 반영하지 않는다. 그 결과가 무엇을 했다고 하면 `ARM_LATE_RESULT`로 알린다(위). 같은 제거가 두 번 와도 주문은 한 번만 되돌린다.
 
@@ -379,11 +379,11 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 ```
 `expect`의 숫자는 정확히 일치해야 통과한다. `orders_shipped_min`도 지원한다(고장 시나리오에서 "0건이어도 통과"가 되지 않도록 반드시 1 이상).
 
-시나리오 6개: `basic_orders`(주문 6건, 고장 없음), `order_burst`(한꺼번에 8건, 진행 중 추가 주문, 밀린 주문이면 대기 구간을 거치지 않고 바로 작업공간으로 가는지 확인), `shared_lane_failure`(통신 두절+주행 실패), `stock_shortage`(재고 0인 품목과 기록만 있고 실물 없는 품목: PARTIAL과 HELD, OUT_OF_STOCK과 STOCK_MISMATCH 구분), `stuck_robot`(차선에서 멈춤: 뒤따르는 로봇이 막히고 경고가 나는지), `operator_recovery`(팔 고장 3회 → ERROR와 자동 격리 → 관리자가 치움 → 주문이 다시 처리되어 전부 끝남), `blocked_lane`(파트 4), `auto_isolation`(팔 고장 3회 → 자동 격리 → 앞서 간 로봇은 사람 없이 출고 → 관리자가 치운 뒤 되돌린 주문부터 전부 끝남, 11-06 5.5번).
+시나리오 8개: `basic_orders`(주문 6건, 고장 없음), `order_burst`(한꺼번에 8건, 진행 중 추가 주문, 밀린 주문이면 대기 구간을 거치지 않고 바로 작업공간으로 가는지 확인), `shared_lane_failure`(통신 두절+주행 실패), `stock_shortage`(재고 0인 품목과 기록만 있고 실물 없는 품목: PARTIAL과 HELD, OUT_OF_STOCK과 STOCK_MISMATCH 구분), `stuck_robot`(차선에서 멈춤: 뒤따르는 로봇이 막히고 경고가 나는지), `operator_recovery`(팔 고장 3회 → ERROR와 자동 격리 → 관리자가 치움 → 주문이 다시 처리되어 전부 끝남), `blocked_lane`(파트 4), `auto_isolation`(팔 고장 3회 → 자동 격리 → 앞서 간 로봇은 사람 없이 출고 → 관리자가 치운 뒤 되돌린 주문부터 전부 끝남, 11-06 5.5번).
 
 심판은 FMS가 내는 이벤트를 본다. 가짜 노드(FakePinky, FakeWorkcell, FakeArm3, FakeVision, FakeCentral)는 인터페이스가 같으므로 그대로 쓴다. 시나리오 시각은 시뮬 시계(`speed_factor` 5배속)이고, heartbeat만 벽시계다(4절). `tools/pressure_sweep.py`는 시나리오에 지연과 잡음을 넣어 돌리고 표를 만든다(7번 표는 작업 기록에 있다).
 
-심판 추가 항목: `shipped_before_operator`(첫 `ROBOT_ISOLATED`부터 다음 `ZONES_CLEARED` 전까지 출고·일부 출고된 건수. 기대값 `shipped_before_operator_min`, 기본 0), `fifo_violations`(ORDER_BOUND 순서가 등록 순서와 다르거나 SHIPPED/PARTIAL 순서가 묶인 순서와 다르면 위반. ORDER_REQUEUED된 주문은 다음에 묶이는 주문이어야 하고, 되돌림 없이 두 번 묶이면 위반), `dual_arm_overlaps`(arm1과 arm2가 동시에 PLACING. 양쪽 팔이 필요한 주문인데 PLACING이 안 보이면 실패. 2026-11-04에 양팔 동시 계획으로 정했으므로 이 항목의 의미가 바뀐다: 동시 PLACING은 허용, 충돌만 위반. 가짜 workcell과 심판을 그에 맞춰 고치기 전까지 기대값은 참고용), `unexpected_errors`(시나리오가 예상하지 않은 ERROR 이벤트), `order_results`(주문별 결과), 시간 초과는 시나리오가 예상한 경우 외에는 실패.
+심판 추가 항목: `shipped_before_operator`(첫 `ROBOT_ISOLATED`부터 격리된 로봇(이벤트 source)의 첫 `ZONES_CLEARED` 전까지 출고·일부 출고된 건수. 기대값 `shipped_before_operator_min`, 기본 0), `fifo_violations`(ORDER_BOUND 순서가 등록 순서와 다르거나 SHIPPED/PARTIAL 순서가 묶인 순서와 다르면 위반. ORDER_REQUEUED된 주문은 다음에 묶이는 주문이어야 하고, 되돌림 없이 두 번 묶이면 위반), `dual_arm_overlaps`(arm1과 arm2가 동시에 PLACING. 양쪽 팔이 필요한 주문인데 PLACING이 안 보이면 실패. 2026-11-04에 양팔 동시 계획으로 정했으므로 이 항목의 의미가 바뀐다: 동시 PLACING은 허용, 충돌만 위반. 가짜 workcell과 심판을 그에 맞춰 고치기 전까지 기대값은 참고용), `unexpected_errors`(시나리오가 예상하지 않은 ERROR 이벤트), `order_results`(주문별 결과), 시간 초과는 시나리오가 예상한 경우 외에는 실패.
 
 ## 7. 알려진 약점 (이번 작업에서 고치지 않고 문서에 남김)
 - `arrival_tolerance_m` 안에 멈춰 도착으로 쳤는데 레인 진행이 `s ≤ d`이면 뒤 구역이 해제되지 않아 조용히 멈출 수 있다. 가장 짧은 레인에서 d를 뺀 값이 허용치보다 작은 지도에서만 생긴다. 기본 지도는 0.4 m에서 0.2 m를 빼 0.2 m이므로 0.15 m에 해당하지 않고, 시험으로 고정했다. 시험 격자(0.33 m)와 `sim/fake_robots/maps/oneway_*.yaml`은 조건을 만족하지 않는다. 시작할 때 막지 않는다.
@@ -397,7 +397,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 - FMS를 재시작하면 진행 중이던 주문과 할당, 바구니를 기억하지 못한다. 전원 보고부터 다시 시작하고, 같은 바구니를 다시 채울 수 있다. 실물에서 어떻게 할지는 정하지 않았다.
 - `RECOVERY_CONFLICT`(복구한 로봇이 남의 구역 안에 있음)는 그 로봇을 격리하고 다른 로봇을 세우지 않는다. 시작 때의 `PLACEMENT_CONFLICT`와 다르다.
 - 로봇 1대가 고장 나도 주문은 사람을 기다리지 않는다(자동 격리, 5절). 다만 기본 지도처럼 우회로가 없는 곳에서는 격리된 로봇 뒤의 로봇이 관리자가 치울 때까지 기다린다. 우회는 파트 5(지도와 경로 계산)에 달렸고, 특징 지도에서 확인하는 시험은 파트 5와 합친 뒤 한다.
-- `ARM_NO_RESULT`로 격리된 로봇의 주문은 되돌리지 않고 관리자를 기다린다(5-1절의 예외). 두 번 출고를 막으려는 것이다.
+- `ARM_NO_RESULT`로 격리된 로봇의 주문은 되돌리지 않고 관리자를 기다린다. 격리 때 교환 중이었으면 그 결과까지 기다리고, 결과가 없으면 같은 규칙이다(5-1절의 예외). 두 번 출고를 막으려는 것이다.
 - 격리로 되돌린 주문은 다른 로봇이 처음부터 다시 담는다. 격리된 로봇의 바구니에 남은 품목은 관리자가 치우며 재고를 맞춘다. FMS는 바구니를 NONE으로만 기록한다.
 - 보고와 취소를 다시 보낼 때마다 rclpy 클라이언트에 응답 대기 항목이 하나씩 남고, 답이 오지 않은 요청은 프로세스가 끝날 때까지 남는다. central이나 서버가 발견은 되는데 답하지 않는 동안 보고는 `report_retry_s`, 취소는 `cancel_retry_s`마다 1개씩 늘어난다. 먼저 보낸 요청을 지우면 응답이 재전송 간격보다 느린 central의 답을 영영 받지 못하므로 그대로 두었다.
 - `CANCEL_UNCONFIRMED`는 알리기만 한다. 취소가 끝내 듣지 않는 로봇을 FMS가 세울 방법은 없고, `move_to`와 `dock`에는 다른 정지 수단이 없다.

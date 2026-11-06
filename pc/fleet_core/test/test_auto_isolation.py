@@ -273,3 +273,156 @@ def test_sixty_seconds_blocked_isolates_and_holds_the_body_zones():
     assert len(events) == 1 and "BLOCKED" in events[0][1].detail
     assert pilot.events("BLOCKED_TOO_LONG")
     assert "N" in pilot.held()
+
+
+# ---- 리뷰 수정(9c65b9f) -----------------------------------------------------------------------
+
+
+def swapping_then_isolated(orders=(O1, O2)):
+    """r1이 O-001을 담아 출고 도크에서 교환하는 중에 격리된다. 교환 goal과 그때 출력."""
+    core, now = orchestrator(orders)
+    bind(core)
+    core.step("r1")
+    fill = cmds(core.take_output(), "FillCmd")[0]
+    core.on_fill_result(fill.goal_id, True, {"A": 1, "C": 1}, {})
+    core.step("r1")
+    goal = [c for c in core.take_output() if isinstance(c, DispatchCmd) and c.robot_id][0]
+    core.on_dispatch_result(goal.goal_id, True, "r1")
+    core.step("r1")
+    swap = cmds(core.take_output(), "SwapCmd")[0]
+    core.on_robot_isolated("r1", "RECOVERY_CONFLICT")
+    return core, now, swap, core.take_output()
+
+
+def test_a_swap_in_progress_holds_the_order_and_a_late_take_ships_it_once():
+    core, _, swap, out = swapping_then_isolated()
+    assert [(c.robot, c.goal_id) for c in cmds(out, "CancelCmd")] == [("arm3", swap.goal_id)]
+    assert "ORDER_REQUEUED" not in codes(out), "the arm may already have the basket"
+    assert core.order_of("r1") == "O-001"
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    out = core.take_output()
+    assert [(r.order_id, r.status) for r in cmds(out, "ReportOrderCmd")] == [("O-001", "SHIPPED")]
+    assert "ORDER_REQUEUED" not in codes(out)
+    assert core.shipped == 1 and core.order_of("r1") == ""
+    assert core.robot_view("r1")["basket"] == "NONE"
+    assert [o.order_id for o in core._pending()] == ["O-002"]
+    assert not cmds(out, "ReleaseCmd"), "an isolated robot stays where it is"
+    core.on_robot_removed("r1")
+    assert "ORDER_REQUEUED" not in codes(core.take_output())
+
+
+def test_a_swap_that_did_not_take_the_basket_requeues_then():
+    core, _, swap, _ = swapping_then_isolated()
+    core.on_swap_result(swap.goal_id, False, False, False, "CANCELED")
+    out = core.take_output()
+    requeued = [e for e in cmds(out, "EventOut") if e.code == "ORDER_REQUEUED"]
+    assert len(requeued) == 1 and requeued[0].detail.startswith("O-001")
+    assert not cmds(out, "ReportOrderCmd")
+    assert core.order_of("r1") == "" and core.robot_view("r1")["basket"] == "NONE"
+    assert [o.order_id for o in core._pending()] == ["O-001", "O-002"]
+    assert len(open_calls_in(out)) == 1, "a call for the order that came back"
+    core.on_robot_removed("r1")
+    assert "ORDER_REQUEUED" not in codes(core.take_output())
+
+
+def test_a_swap_with_no_result_waits_for_a_late_result_or_the_clear():
+    core, now, swap, _ = swapping_then_isolated()
+    now[0] += core.params.arm_cancel_wait_s + 0.1
+    core.check_arm_timeouts(now[0])
+    out = core.take_output()
+    assert "ARM_NO_RESULT" in codes(out)
+    assert "ORDER_REQUEUED" not in codes(out)
+    assert core.order_of("r1") == "O-001"
+    core.on_robot_removed("r1")
+    assert codes(core.take_output()).count("ORDER_REQUEUED") == 1
+
+
+def test_a_swap_with_no_result_still_ships_on_a_late_take():
+    core, now, swap, _ = swapping_then_isolated()
+    now[0] += core.params.arm_cancel_wait_s + 0.1
+    core.check_arm_timeouts(now[0])
+    core.take_output()
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    out = core.take_output()
+    assert [r.status for r in cmds(out, "ReportOrderCmd")] == ["SHIPPED"]
+    core.on_robot_removed("r1")
+    assert "ORDER_REQUEUED" not in codes(core.take_output())
+
+
+def test_a_fill_in_progress_still_requeues_at_once_and_late_items_never_ship():
+    core, _ = orchestrator()
+    bind(core)
+    core.step("r1")
+    fill = cmds(core.take_output(), "FillCmd")[0]
+    core.on_robot_isolated("r1", "RECOVERY_CONFLICT")
+    assert "ORDER_REQUEUED" in codes(core.take_output())
+    core.on_fill_result(fill.goal_id, True, {"A": 1, "C": 1}, {})
+    out = core.take_output()
+    assert "ARM_LATE_RESULT" in codes(out)
+    assert not cmds(out, "ReportOrderCmd") and core.shipped == 0
+
+
+def test_a_swap_in_progress_isolates_the_robot_only_once_through_the_manager():
+    now = [0.0]
+    core = FleetManager(grid_site(), load_params(), ["r1"], lambda: now[0])
+    report(core, "r1", (4, 3))
+    core.on_order_board("RUN", [O1])
+    out = drive(core, "r1", lambda: core.robot_view("r1")["order"] == "O-001")
+    core.on_fill_result(cmds(out, "FillCmd")[0].goal_id, True, {"A": 1, "C": 1}, {})
+    out = drive(core, "r1", lambda: core.robot_view("r1")["phase"] == "SWAPPING")
+    out += core.tick()
+    swap = cmds(out, "SwapCmd")[0]
+    seen = []
+    core.traffic.on_robot_fault("r1", "RECOVERY_CONFLICT")
+    core._pump()
+    seen += core.tick()
+    now[0] += core.params.arm_cancel_wait_s + 0.1
+    seen += core.tick()
+    assert "ARM_NO_RESULT" in codes(seen)
+    assert len(isolated(seen)) == 1, "not isolated twice"
+    assert core.robot_view("r1")["order"] == "O-001"
+    core.on_swap_result(swap.goal_id, False, True, True, "CANCELED")
+    assert [r.status for r in cmds(core.tick(), "ReportOrderCmd")] == ["SHIPPED"]
+
+
+def open_calls_in(out):
+    return [c for c in out if isinstance(c, DispatchCmd) and not c.robot_id]
+
+
+def test_an_isolation_by_not_at_target_keeps_a_passed_zone_in_the_same_tick():
+    """마지막 NOT_AT_TARGET 시도에서, 지나온 구역 밖 보고가 이미 다 쌓였어도 그 구역은 쥔다."""
+    now = [0.0]
+    site = load_lane_map()
+    core = TrafficController(site, load_params(), ["a"], lambda: now[0])
+    x, y = site.waypoint_pose("P-6")
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("a", x, y, 0.0, "IDLE")
+    m = core._missions["a"]
+    behind = core._zone("P-6")
+    ahead = core._zone("N")
+    core.zones.force_acquire("a", ahead)
+    m.path, m.idx, m.phase = ["P-6", "N"], 1, "TO_PARK"
+    m.attempts = core.params.move_retry_limit
+    m.settle_idx = 1
+    m.arrival_by = 1.0
+    lane = site.lane("P-6", "N")
+    s = core.params.release_distance_m + 0.15
+    for _ in range(core.params.release_confirm_samples):
+        core.on_robot_state("a", lane.ax + lane.ux * s, lane.ay + lane.uy * s, 0.0, "IDLE")
+    assert m.heard_since_success, "reports came after the success"
+    assert m.outside.get(behind, 0) >= core.params.release_confirm_samples
+    now[0] = 1.5
+    core.tick_progress(now[0])
+    assert m.fault == "ERROR" and m.fault_reason == "NOT_AT_TARGET"
+    assert behind in core.zones.held_by("a"), "an isolated robot keeps its zones"
+
+
+def test_requeued_orders_keep_registration_order_ahead_of_never_bound_ones():
+    O3 = OrderRecord("O-003", {"D": 1})
+    core, _ = orchestrator((O1, O2, O3))
+    bind(core, "r1")
+    bind(core, "r2")
+    core.on_robot_isolated("r1", "GOAL_FAILED")
+    core.on_robot_isolated("r2", "GOAL_FAILED")
+    core.take_output()
+    assert [o.order_id for o in core._pending()] == ["O-001", "O-002", "O-003"]

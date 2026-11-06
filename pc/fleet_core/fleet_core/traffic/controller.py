@@ -303,6 +303,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
         for m in self._missions.values():
             if m.available:
                 self._judge_arrival(m, now)
+            if m.available:  # 방금 도착 판정으로 격리됐으면 이번 판은 건너뛴다
                 self._track_progress(m)
                 self._release_passed_zones(m)
                 self._watch_stall(m, now)
@@ -613,6 +614,8 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
             self._event("WARN", "LANE_ERROR", f"{e:.2f} m off {a} to {b} at s={s:.2f}", m.name)
 
     def _release_if_cleared(self, m: _Mission, zone: str) -> None:
+        if m.fault == ERROR:
+            return  # 격리된 로봇의 구역은 confirm_clear만 푼다
         if m.block_cancel is not None or (m.block and m.block.marked):
             # 막힘 표시 중에는 막힘 쪽만 놓고, 취소한 goal의 결과 전에는 아무것도 놓지 않는다
             return

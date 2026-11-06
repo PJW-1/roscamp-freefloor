@@ -896,6 +896,16 @@ def test_shipped_before_operator_counts_from_the_isolation_to_the_first_clear():
     assert (result["value"], result["minimum"], result["ok"]) == (1, 1, True)
 
 
+def test_clearing_a_robot_that_is_not_isolated_does_not_end_the_count():
+    j = judge(shipped_before_operator_min=2, all_orders_finished=False)
+    j.on_event(1.0, "ERROR", "pinky1", "ROBOT_ISOLATED", "GRIPPER: stopped where it is")
+    j.on_event(2.0, "INFO", "pinky2", "ZONES_CLEARED", "released ['Z-R1']: lifted")
+    ship(j, "O-1")
+    j.on_event(3.0, "INFO", "pinky1", "ZONES_CLEARED", "released ['Z-WORK']: lifted")
+    ship(j, "O-2")
+    assert check(j, "shipped_before_operator")["value"] == 1
+
+
 def test_shipped_before_operator_is_not_checked_by_default():
     j = judge()
     assert check(j, "shipped_before_operator") == {"value": 0, "minimum": 0, "ok": True}
