@@ -33,10 +33,13 @@ class TrafficPath:
 
         point는 같은 방향일 때만. path는 되돌아가는 레인(양방향 레인의 유턴)만 끊는다.
         유턴을 이으면 경로를 바꿀 때마다 목표 끝이 앞으로 밀려 경로가 끝없이 늘어난다.
+        새 목표의 첫 레인은 늘 잇는다. 들어온 레인은 지난 일이라 유턴 지점에서 다시 출발한다.
         """
         if not self._follows_path:
             return self._step_between(m, index) == step
-        return index == 0 or m.path[index + 1] != m.path[index - 1]
+        if index == 0 or (m.goal is None and index == m.idx):
+            return True
+        return m.path[index + 1] != m.path[index - 1]
 
     def _goal_yaw(self, m: _Mission, target_idx: int, step) -> float:
         """목표 지점에서 볼 방향. path는 마지막 레인 방향이다."""

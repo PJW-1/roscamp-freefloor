@@ -188,6 +188,21 @@ def test_a_u_turn_on_a_two_way_lane_is_not_bundled():
     assert len(m.path) <= 10, m.path
 
 
+def test_after_the_u_turn_point_the_way_back_is_a_new_goal():
+    """전수 검사에서 찾음: 유턴 지점에 선 로봇이 새 목표를 못 받아 굶었다."""
+    core, _ = make({"r1": "W"})
+    goal = sum(map(ord, "r1OUTBOUND"))
+    send(core, "r1", "OUTBOUND")
+    first = moves(core.tick())[0]
+    core.on_dispatch_cancel(goal)
+    core.tick()
+    place(core, "r1", "B")
+    core.on_move_result("r1", first.goal_id, True, "")
+    back = moves(core.tick())
+    assert back and back[-1].target_id != "B", "it turns round and goes back down the avenue"
+    assert [p[:2] for p in back[-1].path][:2] == [xy(core, "B"), xy(core, "A")]
+
+
 # ---- 꺾임 너머 목표와 다른 규칙 ---------------------------------------------------------------
 
 
@@ -287,6 +302,30 @@ def test_blocked_before_the_turn_marks_the_lane_before_it():
     place(core, "r1", "W", 0.1, "A", "BLOCKED")
     core.tick()
     assert core._missions["r1"].block.lane == ("W", "A")
+
+
+def test_a_path_goal_waits_for_the_cancel_result_after_a_mark():
+    """파트 4 규칙: 표시 뒤 취소 결과 전에는 path 모드도 목표를 내지 않는다."""
+    core, now = make({"r1": "W"})
+    send(core, "r1", "OUTBOUND")
+    core.tick()
+    out = []
+    for _ in range(round((core.params.blocked_mark_s + 1) / 0.1)):
+        now[0] = round(now[0] + 0.1, 6)
+        place(core, "r1", "W", 0.1, "A", "BLOCKED")
+        out += core.tick()
+    assert "LANE_BLOCKED" in codes(out)
+    canceled = cmds(out, "CancelCmd")[-1].goal_id
+    later = []
+    for _ in range(10):
+        now[0] = round(now[0] + 0.1, 6)
+        place(core, "r1", "W", 0.1, "A", "IDLE")
+        later += core.tick()
+    assert not moves(later), "no goal before the cancel result"
+    core.on_move_result("r1", canceled, False, "CANCELED")
+    place(core, "r1", "W", 0.1, "A", "IDLE")
+    resent = moves(core.tick())
+    assert resent and resent[-1].path, "then the same goal goes again with its polyline"
 
 
 # ---- 기록 --------------------------------------------------------------------------------

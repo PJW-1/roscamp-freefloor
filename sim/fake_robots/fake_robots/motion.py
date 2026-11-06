@@ -45,7 +45,7 @@ class Motion:
         self._skip_passed()
 
     def _skip_passed(self) -> None:
-        """이미 지나 다음 선분 위에 있으면 그 점을 뺀다. FollowPath가 가장 가까운 점부터 가는 것과 같다."""
+        """이미 지나 다음 선분 위에 있으면 그 점을 뺀다. FollowPath처럼 가장 가까운 점부터 간다."""
         while self.via:
             a = self.via[0]
             b = self.via[1] if len(self.via) > 1 else self.target

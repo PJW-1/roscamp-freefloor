@@ -1,5 +1,6 @@
 """tools/model_check.py를 테스트용 작은 지도에서 돌린다. 큰 수치는 worklog에 있다."""
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,11 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools"))
 
 import model_check  # noqa: E402
+from fleet_core.common.params import load_params  # noqa: E402
 from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
+
+# 도구 시험은 상태가 적은 point 모드로 돈다. path 모드는 아래 시험 하나와 worklog의 5건.
+POINT = replace(load_params(), lane_goal_mode="point")
 
 # 가는 길과 오는 길이 양방향 레인 하나(A~G)를 공유한다.
 SMALL_MAP = """
@@ -54,12 +59,13 @@ def small_map(tmp_path_factory) -> Path:
 
 @pytest.fixture(scope="module")
 def bundled(small_map):
-    return model_check.check(load_lane_map(small_map, bundle_two_way=True), robots=2)
+    return model_check.check(load_lane_map(small_map, bundle_two_way=True), robots=2, params=POINT)
 
 
 @pytest.fixture(scope="module")
 def unbundled(small_map):
-    return model_check.check(load_lane_map(small_map, bundle_two_way=False), robots=2)
+    return model_check.check(load_lane_map(small_map, bundle_two_way=False), robots=2,
+                             params=POINT)
 
 
 def test_robots_meet_head_on_on_a_two_way_lane_with_no_shared_lock(unbundled):
@@ -75,7 +81,7 @@ def test_one_lock_for_both_directions_ends_that(bundled):
 
 
 def test_the_example_it_prints_really_ends_in_a_wait_cycle(small_map, unbundled):
-    model = model_check.Model(load_lane_map(small_map, bundle_two_way=False), 2)
+    model = model_check.Model(load_lane_map(small_map, bundle_two_way=False), 2, params=POINT)
     model.restore(model.initial)
     assert not model.has_cycle()
     for step in unbundled.example:
@@ -99,7 +105,7 @@ def test_calls_that_change_nothing_can_be_left_out(small_map, bundled):
             return found
 
     site = load_lane_map(small_map, bundle_two_way=True)
-    every = model_check.check(site, robots=2, model_class=EveryCall)
+    every = model_check.check(site, robots=2, params=POINT, model_class=EveryCall)
     assert (every.states, every.deadlocks, every.starved) == (
         bundled.states, bundled.deadlocks, bundled.starved)
 
@@ -115,7 +121,7 @@ def test_no_step_of_the_search_fails_a_goal_so_a_state_needs_no_retry_time(small
                 assert state == (0, 0.0, None), event
 
     site = load_lane_map(small_map, bundle_two_way=True)
-    watched = model_check.check(site, robots=2, model_class=Watched)
+    watched = model_check.check(site, robots=2, params=POINT, model_class=Watched)
     assert watched.states == bundled.states
 
 
@@ -130,12 +136,13 @@ def test_a_robot_queues_for_one_zone_at_a_time(small_map, unbundled):
             return super().capture()
 
     site = load_lane_map(small_map, bundle_two_way=False)
-    assert model_check.check(site, robots=2, model_class=OneQueue).states == unbundled.states
+    queued = model_check.check(site, robots=2, params=POINT, model_class=OneQueue)
+    assert queued.states == unbundled.states
 
 
 def test_several_processes_give_the_same_answer(small_map, unbundled):
     site = load_lane_map(small_map, bundle_two_way=False)
-    parallel = model_check.check(site, robots=2, workers=2)
+    parallel = model_check.check(site, robots=2, params=POINT, workers=2)
     assert (parallel.states, parallel.deadlocks, parallel.starved, parallel.example) == (
         unbundled.states, unbundled.deadlocks, unbundled.starved, unbundled.example)
 
@@ -154,7 +161,8 @@ def test_with_three_reports_a_zone_is_freed_on_the_third(small_map):
 
 def test_with_three_reports_the_same_way_still_ends_in_a_wait_cycle(small_map, unbundled):
     """전체 탐색에 몇 분 걸려 그 비교는 worklog에 있다."""
-    model = model_check.Model(load_lane_map(small_map, bundle_two_way=False), 2, confirm=3)
+    model = model_check.Model(load_lane_map(small_map, bundle_two_way=False), 2, params=POINT,
+                              confirm=3)
     model.restore(model.initial)
     for step in unbundled.example:
         kind, _, robot = step.rpartition(" ")
@@ -181,5 +189,15 @@ def test_a_state_limit_is_reported_as_an_incomplete_search(small_map):
                                   REPO / "sim/fake_robots/maps/oneway_shortcut.yaml"])
 def test_one_robot_alone_finishes_every_shipped_map(path):
     result = model_check.check(load_lane_map(path), robots=1)
+    assert result.complete
+    assert (result.deadlocks, result.starved) == (0, 0)
+
+
+def test_path_goals_with_one_lock_for_both_directions_have_no_deadlock_and_no_starvation(
+        small_map):
+    """path 모드(지시서 7번): 유턴 지점에서 새 목표를 못 받아 굶던 결함을 잡은 시험이다."""
+    path = replace(load_params(), lane_goal_mode="path")
+    result = model_check.check(load_lane_map(small_map, bundle_two_way=True), robots=2,
+                               params=path)
     assert result.complete
     assert (result.deadlocks, result.starved) == (0, 0)
