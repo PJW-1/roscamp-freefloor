@@ -1,35 +1,33 @@
 #!/usr/bin/env python3
-"""Play back a record of the FMS on the two cores, with no ROS, and compare what comes out.
+"""FMS 기록을 ROS 없이 두 코어에 다시 재생하고, 나온 결과를 비교한다.
 
     ros2 run fleet_manager fleet_manager_node --record run.jsonl
-        (or record:=run.jsonl on pc.launch.py)
+        (또는 pc.launch.py에 record:=run.jsonl)
     python3 tools/replay.py run.jsonl
 
-The first line says what the core was started with: robots, parameters, the map itself and its
-two-way setting. Every line after it has the time `t` and one of:
+첫 줄은 코어를 띄운 설정이다(로봇, 파라미터, 맵 본문, 양방향 설정).
+이후 줄은 모두 시각 `t`와 아래 중 하나를 가진다.
 
     {"t": 12.5, "in": "on_robot_state", "args": ["pinky1", 1.2, 2.0, 0.0, "MOVING", 90.0]}
     {"t": 12.6, "in": "tick", "args": []}
     {"t": 12.6, "inside": "DispatchCmd", "goal_id": 3, "station_id": "WORK", "robot_id": ""}
     {"t": 12.6, "out": "MoveCmd", "robot": "pinky1", "goal_id": 4, "target_id": "N", ...}
 
-`in` is a method of FleetManager and `args` its arguments. A run is one `in` line after another,
-each followed by what it caused. `inside` is what the two cores said to each other and `out` what
-went to ROS. The clock is `t`: a core reads one time for the whole of one call, live as well.
-What the node decides on its own never goes through a core and is not in the record: the
-CANCEL_UNCONFIRMED and ORDER_REPORT_REFUSED events, and the replies to cancels and order
-reports they rest on. Both events go out on /central/events, so a bag has them.
+`in`은 FleetManager의 메서드, `args`는 그 인자다. 한 번의 실행은 `in` 줄이 이어지고 각각 뒤에
+그 결과가 붙는 형태다. `inside`는 두 코어끼리 주고받은 것, `out`은 ROS로 나간 것이다.
+시계는 `t`다. 코어는 호출 한 번에 시각 하나만 읽으며 실제 실행도 같다.
+노드가 코어를 거치지 않고 스스로 정하는 것은 기록에 없다. CANCEL_UNCONFIRMED,
+ORDER_REPORT_REFUSED 이벤트와 그 바탕이 되는 취소/주문 보고의 응답이다.
+두 이벤트는 /central/events로 나가므로 bag에는 있다.
 
-`"recorded": true` in the first line says the core itself wrote this, so what it caused is in the
-file and has to match. A record of inputs alone, as a converted bag would be, leaves that out and
-has no `inside` or `out` lines: it just runs and reports what came out. Such a file needs its own
-`tick` lines, 10 a second by default on the real node, and its first line.
+첫 줄의 `"recorded": true`는 코어가 직접 쓴 기록이라는 뜻이며, 결과가 파일에 있으므로 일치해야 한다.
+입력만 있는 기록(변환한 bag 등)은 `inside`, `out` 줄이 없어 그냥 돌리고 나온 것을 보고한다.
+이런 파일에는 `tick` 줄(실제 노드는 기본 초당 10번)과 첫 줄이 따로 필요하다.
 
-A record may end anywhere, even in the middle of a line, as one does when the process is killed.
-What it has is compared. Lines after the end can only be what its last input caused, and the
-tool says how many it could not compare.
+기록은 프로세스가 죽은 경우처럼 줄 중간에서 끝나도 된다. 있는 부분만 비교한다.
+끝 뒤의 줄은 마지막 입력이 낳은 것뿐이며, 비교하지 못한 줄 수를 알려 준다.
 
-Exit code 0 if everything is the same, 1 at the first difference, 2 if this cannot be played back.
+종료 코드: 모두 같으면 0, 처음 다른 곳에서 1, 재생할 수 없으면 2.
 """
 from __future__ import annotations
 
@@ -55,13 +53,13 @@ class Result:
     inputs: int
     inside: int
     commands: int
-    compared: bool  # False for a record of inputs alone
+    compared: bool  # 입력만 있는 기록이면 False
     same: bool
-    line: int = 0  # first line that differs, counting from 1
+    line: int = 0  # 처음 다른 줄(1부터)
     recorded: str = ""
     produced: str = ""
-    uncompared: int = 0  # lines that came out after the record had ended
-    cut_line: bool = False  # the last line was only half written, and was left out
+    uncompared: int = 0  # 기록이 끝난 뒤에 나온 줄 수
+    cut_line: bool = False  # 마지막 줄이 반쯤만 써져 빼 둠
 
 
 def _count(lines: list[str], key: str) -> int:
@@ -76,7 +74,7 @@ def _arguments(entry: dict) -> list:
 
 
 def _read(path) -> tuple[list[str], list[dict], bool]:
-    """The lines, what they say, and whether half a line at the end was left out."""
+    """줄 목록, 내용, 끝의 반쯤 쓴 줄을 뺐는지 여부."""
     text = Path(path).read_text(encoding="utf-8")
     lines = text.splitlines()
     entries = []
@@ -120,7 +118,7 @@ def replay(path) -> Result:
     counts = tuple(_count(produced, key) for key in ("in", "inside", "out"))
     if not head.get("recorded") and not any("inside" in e or "out" in e for e in rest):
         return Result(*counts, False, True, cut_line=cut_line)
-    # Not the first line: the core was built from it, and it is no decision of the core.
+    # 첫 줄은 코어를 만든 입력이지 코어의 판단이 아니라 제외한다.
     for number, (old, new) in enumerate(zip(lines[1:], produced[1:], strict=False), start=2):
         if old != new:
             return Result(*counts, True, False, number, old, new, cut_line=cut_line)

@@ -1,5 +1,4 @@
-# Take the full basket off the tray and put an empty one on. A retry after a partial swap
-# sets only the step that is still open.
+# 가득 찬 바구니를 내리고 빈 바구니를 올린다. 일부만 끝난 뒤 재시도하면 남은 단계만 true로 둔다.
 string order_id
 string robot_id
 string station_id

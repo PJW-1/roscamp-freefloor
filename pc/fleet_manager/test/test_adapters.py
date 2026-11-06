@@ -1,4 +1,4 @@
-"""Conversions between fleet_core records and ROS messages live in one module."""
+"""fleet_core 레코드와 ROS 메시지 사이의 변환은 모듈 하나에 모여 있다."""
 import pytest
 
 pytest.importorskip("rclpy")
@@ -167,7 +167,7 @@ def test_confirm_clear_request_and_response_are_handled_here():
 
 
 def test_confirm_clear_with_no_zones_is_still_accepted():
-    """Taking a robot that never reported out of service releases nothing, and that is fine."""
+    """한 번도 보고하지 않은 로봇을 운행 제외해도 풀 것이 없으며 정상이다."""
     assert adapters.confirm_clear_response(ConfirmClear.Response(), []).accepted is True
 
 

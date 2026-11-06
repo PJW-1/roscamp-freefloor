@@ -1,7 +1,7 @@
-"""The node against hand-written servers on a real graph: names, types, goals and cancels.
+"""직접 짠 서버들과 실제 그래프에서 노드를 시험한다. 이름, 타입, goal, 취소.
 
-No fake robots here: this checks the wrapper's plumbing, not the scenarios. It joins a graph,
-so it runs only when the caller has isolated it from the robot network.
+가짜 로봇은 쓰지 않는다. 시나리오가 아니라 래퍼의 배선을 확인한다. 그래프에 참여하므로
+호출한 쪽이 로봇 네트워크와 분리해 둔 경우에만 돈다.
 """
 import os
 import subprocess
@@ -54,7 +54,7 @@ def items(counts):
 
 
 class World(Node):
-    """One robot that does what it is told at once, the two arm servers, and central."""
+    """시키는 대로 즉시 하는 로봇 하나, 팔 서버 둘, central."""
 
     def __init__(self, contract, site, cell, robot="pinky1", robot_servers=True):
         super().__init__("wiring_world")
@@ -66,7 +66,7 @@ class World(Node):
         self.swaps = []
         self.reports = []
         self.assignments = []
-        self.hold_fill = threading.Event()  # while set, a fill runs until it is canceled
+        self.hold_fill = threading.Event()  # 켜져 있는 동안 fill은 취소될 때까지 돈다
         self.canceled_fills = []
         self.fill_cancel_reason = "CANCELED"
         self.report_accepted = True
@@ -178,7 +178,7 @@ def graph():
     thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
     yield world
-    world.hold_fill.clear()  # a test that failed must not leave a server thread spinning
+    world.hold_fill.clear()  # 실패한 테스트가 서버 스레드를 돌게 두면 안 된다
     executor.shutdown()
     thread.join(timeout=5)
     world.destroy_node()
@@ -225,7 +225,7 @@ def test_the_status_of_every_robot_comes_out_about_once_a_second(graph):
 
 
 def test_a_new_fms_stays_silent_until_any_goal_of_an_old_one_must_have_stopped(graph):
-    """Read first, then check it is still silent: time only runs one way."""
+    """먼저 읽고 나서 아직 조용한지 확인한다. 시간은 한 방향으로만 흐른다."""
     fms = graph.fms
     while True:
         on_map, beats = fms.core.traffic.robot_view("pinky1")["on_map"], list(graph.beats)
@@ -238,12 +238,12 @@ def test_a_new_fms_stays_silent_until_any_goal_of_an_old_one_must_have_stopped(g
 
 
 def test_a_robot_counts_only_once_its_goals_can_reach_it():
-    """A new FMS hears reports before it has found the action servers. A goal sent then would be
-    refused, and the retries would be gone in a moment. Until all count it says nothing about
-    the locks either: it does not know them yet, and that is not the same as free. Nor does it
-    beat: a goal of the FMS before this one would take that for its own and keep going.
+    """새 FMS는 액션 서버를 찾기 전에 보고를 먼저 듣는다. 그때 보낸 goal은 거절되어 재시도가
+    금방 바닥난다. 전원이 로봇으로 인정되기 전에는 잠금도 알리지 않는다. 아직 모르는 것이지
+    비어 있는 것이 아니기 때문이다. heartbeat도 보내지 않는다. 이전 FMS의 goal이 그것을 자기
+    것으로 알고 계속 갈 수 있다.
 
-    Not pinky1: a server of the tests before this one can linger in the graph for a moment.
+    pinky1을 쓰지 않는 이유: 앞선 테스트의 서버가 잠시 그래프에 남아 있을 수 있다.
     """
     rclpy.init(args=["--ros-args", "-p", "robots:=[pinky3]", "-p", "tick_hz:=50.0"])
     node = FleetManagerNode()
@@ -272,8 +272,8 @@ def test_a_robot_counts_only_once_its_goals_can_reach_it():
 
 
 def test_a_record_of_the_running_node_plays_back_to_the_same_commands(tmp_path):
-    """One thread for the node, as in main(): a record is one call after another, and on several
-    threads the result of a goal can run alongside a tick."""
+    """main()처럼 노드에 스레드 하나를 쓴다. 기록은 호출이 차례로 이어지는데, 스레드가 여럿이면
+    goal 결과가 tick과 나란히 돌 수 있다."""
     record = tmp_path / "fms.jsonl"
     rclpy.init(args=["--ros-args", "-p", "robots:=[pinky1]", "-p", "tick_hz:=50.0"])
     node = FleetManagerNode(record=record)
@@ -302,7 +302,7 @@ def test_a_record_of_the_running_node_plays_back_to_the_same_commands(tmp_path):
 
 
 def test_a_zone_that_does_not_exist_is_refused_and_the_node_lives_on(graph):
-    """The node takes any exception from a callback as fatal, so one typo ended the process."""
+    """노드는 콜백의 예외를 모두 치명적으로 보므로 오타 하나로 프로세스가 끝났다."""
     fms = graph.fms
     client = graph.create_client(ConfirmClear, fms.contract.name("confirm_clear"))
     assert client.wait_for_service(timeout_sec=10.0)
@@ -315,7 +315,7 @@ def test_a_zone_that_does_not_exist_is_refused_and_the_node_lives_on(graph):
 
 
 def test_an_event_is_logged_at_its_own_level(graph, monkeypatch):
-    """rclpy refuses a second severity from one call site, so the real logger comes first."""
+    """rclpy는 한 호출 위치의 두 번째 심각도를 거부하므로 실제 로거를 먼저 부른다."""
     fms = graph.fms
     events = [EventOut(level, f"CODE_{level}", "detail") for level in ("INFO", "WARN", "ERROR")]
     for event in events * 2:
@@ -383,7 +383,7 @@ def test_stop_cancels_the_fill_on_its_server_and_run_sends_what_remains(graph):
 
 
 def test_a_stop_answered_with_the_status_alone_is_no_failed_attempt(graph):
-    """The server calls canceled() and leaves the reason empty: the goal status says it all."""
+    """서버가 canceled()를 부르고 reason을 비워 둔다. goal 상태만으로 충분하다."""
     graph.hold_fill.set()
     graph.fill_cancel_reason = ""
     publish(graph, "RUN", {"A": 1, "C": 2})
@@ -421,7 +421,7 @@ def test_a_refused_cancel_is_sent_again_and_warned_about_once_until_the_result_c
 
 
 def test_a_report_with_no_reply_yet_is_sent_again_and_ends_with_the_reply(graph):
-    graph.report_delay_s = 2.5  # longer than report_retry_s
+    graph.report_delay_s = 2.5  # report_retry_s보다 길다
     publish(graph, "RUN", {"A": 1, "C": 2})
     assert wait_for(lambda: len(graph.reports) >= 2), f"reports {graph.reports}"
     assert {r.order_id for r in graph.reports} == {"O-001"}

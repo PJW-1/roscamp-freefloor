@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Check a running ROS graph against interfaces/fleet_interfaces/contract.yaml.
+"""실행 중인 ROS 그래프를 interfaces/fleet_interfaces/contract.yaml과 대조한다.
 
-Fake mode (CI, simulation) skips entries that only exist on real robots; real mode checks
-them too. Entries whose provider is intentionally not running are skipped by key or name:
+fake 모드(CI, 시뮬레이션)는 실물 로봇에만 있는 항목을 건너뛰고, real 모드는 그것도 검사한다.
+제공자를 일부러 띄우지 않은 항목은 key나 이름으로 건너뛴다.
 
   check_interfaces.py --mode fake --wait-s 5 --skip zones,assignments,robots,heartbeat,confirm_clear
 
-Exit code 0 when there is no error (warnings are printed), 1 otherwise.
+오류가 없으면 종료 코드 0(경고는 출력), 있으면 1.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 try:
     from fleet_core.common.contract import QosSpec, load_contract
     from fleet_core.common.contract_check import compare
-except ImportError:  # run straight from a checkout, without colcon
+except ImportError:  # colcon 없이 체크아웃에서 바로 실행
     sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
     from fleet_core.common.contract import QosSpec, load_contract
     from fleet_core.common.contract_check import compare
@@ -29,19 +29,18 @@ def default_contract() -> Path:
     try:
         from ament_index_python.packages import get_package_share_directory
         return Path(get_package_share_directory("fleet_interfaces")) / "contract.yaml"
-    except Exception:  # noqa: BLE001 - any lookup failure falls back to the checkout
+    except Exception:  # noqa: BLE001 - 조회가 실패하면 체크아웃 경로를 쓴다
         return REPO / "interfaces" / "fleet_interfaces" / "contract.yaml"
 
 
 def _spec(endpoint, expected: QosSpec) -> QosSpec:
-    """Depth 0 means the middleware does not share it (Fast DDS), so it cannot be checked."""
+    """depth 0은 미들웨어(Fast DDS)가 공유하지 않는다는 뜻이라 검사할 수 없다."""
     qos = endpoint.qos_profile
     return QosSpec(qos.reliability.name.lower(), qos.durability.name.lower(),
                    int(qos.depth) or expected.depth)
 
 
 def observe(node, entries) -> dict:
-    """Read the parts of the graph the contract talks about into plain data."""
     from rclpy.action import get_action_names_and_types
 
     topics = {n: t for n, t in node.get_topic_names_and_types()}

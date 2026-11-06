@@ -1,4 +1,4 @@
-"""File overrides must reach the fake nodes too, or they would run on a different map."""
+"""파일 지정은 가짜 노드에도 전달돼야 한다. 아니면 다른 맵으로 돈다."""
 import importlib.util
 from pathlib import Path
 

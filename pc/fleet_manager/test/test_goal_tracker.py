@@ -1,4 +1,4 @@
-"""Goal bookkeeping of the wrapper. Plain Python, so it also runs without ROS."""
+"""래퍼의 goal 관리. 순수 파이썬이라 ROS 없이도 돈다."""
 from fleet_manager.goal_tracker import GoalTracker, ReportOutbox
 
 RETRY_S = 1.0
@@ -137,7 +137,7 @@ def test_each_goal_has_its_own_count():
 
 
 def test_a_cancel_waiting_for_an_acceptance_that_never_comes_is_warned_about_too():
-    """With no handle nothing can be sent, and the goal may still be running on the robot."""
+    """핸들이 없으면 보낼 수 없지만 goal은 로봇에서 계속 돌 수 있다."""
     goals = GoalTracker()
     goals.sent("k")
     goals.cancel("k", 0.0)
@@ -194,7 +194,7 @@ def test_outbox_drops_a_report_once_it_is_done():
 
 
 def test_outbox_says_when_a_second_reply_finds_the_report_already_gone():
-    """A report sent twice can be answered twice. Only the first answer may raise an event."""
+    """두 번 보낸 보고는 답도 두 번 올 수 있다. 이벤트는 첫 답만 낼 수 있다."""
     outbox = ReportOutbox()
     outbox.add("a")
     [(report_id, _)] = outbox.due(0.0, True, RETRY_S)

@@ -1,4 +1,4 @@
-"""Goal handles and pending reports of the wrapper. Plain Python, so it is easy to test."""
+"""래퍼의 goal 핸들과 대기 중인 보고. 순수 파이썬이라 테스트하기 쉽다."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,8 +12,8 @@ class _Cancel:
 
 
 class GoalTracker:
-    """A cancel counts as done when the result comes, and until then it must not be lost: not
-    while the server has not answered the goal yet, and not when it is lost or refused."""
+    """취소는 결과가 와야 끝난 것이다. 그때까지 잃으면 안 된다. 서버가 goal에 아직
+    답하지 않았을 때도, goal이 유실되거나 거절됐을 때도 마찬가지다."""
 
     def __init__(self):
         self._pending: set = set()
@@ -45,8 +45,8 @@ class GoalTracker:
         self._cancels[key] = _Cancel(now)
 
     def retry_cancels(self, now: float, retry_s: float, warn_after: int) -> list:
-        """Ask again for what is due. Returns the keys that have just used up warn_after tries,
-        each once. Time waiting for an acceptance counts: the goal may be running all the same."""
+        """때가 된 취소를 다시 요청한다. warn_after번을 막 채운 key를 한 번씩 돌려준다.
+        수락을 기다리는 시간도 센다. goal은 그동안 돌고 있을 수 있다."""
         unconfirmed = []
         for key, cancel in list(self._cancels.items()):
             if now - cancel.tried_at < retry_s:
@@ -69,8 +69,8 @@ class _Report:
 
 
 class ReportOutbox:
-    """Keeps order reports until central has answered them. Reports are told apart by a number:
-    what is in them can be the same twice, and holds dicts."""
+    """central이 답할 때까지 주문 보고를 보관한다. 보고는 번호로 구분한다.
+    내용이 같을 수 있고 dict를 담고 있기 때문이다."""
 
     def __init__(self):
         self._items: dict = {}
@@ -81,7 +81,7 @@ class ReportOutbox:
         self._next_id += 1
 
     def due(self, now: float, ready: bool, retry_s: float) -> list:
-        """(number, report) of what to send now: not sent yet, or no answer for retry_s."""
+        """지금 보낼 (번호, 보고). 아직 안 보냈거나 retry_s 동안 답이 없는 것."""
         if not ready:
             return []
         out = []
@@ -92,5 +92,5 @@ class ReportOutbox:
         return out
 
     def done(self, report_id) -> bool:
-        """Drop an answered report. False if an earlier answer already did."""
+        """답을 받은 보고를 지운다. 앞선 답이 이미 지웠으면 False."""
         return self._items.pop(report_id, None) is not None

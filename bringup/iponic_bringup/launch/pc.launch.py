@@ -1,15 +1,14 @@
-"""Start the fleet manager on the PC, with any mix of fake and real devices.
+"""PC에서 플릿 매니저를 띄운다. 가짜와 실물 장치를 섞어 쓸 수 있다.
 
 All fake:  ros2 launch iponic_bringup pc.launch.py use_fake:=true scenario:=shared_lane_failure
 Mixed:     ros2 launch iponic_bringup pc.launch.py use_fake:=true fake_robots:="pinky2 pinky3"
 Real arms: ros2 launch iponic_bringup pc.launch.py use_fake:=true fake_arms:="arm3"
 All real:  ros2 launch iponic_bringup pc.launch.py use_fake:=false
 
-record:=PATH keeps a record of the FMS for tools/replay.py.
+record:=PATH 는 tools/replay.py용 FMS 기록을 남긴다.
 
-fake_arms: arm1 and arm2 together start the fake workcell server and their vision nodes (one
-fill_basket server answers for both, so listing only one of them is an error). arm3 starts the
-fake outbound arm.
+fake_arms: arm1과 arm2는 함께 가짜 워크셀 서버와 비전 노드를 띄운다.
+fill_basket 서버 하나가 둘을 맡으므로 하나만 적으면 오류다. arm3는 가짜 출고 팔을 띄운다.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction

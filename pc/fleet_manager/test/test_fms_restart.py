@@ -1,8 +1,7 @@
-"""Section 5 of the work order: kill the FMS process, then start a new one.
+"""작업 지시서 5절: FMS 프로세스를 죽이고 새로 띄운다.
 
-Robots stop on their own within the heartbeat timeout, on the wall clock. The new FMS starts over
-from waiting for every robot to report: pinky3 is silent when it comes up, so nothing moves until
-pinky3 is back.
+로봇은 실제 시간 기준 heartbeat timeout 안에 스스로 멈춘다. 새 FMS는 모든 로봇의 보고를
+기다리는 데서 다시 시작한다. 뜰 때 pinky3가 조용하므로 pinky3가 돌아올 때까지 아무도 안 움직인다.
 """
 import json
 import os
@@ -30,14 +29,14 @@ from rclpy.node import Node  # noqa: E402
 from rclpy.qos import qos_profile_action_status_default  # noqa: E402
 from rosgraph_msgs.msg import Clock  # noqa: E402
 
-DOMAIN = 56  # the scenario integration test takes 50 to 55
+DOMAIN = 56  # 시나리오 통합 테스트가 50~55를 쓴다
 ROBOTS = ["pinky1", "pinky2", "pinky3"]
 WALL_TIMEOUT_S = 420
 STILL_M = 0.001
 SILENT_S = 0.5
-SLACK_S = 1.0  # a loaded machine delivers late: the last beat, the kill and the stop are all real
-PINKY3_SILENT_S = (50.0, 120.0)  # the comm_loss in fms_restart.yaml
-SCENARIO = Path(__file__).parent / "fms_restart.yaml"  # means nothing without the kill below
+SLACK_S = 1.0  # 부하 걸린 머신은 늦게 전달한다. 마지막 beat, kill, 정지 모두 실제 시간이다
+PINKY3_SILENT_S = (50.0, 120.0)  # fms_restart.yaml의 comm_loss
+SCENARIO = Path(__file__).parent / "fms_restart.yaml"  # 아래의 kill 없이는 의미가 없다
 
 
 def _accepted_at(status) -> tuple[int, int]:
@@ -50,9 +49,9 @@ class Probe(Node):
         self.sim_now = 0.0
         self.state = {}
         self.pose = {}
-        self.moved = {}  # robot -> wall time its true position last changed
-        self.heard = {}  # robot -> wall time of its last report
-        self.last_goal = {}  # robot -> status of the move goal it was given last
+        self.moved = {}  # 로봇 -> 실제 위치가 마지막으로 바뀐 실제 시각
+        self.heard = {}  # 로봇 -> 마지막 보고의 실제 시각
+        self.last_goal = {}  # 로봇 -> 마지막으로 준 이동 goal의 상태
         self.codes = []
         qos = to_ros_qos(contract.qos("robot_state"))
         self.create_subscription(Clock, "/clock", self._on_clock, 10)
@@ -86,11 +85,11 @@ class Probe(Node):
 
     def _on_goals(self, robot, msg) -> None:
         if msg.status_list:
-            # Reversed: of two goals in one clock step, the later one in the list counts.
+            # 뒤집는다. 한 clock 단계에 goal이 둘이면 목록에서 나중 것을 쓴다.
             self.last_goal[robot] = max(reversed(msg.status_list), key=_accepted_at).status
 
     def moving(self) -> list[str]:
-        """Who says it is moving. A robot that has gone silent says nothing."""
+        """움직인다고 말하는 로봇. 조용해진 로봇은 아무 말도 하지 않는다."""
         now = time.monotonic()
         return [r for r in ROBOTS if self.state.get(r) == RobotState.STATE_MOVING
                 and now - self.heard[r] < SILENT_S]
@@ -170,13 +169,13 @@ def test_robots_stop_without_the_fms_and_a_new_one_waits_for_all_of_them(probe, 
         took = {r: probe.moved[r] - killed for r in ROBOTS}
         print(f"robots moved for this long after the kill: {took}")
         assert all(t <= timeout_s + SLACK_S for t in took.values()), took
-        # Nobody got there by itself: every one of them had its goal ended short of the target.
+        # 스스로 도착한 로봇은 없다. 모두 목표에 못 미쳐 goal이 끝났다.
         assert wait_for(lambda: all(probe.last_goal.get(r) == GoalStatus.STATUS_ABORTED
                                     for r in ROBOTS), 10), probe.last_goal
         print(f"last goal of each: {probe.last_goal}")
         assert not probe.moving(), probe.state
 
-        # One report before the silence and the new FMS would call it a comm loss instead.
+        # 침묵 전에 보고가 한 번이라도 있으면 새 FMS는 이를 통신 두절로 본다.
         assert wait_for(lambda: probe.sim_now > PINKY3_SILENT_S[0], 60), probe.sim_now
         still = dict(probe.moved)
         fms = start_fms()

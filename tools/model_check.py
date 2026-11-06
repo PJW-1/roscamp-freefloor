@@ -1,45 +1,43 @@
 #!/usr/bin/env python3
-"""Exhaustive check of the real TrafficController on a lane map, over every order of calls.
+"""실제 TrafficController를 레인 맵에서 호출 순서의 모든 경우로 전수 검사한다.
 
     python3 tools/model_check.py --map sim/fake_robots/maps/oneway_shortcut.yaml \
         --robots 3 --bundle off
 
-The state is, per robot, its mission phase, what is left of its path, its running goal and where
-it stands, plus the zone locks and how many open calls there are. Orders are not in it. At every
-step any one of these can happen, followed by one tick of the core:
+상태는 로봇마다 임무 단계, 남은 경로, 진행 중인 goal, 위치와 구역 잠금, 열린 호출 수다.
+주문은 상태에 없다. 매 단계에서 아래 중 하나가 일어나고, 이어서 코어가 tick을 한 번 돈다.
 
-    open call       dispatch(WORK) with no robot named, up to one per robot
-    cancel call     dispatch_cancel of an open call
+    open call       로봇을 지정하지 않은 dispatch(WORK), 로봇당 최대 하나
+    cancel call     열린 호출에 대한 dispatch_cancel
     send X          dispatch(OUTBOUND, X)
-    cancel X        dispatch_cancel of X's dispatch
+    cancel X        X의 dispatch에 대한 dispatch_cancel
     release X       release(X)
-    pass X          X reports it is past d along its lane
-    arrive X        X finishes its move
-    docked X        X finishes its dock
-    report X        one more report from X (only with --confirm above 1)
-    nothing         only the tick
+    pass X          X가 레인을 따라 d를 지났다고 보고
+    arrive X        X의 이동이 끝남
+    docked X        X의 도킹이 끝남
+    report X        X의 보고가 한 번 더 옴(--confirm이 1보다 클 때만)
+    nothing         tick만
 
-A call that cannot change anything (a second dispatch, a release with nothing to release) is the
-same step as `nothing`, so it is left out. test_model_check_tool.py compares the two on a small map.
+아무것도 바꾸지 못하는 호출(두 번째 dispatch, 풀 것이 없는 release)은 `nothing`과 같은 단계라 뺀다.
+test_model_check_tool.py가 작은 맵에서 둘을 비교한다.
 
-Output is (states, deadlocks, starved), and one shortest way into a deadlock.
-  deadlock: a state with a wait cycle. The check does not go on from there, because time stands
-    still here and the retreat of the real core never comes. A later cancel could still undo one,
-    and it counts anyway.
-  starved: (state, robot) pairs where the robot still has somewhere to drive and no sequence of
-    events other than a cancel ever gives it a move again. Every member of a deadlock counts. Zero
-    means a way out always exists, not that every schedule takes it: an order of events that keeps
-    passing a robot over is not counted. Against that there is the FIFO in zones.py.
+출력은 (states, deadlocks, starved)와 교착에 이르는 가장 짧은 경로 하나다.
+  deadlock: 대기 순환이 있는 상태. 여기서는 시간이 멈춰 실제 코어의 후퇴가 오지 않으므로
+    더 진행하지 않는다. 나중의 cancel이 풀 수도 있지만 그래도 센다.
+  starved: (상태, 로봇) 쌍 중 로봇이 갈 곳이 남았는데 cancel이 아닌 어떤 사건 순서로도
+    다시 움직일 수 없는 것. 교착의 모든 구성원이 포함된다. 0은 빠져나갈 길이 항상 있다는
+    뜻이지 모든 일정이 그 길을 간다는 뜻이 아니다. 로봇을 계속 건너뛰는 사건 순서는
+    세지 않으며, 그에 대한 방어는 zones.py의 FIFO다.
 
-What it does not cover: geometry beyond the lock rules, faults, timing and comm loss. A pose is
-only "on the node" or "just past d on the lane".
+다루지 않는 것: 잠금 규칙 밖의 기하, 고장, 타이밍, 통신 두절. 위치는 "지점 위"
+아니면 "레인에서 d를 막 지난 곳"뿐이다.
 
-By default a zone is freed on the first report past it, not the third. A robot that has passed a
-zone and not freed it yet is in no queue, so it should not be part of a wait cycle through that
-zone. That is an argument, and the default search does not prove it. --confirm 3 searches every
-order of those reports too, at the cost of many more states. The worklog has both where both ran.
-A `report` repeats the same pose. A real report back inside the zone would reset the count, which
-delays a release and reaches no lock state the search has not seen: an argument again.
+기본값은 세 번째가 아니라 첫 보고에서 구역을 푼다. 구역을 지났지만 아직 풀지 않은 로봇은
+어떤 큐에도 없으므로 그 구역을 거치는 대기 순환에 들 수 없다. 이는 논증이며 기본 탐색이
+증명하지는 않는다. --confirm 3은 그 보고들의 모든 순서도 탐색하지만 상태가 훨씬 많아진다.
+둘 다 돌린 경우 작업 기록에 둘 다 있다.
+`report`는 같은 위치를 반복한다. 구역 안으로 되돌아온 실제 보고는 횟수를 초기화해 해제를
+늦출 뿐 탐색이 못 본 잠금 상태에 이르지 않는다. 이것도 논증이다.
 """
 from __future__ import annotations
 
@@ -64,14 +62,14 @@ from fleet_core.traffic.deadlock import find_cycle, wait_graph  # noqa: E402
 from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
 from fleet_core.traffic.mission import DOCK, MOVE, _Dispatch, _Goal  # noqa: E402
 
-PAST = 0.01  # how far beyond d a robot reports when it passes
-NAMED = 100  # goal ids of named dispatches start here, so they never meet an open call's
-CHUNK = 500  # states per job when several processes work
-ROBOT_FIELDS = 12  # the length of the part of a state that describes one robot
+PAST = 0.01  # 로봇이 지나갈 때 d를 얼마나 넘어서 보고하는가
+NAMED = 100  # 이름 지정 dispatch의 goal id는 여기서 시작해 열린 호출의 id와 겹치지 않는다
+CHUNK = 500  # 프로세스 여럿이 일할 때 job 하나의 상태 수
+ROBOT_FIELDS = 12  # 상태에서 로봇 하나를 나타내는 부분의 길이
 
 
 class Model:
-    """One core, set to any stored state, so a step costs no copying of objects."""
+    """저장된 어떤 상태로도 맞출 수 있는 코어 하나. 한 단계에 객체 복사가 없다."""
 
     def __init__(self, site, robots: int, start=None, params=None, confirm: int = 1):
         self.confirm = confirm
@@ -103,7 +101,7 @@ class Model:
         return found
 
     def _conflict_groups(self) -> dict:
-        """Order of requests matters only inside a queue and across a conflict pair."""
+        """요청 순서는 큐 안과 충돌 쌍 사이에서만 의미가 있다."""
         group = {zone: zone for zone in self.core.zones.snapshot()}
         for zone in group:
             for other in self.core.zones._conflicts[zone]:
@@ -141,7 +139,7 @@ class Model:
                 len(core._open_calls))
 
     def _first_needed(self, m) -> int:
-        """What is behind the robot counts only as far back as a zone it still holds."""
+        """로봇 뒤쪽은 아직 잡고 있는 구역까지만 상태에 센다."""
         held = self.core.zones._held.get(m.name, ())
         for index in range(m.idx):
             if self.site.zone_of[m.path[index]] in held:
@@ -190,7 +188,7 @@ class Model:
     # ---- events ---------------------------------------------------------------------------
 
     def _tick(self, reporter: str | None = None) -> None:
-        """Everyone reports, or with several reports to count only the robot that moved."""
+        """전원이 보고한다. 보고를 여러 번 세는 경우에는 움직인 로봇만 보고한다."""
         core = self.core
         reporters = self.names if self.confirm == 1 else [reporter] if reporter else []
         for name in reporters:
@@ -199,7 +197,7 @@ class Model:
         core.tick()
 
     def events(self, state: tuple) -> list[tuple]:
-        """Everything that can happen now. The state must be restored already."""
+        """지금 일어날 수 있는 모든 사건. 상태를 먼저 복원해 두어야 한다."""
         core = self.core
         calls = state[-1]
         found = [("nothing",)]
@@ -256,7 +254,7 @@ class Model:
         self._tick(event[1] if kind in ("pass", "arrive", "report") else None)
 
     def expand(self, states: Iterable[tuple]) -> list:
-        """For each state: None if it is a deadlock, otherwise (event code, successor) pairs."""
+        """상태마다 교착이면 None, 아니면 (사건 코드, 다음 상태) 쌍."""
         answers = []
         for state in states:
             self.restore(state)
@@ -278,7 +276,7 @@ class Model:
 
 
 def _remember_plans(site) -> None:
-    """A plan depends only on the map, and the core asks for the same ones all the time."""
+    """경로는 맵에만 따르고 코어가 같은 것을 계속 요청하므로 기억해 둔다."""
     if "plan" in vars(site):
         return
     plans: dict = {}
@@ -313,14 +311,14 @@ def _work(states: list) -> list:
 class Result:
     states: int
     deadlocks: int
-    starved: int  # -1 when the search stopped early
+    starved: int  # 탐색이 중간에 멈췄으면 -1
     example: list
     complete: bool
     local_states: int
 
 
 class _Store:
-    """Every known state, in about 150 bytes each: most parts recur a great many times."""
+    """알려진 모든 상태를 상태당 약 150바이트로 저장한다. 대부분의 부분이 자주 되풀이된다."""
 
     def __init__(self, robots: int):
         self.robots = robots
@@ -338,7 +336,7 @@ class _Store:
         return found
 
     def add(self, state: tuple) -> tuple[int, bool]:
-        """Returns the state's number, and whether it is new."""
+        """상태 번호와 새 상태인지 여부를 돌려준다."""
         key = state[-1]
         ids = []
         for part in state[:-1]:
@@ -371,7 +369,7 @@ def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, w
     store.add(model.initial)
     parents = array("I", [0])
     parent_events = array("H", [0])
-    edges_from, edges_to = array("I"), array("I")  # without cancels: for the starved count
+    edges_from, edges_to = array("I"), array("I")  # cancel 제외, starved 계산용
     dead: list[int] = []
     cancels = [_is_cancel(event) for event in model.event_list]
     frontier = [0]
@@ -419,7 +417,7 @@ def check(site, robots: int = 3, start=None, params=None, max_states: int = 0, w
 
 
 def _count_starved(store: _Store, robots: int, edges_from, edges_to) -> int:
-    """For each robot: states that want a drive, less those from which a drive can be reached."""
+    """로봇마다 주행을 원하는 상태에서 주행에 이를 수 있는 상태를 뺀 수."""
     wants = np.zeros(len(store.parts), dtype=bool)
     drives = np.zeros(len(store.parts), dtype=bool)
     for number, part in enumerate(store.parts):

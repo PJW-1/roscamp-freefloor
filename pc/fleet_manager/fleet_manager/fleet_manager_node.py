@@ -1,9 +1,8 @@
-"""The FMS process: the traffic and orders modules of fleet_core behind one ROS node.
+"""FMS 프로세스. fleet_core의 교통·주문 모듈을 ROS 노드 하나로 감싼다.
 
-All decisions are made in fleet_core. This node forwards messages in and turns the commands
-into goals. Callbacks run on one executor thread, so the cores never see concurrent calls.
-Names and QoS come from contract.yaml, coordinates from the site map, and policy values from
-fleet_params.yaml.
+판단은 모두 fleet_core가 한다. 이 노드는 메시지를 넘기고 명령을 goal로 바꾼다.
+콜백은 executor 스레드 하나에서 돌아 코어는 동시 호출을 받지 않는다.
+이름과 QoS는 contract.yaml, 좌표는 맵, 정책 값은 fleet_params.yaml에서 온다.
 """
 from __future__ import annotations
 
@@ -65,7 +64,7 @@ class FleetManagerNode(Node):
             robots, self._now)
         self._record_file = None
         if record:
-            # One line at a time, so a killed process leaves a record that just ends.
+            # 한 줄씩 써서, 프로세스가 죽어도 기록은 그 자리에서 끝난다.
             self._record_file = open(record, "w", buffering=1, encoding="utf-8")
             self.core.record_to(lambda line: self._record_file.write(line + "\n"))
 
@@ -78,9 +77,9 @@ class FleetManagerNode(Node):
         self.create_timer(1.0 / self.get_parameter("tick_hz").value, self._on_tick)
         self.create_timer(1.0, self._publish_robots)
         params = self.core.params
-        # A robot still on a goal of an FMS before this one stops once the beats have been gone
-        # for its timeout. Until then this one sends nothing and takes no report. Wall clock:
-        # this watches a process, and sim time runs ahead of a loaded machine's messages.
+        # 이전 FMS의 goal을 수행 중인 로봇은 heartbeat가 timeout만큼 끊기면 멈춘다.
+        # 그때까지 이 FMS는 아무것도 보내지 않고 보고도 받지 않는다. 실제 시계를 쓴다.
+        # 프로세스를 보는 것이고, 시뮬레이션 시간은 부하 걸린 머신의 메시지보다 앞서가기 때문이다.
         self._silent_until = (time.monotonic() + params.heartbeat_timeout_s
                               + params.heartbeat_period_s)
         self.create_timer(params.heartbeat_period_s, self._publish_heartbeat,
@@ -138,8 +137,8 @@ class FleetManagerNode(Node):
             self.core.on_robot_state(robot, *adapters.robot_report(msg))
 
     def _reachable(self, robot) -> bool:
-        """A robot counts once goals can reach it. A new FMS hears reports before it has found
-        the action servers, and goals sent then are refused and use up the retries."""
+        """goal이 닿을 수 있어야 로봇으로 친다. 새 FMS는 액션 서버를 찾기 전에 보고를 먼저
+        듣는데, 그때 보낸 goal은 거절되어 재시도만 소모한다."""
         if (robot not in self._reached and self._move[robot].server_is_ready()
                 and self._dock[robot].server_is_ready()):
             self._reached.add(robot)
@@ -156,7 +155,7 @@ class FleetManagerNode(Node):
     def _on_tick(self) -> None:
         now = self._now()
         if now <= 0.0 or self.silent():
-            return  # the first /clock message under simulated time has not come yet
+            return  # 시뮬레이션 시간에서 첫 /clock이 아직 안 왔다
         for command in self.core.tick():
             self._dispatch(command, now)
         self._retry_cancels(now)
@@ -168,7 +167,7 @@ class FleetManagerNode(Node):
         for server, goal_id in self._goals.retry_cancels(now, params.cancel_retry_s,
                                                          params.cancel_warn_after):
             waited = params.cancel_warn_after * params.cancel_retry_s
-            # Not "asking again": a goal never accepted has no handle to send the cancel to.
+            # "다시 요청"이 아니다. 수락된 적 없는 goal에는 취소를 보낼 핸들이 없다.
             detail = (f"goal {goal_id} on {server} has no result {waited:.0f} s after it was "
                       "canceled, and the cancel stands until one comes")
             self._dispatch(EventOut("WARN", "CANCEL_UNCONFIRMED", detail, server), now)
@@ -182,7 +181,7 @@ class FleetManagerNode(Node):
     def _report_answered(self, report_id, command, future) -> None:
         try:
             accepted = adapters.report_accepted(future.result())
-        except Exception as exc:  # it stays in the outbox and goes out again
+        except Exception as exc:  # outbox에 남아 다시 나간다
             self.get_logger().warning(f"report of {command.order_id} got no reply: {exc}")
             return
         if self._reports.done(report_id) and not accepted:
@@ -193,7 +192,7 @@ class FleetManagerNode(Node):
 
     def _publish_snapshots(self, now: float) -> None:
         zones = self.core.zones_view()
-        # Until all have reported this FMS does not know the locks, which is not the same as free.
+        # 전원이 보고하기 전에는 잠금을 모른다. 그것이 비어 있다는 뜻은 아니다.
         if self.core.traffic.everyone_placed and zones != self._last_zones:
             self._last_zones = zones
             self._zones_pub.publish(adapters.zones_to_msg(zones, now))
@@ -203,8 +202,8 @@ class FleetManagerNode(Node):
             self._assignments_pub.publish(adapters.assignments_to_msg(assignments, now))
 
     def _publish_heartbeat(self) -> None:
-        # Nobody moves before all are on the map, so nothing needs a beat yet. A goal of an FMS
-        # before this one, accepted late, would take one for its own and keep going.
+        # 전원이 맵에 오르기 전에는 아무도 안 움직여 heartbeat가 필요 없다. 늦게 수락된
+        # 이전 FMS의 goal이 이 heartbeat를 자기 것으로 알고 계속 갈 수 있다.
         if not self.silent() and self.core.traffic.everyone_placed:
             self._heartbeat_pub.publish(Header(stamp=self.get_clock().now().to_msg(),
                                                frame_id=self.get_name()))
@@ -237,7 +236,7 @@ class FleetManagerNode(Node):
             self._log_event(command)
 
     def _log_event(self, event) -> None:
-        # One call per severity: rclpy raises if a call site changes severity between calls.
+        # 호출 위치마다 심각도 하나. rclpy는 같은 위치에서 심각도가 바뀌면 예외를 낸다.
         text = f"{event.code} {event.detail}"
         if event.level == "ERROR":
             self.get_logger().error(text)
@@ -250,7 +249,7 @@ class FleetManagerNode(Node):
     def _send(self, client, goal, key, on_result, on_rejected) -> None:
         if not client.server_is_ready():
             if on_rejected == self._robot_rejected:
-                self.core.on_goal_not_sent(key[0], key[1])  # not a failed attempt
+                self.core.on_goal_not_sent(key[0], key[1])  # 실패한 시도가 아니다
             else:
                 on_rejected(key)
             return
@@ -261,7 +260,7 @@ class FleetManagerNode(Node):
     def _goal_response(self, key, on_result, on_rejected, future) -> None:
         try:
             handle = future.result()
-        except Exception as exc:  # a broken future must not leave the core waiting forever
+        except Exception as exc:  # 깨진 future 때문에 코어가 영원히 기다리면 안 된다
             self.get_logger().error(f"goal {key} failed to send: {exc}")
             self._goals.finished(key)
             on_rejected(key)
@@ -317,7 +316,7 @@ def main() -> None:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    except Exception:  # SIGINT can land inside a message take; a real error has ROS still up
+    except Exception:  # SIGINT가 메시지 take 중에 걸릴 수 있다. 진짜 오류면 ROS가 아직 살아 있다
         if rclpy.ok():
             raise
     finally:

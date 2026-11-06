@@ -1,7 +1,6 @@
-"""Conversions between fleet_core records and ROS messages.
+"""fleet_core 레코드와 ROS 메시지 사이의 변환.
 
-When a message field changes after the team agrees on the interfaces, this file is the
-only place in the fleet manager that needs editing.
+팀 합의 뒤 메시지 필드가 바뀌면 플릿 매니저에서 고칠 곳은 이 파일뿐이다.
 """
 from __future__ import annotations
 
@@ -90,7 +89,7 @@ def robot_report(msg) -> tuple[float, float, float, str, float]:
 
 
 def goal_result(response):
-    """The result of a finished goal. A server may say how it ended by the status alone."""
+    """끝난 goal의 결과. 서버가 상태만으로 종료 사유를 알릴 수 있다."""
     result = response.result
     if getattr(result, "reason", None) == "":
         result.reason = REASON_OF_STATUS.get(response.status, "")

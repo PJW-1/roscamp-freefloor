@@ -1,4 +1,4 @@
-"""CI item 5: each scenario runs to the end and the live graph matches contract.yaml."""
+"""CI 5번 항목: 시나리오마다 끝까지 돌고, 실행 중인 그래프가 contract.yaml과 맞는다."""
 import csv
 import json
 import os
@@ -19,7 +19,7 @@ from ament_index_python.packages import (  # noqa: E402
 SCENARIOS = ["basic_orders", "order_burst", "shared_lane_failure", "stock_shortage",
              "stuck_robot", "operator_recovery"]
 WALL_TIMEOUT_S = 420
-FIRST_DOMAIN = 50  # one domain per scenario, inside the range kept free of the robot network
+FIRST_DOMAIN = 50  # 시나리오마다 도메인 하나, 로봇 네트워크와 겹치지 않는 범위
 CHECKER = Path(__file__).parents[3] / "scripts" / "check_interfaces.py"
 REPLAY = Path(__file__).parents[3] / "tools" / "replay.py"
 

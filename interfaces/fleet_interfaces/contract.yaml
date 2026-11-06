@@ -1,6 +1,5 @@
-# Single source of truth for names, types and QoS. Code looks entries up by `key`,
-# so renaming a topic or changing a QoS only needs an edit here. All values are a
-# draft until the team agrees; QoS depths need measuring on the real Wi-Fi.
+# 이름, 타입, QoS의 유일한 기준. 코드는 `key`로 찾으므로 이름이나 QoS는 여기만 고친다.
+# 팀 합의 전까지 모두 초안이다. QoS depth는 실제 Wi-Fi에서 측정해야 한다.
 version: 0.3-draft
 # 0.3 (2026-11-06): 제안 중인 heartbeat를 /fms/heartbeat에서 /fleet/heartbeat로 옮겼다.
 # 나머지 이름, 필드, QoS는 그대로다. 0.3에 더하는 것은 모두 제안(팀 합의 전)이다.
@@ -21,8 +20,7 @@ topics:
   - {key: order_board, name: "/central/orders", type: fleet_interfaces/msg/OrderBoard, qos: LATCHED}
   - {key: assignments, name: "/fleet/assignments", type: fleet_interfaces/msg/AssignmentArray, qos: LATCHED}
   - {key: robots, name: "/fleet/robots", type: fleet_interfaces/msg/RobotStatusArray, qos: LATCHED}
-  # A proposal until the FSM owner agrees. A robot that stops hearing it stops by itself.
-  # It was /fms/heartbeat until 0.3.
+  # 제안(팀 합의 전). 로봇이 이 토픽을 못 들으면 스스로 멈춘다. 0.3 전에는 /fms/heartbeat였다.
   - {key: heartbeat, name: "/fleet/heartbeat", type: std_msgs/msg/Header, qos: STATE}
   - {key: zones, name: "/fleet/zones", type: fleet_interfaces/msg/ZoneStateArray, qos: LATCHED}
   - {key: events, name: "/central/events", type: fleet_interfaces/msg/FleetEvent, qos: EVENT}
@@ -30,10 +28,10 @@ topics:
 actions:
   - {key: move_to, name: "/{pinky}/move_to", type: fleet_interfaces/action/MoveTo}
   - {key: dock, name: "/{pinky}/dock", type: fleet_interfaces/action/Dock}
-  # One action for both workspace arms: the arm team decides how they share the basket space.
+  # 작업 팔 두 대가 액션 하나를 쓴다. 바구니 공간 분담은 팔 팀이 정한다.
   - {key: fill_basket, name: "/workcell/fill_basket", type: fleet_interfaces/action/FillBasket}
   - {key: swap_basket, name: "/{arm}/swap_basket", type: fleet_interfaces/action/SwapBasket, instances: {arm: [arm3]}}
-  # Only exists on real robots, so the fake-robot check skips it.
+  # 실물 로봇에만 있어서 가짜 로봇 검사는 건너뛴다.
   - {key: navigate_to_pose, name: "/{pinky}/navigate_to_pose", type: nav2_msgs/action/NavigateToPose, real_only: true}
 
 services:

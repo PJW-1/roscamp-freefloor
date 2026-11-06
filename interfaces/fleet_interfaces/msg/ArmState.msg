@@ -1,6 +1,6 @@
 string STATE_IDLE="IDLE"
 string STATE_PICKING="PICKING"
-# Inside the basket space. arm1 and arm2 must never both report this at once.
+# 바구니 공간 안. arm1과 arm2가 동시에 이 값을 보고하면 안 된다.
 string STATE_PLACING="PLACING"
 string STATE_SWAPPING="SWAPPING"
 string STATE_ERROR="ERROR"

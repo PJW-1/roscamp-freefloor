@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Turn the old cell map into a lane map, one waypoint per cell, its zones kept as lock units.
+"""옛 셀 맵을 레인 맵으로 바꾼다. 셀 하나가 지점 하나이고 구역은 잠금 단위로 유지한다.
 
-Used once, to make pc/fleet_core/test/data/grid_cells.yaml, which keeps the older tests on the
-layout they were written for. The grid file is pc/fleet_core/fleet_core/data/site_map.yaml in
-commit d511c57.
+한 번만 썼다. 옛 테스트가 원래 배치를 쓰도록 pc/fleet_core/test/data/grid_cells.yaml을 만들었다.
+입력은 커밋 d511c57의 pc/fleet_core/fleet_core/data/site_map.yaml이다.
 
     python3 tools/convert_grid_map.py old_site_map.yaml > grid_cells.yaml
 """
@@ -49,7 +48,7 @@ def main(path: str) -> None:
         print(f"  {name}: {flow(members)}")
     print("stations:")
     for name, s in old["stations"].items():
-        chain = [*reversed(s["queue"]), s["dock"]]  # the old list starts next to the dock
+        chain = [*reversed(s["queue"]), s["dock"]]  # 옛 목록은 도크 옆에서 시작한다
         queue = [[list(a), list(b)] for a, b in zip(chain, chain[1:], strict=False)]
         commit = {"WORK": old["zones"]["Q-WORK-2"][0]}.get(name, s["dock"])
         print(f"  {name}: {{dock: {flow(s['dock'])}, queue: {flow(queue)}, commit: {flow(commit)}, "

@@ -1,4 +1,4 @@
-# Replace <...> with GitHub accounts when the team agrees on owners.
+# 팀이 담당자를 정하면 <...>를 GitHub 계정으로 바꾼다.
 # *                          <central>
 # /pc/central/               <central>
 # /pc/fleet_core/            <fleet>
@@ -7,7 +7,7 @@
 # /pinky/pinky_fsm/          <pinky-control>
 # /pinky/pinky_dock/         <pinky-control>
 # /pinky/pinky_nav_config/   <slam-nav2>
-# /arm/arm_control/          <arm-control>   (the /workcell/fill_basket and /arm3/swap_basket servers)
+# /arm/arm_control/          <arm-control>   (/workcell/fill_basket, /arm3/swap_basket 서버)
 # /sim/fake_robots/fake_robots/fake_workcell_node.py  <arm-control>
 # /arm/arm_vision/           <arm-vision>
 # /interfaces/               <fleet> <pinky-control> <central>

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Press the release rule: run scenarios under report delay and pose noise, and print a table.
+"""구역 해제 규칙 압박 시험: 보고 지연과 위치 잡음 아래 시나리오를 돌리고 표를 출력한다.
 
     python3 tools/pressure_sweep.py --out /some/dir
     python3 tools/pressure_sweep.py --out /some/dir --d 0.2 0.1 --tau 0 0.5 --eps 0 0.05
 
-tau is report_delay_s, in scenario seconds, and eps is pose_noise_m, one sigma per axis. Each row
-is a real run of `ros2 launch iponic_bringup pc.launch.py` with fake robots, so the workspace has
-to be built and sourced. Every run gets its own domain from --first-domain up, never reaches the
-robot network (LOCALHOST), and keeps its files under --out.
+tau는 report_delay_s(시나리오 초), eps는 pose_noise_m(축당 1 시그마)다. 각 행은 가짜 로봇으로
+`ros2 launch iponic_bringup pc.launch.py`를 실제로 돌린 결과라 워크스페이스를 빌드하고 source해야
+한다. 실행마다 --first-domain부터 따로 도메인을 쓰고, 로봇 네트워크에는 닿지 않으며(LOCALHOST),
+파일은 --out 아래에 둔다.
 
-What the columns are:
-    early, near     SafetyMeter on the true poses. early: released with the body within one radius
-                    of the zone. near: two bodies closer than 2r.
-    deadlocks       DEADLOCK_DETECTED events.
-    lane errors     LANE_ERROR events: a report more than lane_error_warn_m off the lane.
-    needs d         r + eps + v * (tau + tick), the rule in fleet_params.yaml, with v the top speed
-                    of the scenarios. Above the d of that row, the rule does not vouch for the run.
-    pass            the scenario's own judge. Its expected event counts can fail under pressure.
+열의 뜻:
+    early, near     실제 위치에 대한 SafetyMeter. early: 몸체가 구역에서 반지름 1 이내인데
+                    해제됨. near: 두 몸체가 2r보다 가까움.
+    deadlocks       DEADLOCK_DETECTED 이벤트 수.
+    lane errors     LANE_ERROR 이벤트 수: lane_error_warn_m보다 더 벗어난 보고.
+    needs d         r + eps + v * (tau + tick). fleet_params.yaml의 규칙이며 v는 시나리오의
+                    최고 속도다. 행의 d가 이 값보다 크면 규칙은 그 실행을 보장하지 않는다.
+    pass            시나리오 자체의 판정. 압박 아래에서는 기대 이벤트 수가 어긋날 수 있다.
 """
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def cases(scenarios, taus, epss, ds, stop: float = 0.0) -> list[Case]:
         raise ValueError(
             f"d has to exceed 2r = {2 * RADIUS_M} m, or TrafficController refuses to start")
     wanted = (Case(s, t, e, d, stop) for s in scenarios for d in ds for t in taus for e in epss)
-    return list(dict.fromkeys(wanted))  # the same case twice would write to one folder
+    return list(dict.fromkeys(wanted))  # 같은 케이스가 둘이면 폴더 하나에 같이 쓰게 된다
 
 
 def variant(data: dict, tau: float, eps: float, stop: float = 0.0) -> dict:
@@ -110,7 +110,7 @@ def ros_env(domain: int, base=None) -> dict:
         raise ValueError(f"domain {domain} is the robot network")
     env = {**(os.environ if base is None else base), "ROS_DOMAIN_ID": str(domain),
            "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST"}
-    env.pop("ROS_STATIC_PEERS", None)  # LOCALHOST still reaches those
+    env.pop("ROS_STATIC_PEERS", None)  # LOCALHOST여도 이 값은 닿는다
     return env
 
 
@@ -150,7 +150,7 @@ def table(rows: list[Row]) -> str:
 def run_case(case: Case, domain: int, out: Path, wall_s: float) -> Row:
     folder = out / case.name
     folder.mkdir(parents=True, exist_ok=True)
-    for name in RESULT_FILES:  # a run that dies must not show the results of the last one
+    for name in RESULT_FILES:  # 죽은 실행이 지난 실행의 결과를 보이면 안 된다
         (folder / name).unlink(missing_ok=True)
     data = yaml.safe_load((SCENARIOS / f"{case.scenario}.yaml").read_text(encoding="utf-8"))
     scenario = folder / "scenario.yaml"
@@ -171,7 +171,7 @@ def run_case(case: Case, domain: int, out: Path, wall_s: float) -> Row:
             except subprocess.TimeoutExpired:
                 os.killpg(launch.pid, signal.SIGKILL)
                 launch.wait()
-            return Row(case, finished=False)  # told to stop, it can still write its files
+            return Row(case, finished=False)  # 멈추라고 해도 파일은 쓸 수 있다
     return read_row(case, folder)
 
 
@@ -198,7 +198,7 @@ def main() -> int:
         print(f"{case.name}: {result}", flush=True)
         return row
 
-    # Runs of one job slot go one after another, so two runs never share a domain.
+    # 슬롯 하나의 실행은 차례로 돌아 두 실행이 도메인을 같이 쓰지 않는다.
     slots = [list(enumerate(wanted))[i::args.jobs] for i in range(args.jobs)]
     with ThreadPoolExecutor(args.jobs) as pool:
         done = pool.map(lambda slot: [one(item) for item in slot], slots)

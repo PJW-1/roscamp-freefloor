@@ -1,5 +1,5 @@
-# Put these items into the basket on this robot's tray. On a retry `items` holds only what is
-# still missing. How arm1 and arm2 share the basket space is up to the server.
+# 이 로봇 트레이의 바구니에 물건을 담는다. 재시도 때 `items`에는 아직 못 담은 것만 넣는다.
+# arm1과 arm2의 바구니 공간 분담은 서버가 정한다.
 string order_id
 string robot_id
 string station_id
@@ -7,8 +7,8 @@ OrderItem[] items
 ---
 string REASON_CANCELED="CANCELED"
 
-# success=true means the server finished trying, even if `missing` is not empty.
-# success=false means the arms failed; `placed` is what is really in the basket so far.
+# success=true: 서버가 시도를 마쳤다는 뜻이며 `missing`이 남아 있어도 true다.
+# success=false: 팔이 실패했다. `placed`는 지금까지 바구니에 실제로 담긴 것이다.
 bool success
 OrderItem[] placed
 OrderItem[] missing
