@@ -29,6 +29,7 @@ from fleet_core.common.commands import (
 from fleet_core.traffic.blocking import TrafficBlocking
 from fleet_core.traffic.detour import TrafficDetour
 from fleet_core.traffic.isolation import TrafficIsolation
+from fleet_core.traffic.lane_path import TrafficPath
 from fleet_core.traffic.mission import (
     AT_STATION,
     BLOCKED,
@@ -60,12 +61,13 @@ from fleet_core.traffic.mission import (
 )
 from fleet_core.traffic.off_lane import TrafficOffLane
 from fleet_core.traffic.recovery import TrafficRecovery
+from fleet_core.traffic.release_floor import TrafficReleaseFloor
 from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
 class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, TrafficDetour,
-                        TrafficIsolation):
+                        TrafficIsolation, TrafficPath, TrafficReleaseFloor):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -79,6 +81,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
                 "become conflict pairs and no two robots can stand on neighbouring waypoints")
         self.site = site
         self.params = params
+        self._check_goal_mode()
+        self._check_exit_floor()
         self.zones = ZoneLocks(site.zones, clock, site.conflict_pairs(
             2 * params.robot_radius_m, params.release_distance_m))
         self.selector = RobotSelector(site, params)
@@ -564,7 +568,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             return
         while m.idx < m.goal.target_idx:
             s, _ = self.site.lane_progress(m.path[m.idx], m.path[m.idx + 1], m.x, m.y)
-            if s <= self.params.release_distance_m:
+            if s <= self.params.release_distance_m or not self._round_the_corner(m):
                 return
             m.idx += 1
 
@@ -591,7 +595,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         lane = self._exit_lane(m, zone)
         if lane:
             s, _ = self.site.lane_progress(*lane, m.x, m.y)
-            return s > self.params.release_distance_m
+            return s > self.params.release_distance_m and self._clear_of_floor(m, zone, lane)
         return self._off_the_floor(m, zone)
 
     def _off_the_floor(self, m: _Mission, zone: str) -> bool:
@@ -872,7 +876,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             anchor = m.idx
             step = self._step_between(m, anchor)
         reach = anchor
-        while (reach < last and self._step_between(m, reach) == step
+        while (reach < last and self._joins(m, reach, step)
                and self._zone(m.path[reach + 1]) in held):
             reach += 1
         if reach != anchor:
@@ -890,8 +894,9 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         """새 goal은 진행 중인 goal을 대신한다. 이후 결과는 이 id와 맞아야 한다."""
         waypoint = m.path[target_idx]
         x, y = self.site.waypoint_pose(waypoint)
-        yaw = math.atan2(step[1], step[0]) if step else m.yaw
+        yaw = self._goal_yaw(m, target_idx, step)
         goal_id = self._next_goal_id()
         m.goal = _Goal(MOVE, goal_id, target_idx, step)
         m.stall_hold = False
-        self._out.append(MoveCmd(m.name, goal_id, self.site.waypoint_id(waypoint), x, y, yaw))
+        self._out.append(MoveCmd(m.name, goal_id, self.site.waypoint_id(waypoint), x, y, yaw,
+                                 self._lane_polyline(m, target_idx, yaw)))

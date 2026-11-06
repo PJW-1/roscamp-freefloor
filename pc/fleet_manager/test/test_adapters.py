@@ -1,4 +1,6 @@
 """fleet_core 레코드와 ROS 메시지 사이의 변환은 모듈 하나에 모여 있다."""
+import math
+
 import pytest
 
 pytest.importorskip("rclpy")
@@ -94,6 +96,17 @@ def test_goals_copy_every_field():
     assert (move.target_id, move.target_pose.x, move.target_pose.y, move.target_pose.theta) == (
         "c9_2", 1.0, 2.0, 0.5)
     assert adapters.dock_goal(DockCmd("pinky1", 8, "WORK")).dock_id == "WORK"
+    assert list(move.path) == [], "point mode sends no path"
+
+
+def test_a_move_goal_carries_the_lane_path_as_poses():
+    path = ((0.5, 1.0, 0.0), (1.0, 1.0, math.pi / 2), (1.0, 2.0, math.pi / 2))
+    move = adapters.move_goal(MoveCmd("pinky1", 7, "N", 1.0, 2.0, math.pi / 2, path))
+    assert [(p.position.x, p.position.y) for p in move.path] == [(0.5, 1.0), (1.0, 1.0),
+                                                                    (1.0, 2.0)]
+    q = move.path[1].orientation
+    assert (q.z, q.w) == pytest.approx((math.sin(math.pi / 4), math.cos(math.pi / 4)))
+    assert move.path[0].orientation.w == pytest.approx(1.0)
 
 
 def test_fill_goal_copies_every_field():

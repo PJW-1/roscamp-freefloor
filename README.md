@@ -110,7 +110,7 @@ flowchart TB
   a3 -- "/arm3/state" --> central
 ```
 
-실선은 토픽, 점선은 서비스, 굵은 선은 액션입니다. 시험 때는 같은 인터페이스를 내는 가짜 노드(`fake_robots`의 `fake_pinky_node` ×3, `fake_workcell_node`, `fake_arm_node`, `fake_vision_node`, `fake_central_node`)와 심판 `scenario_monitor_node`, `sim_clock_node`가 관제 PC에서 대신 뜹니다. 11-06 개선 지시서의 제안(`/fleet/reinstate`, `MoveTo`의 `path`, 상태 값 `BLOCKED`, Nav2 `FollowPath`)은 구현되는 파트에서 이 그림에 더합니다. 이름, 타입, QoS의 원본은 `interfaces/fleet_interfaces/contract.yaml`입니다.
+실선은 토픽, 점선은 서비스, 굵은 선은 액션입니다. 시험 때는 같은 인터페이스를 내는 가짜 노드(`fake_robots`의 `fake_pinky_node` ×3, `fake_workcell_node`, `fake_arm_node`, `fake_vision_node`, `fake_central_node`)와 심판 `scenario_monitor_node`, `sim_clock_node`가 관제 PC에서 대신 뜹니다. 11-06 개선 지시서의 제안 중 `/fleet/reinstate`는 구현되는 파트에서 이 그림에 더합니다. `MoveTo`의 `path`와 상태 값 `BLOCKED`는 들어갔습니다. 이름, 타입, QoS의 원본은 `interfaces/fleet_interfaces/contract.yaml`입니다.
 
 ## 폴더
 
@@ -282,6 +282,7 @@ Python 패키지의 `setup.py`에는 `tests_require=['pytest']`를 넣어야 합
 전체 계약(메시지, BLOCKED 판정, 관제 동작)은 `docs/핑키_계약.md`에 있습니다. 아래는 요약입니다.
 
 - `move_to`에 새 목표가 오면 이전 목표를 멈추고 `success=false`, `reason=CANCELED`로 끝냅니다.
+- 이동 목표 모드 `lane_goal_mode`(`fleet_params.yaml`): 기본 `path`는 잠금을 쥔 데까지의 레인 폴리라인을 `MoveTo.path`에 실어 보내고, 핑키는 그 선을 Nav2 FollowPath로 따릅니다. `point`는 같은 방향 레인 끝 지점 하나만 보내는 예전 방식이며 호환과 비교용입니다.
 - 멈춰서 진행할 수 없으면 반드시 실패나 `TIMEOUT` 결과를 돌려줍니다. 관제는 목표가 열린 채 제자리인 로봇만 `stall_s`(6초, 도킹은 15초) 뒤에 취소하고 다시 보냅니다. 움직이면서 끝내지 않는 경우는 잡지 못하므로 FSM이 결과를 돌려줘야 합니다.
 - `move_to`의 성공은 목표 지점에서 `arrival_tolerance_m`(0.15 m) 안에 섰을 때만 돌려줍니다. 결과를 보낸 뒤 `arrival_settle_s`(1초)가 지나도록 보고된 위치가 그 안으로 들어오지 않으면 관제는 실패한 시도로 칩니다. 그동안 위치 보고가 하나도 없으면 판정하지 않고 통신 두절(`comm_timeout_s`)을 기다립니다. Nav2를 쓴다면 `xy_goal_tolerance`를 이 값보다 작게 둡니다. 이 약속과 값(추정)은 FSM·Nav2 담당과 확인 전입니다(`docs/GG_공통설계.md` 13절).
 - `/pinkyN/state`를 끊기지 않게 발행합니다. 일정 시간(`comm_timeout_s`) 동안 오지 않으면 통신 두절로 판단합니다.

@@ -238,6 +238,35 @@ class LaneMap:
         nearest = min(_point_segment(x, y, *segment) for segment in self._segments[zone])
         return max(0.0, nearest - self.half_width)
 
+    def _floor_without(self, zone: str, key: tuple) -> list[tuple]:
+        """구역 바닥에서 나가는 레인 key의 역방향(양방향 레인)을 뺀 선들."""
+        members = self.zones[zone]
+        segments = [(*self._pose[n], *self._pose[n]) for n in members]
+        for waypoint in members:
+            for lane in self._in.get(waypoint, ()):
+                if (lane.a, lane.b) == (key[1], key[0]):
+                    continue
+                skip = 0.0 if lane.a in members else self.lane_entry
+                if skip < lane.span:
+                    segments.append((lane.ax + lane.ux * skip, lane.ay + lane.uy * skip,
+                                     lane.bx, lane.by))
+        return segments
+
+    def floor_gap(self, zone: str, key: tuple, x: float, y: float) -> float:
+        """나가는 레인 key 위의 자세에서 구역의 다른 바닥 선까지 중심선 거리.
+
+        예각 θ로 합류하는 레인이 있으면 s만큼 가도 그 레인과는 s·sinθ만 떨어진다.
+        """
+        return min(_point_segment(x, y, *segment) for segment in self._floor_without(zone, key))
+
+    def exit_floor_gaps(self) -> list[tuple]:
+        """구역을 떠나는 레인마다 (a, b, 끝 지점에서 구역의 다른 바닥 선까지 거리)."""
+        out = []
+        for (a, b), lane in self.lanes.items():
+            if self.zone_of[a] != self.zone_of[b]:
+                out.append((a, b, self.floor_gap(self.zone_of[a], (a, b), lane.bx, lane.by)))
+        return out
+
     def shortest_exit_lane(self) -> float:
         """단위를 떠나는 가장 짧은 레인 길이. 해제 거리가 이 안에 들어가야 한다."""
         return min((lane.span for (a, b), lane in self.lanes.items()

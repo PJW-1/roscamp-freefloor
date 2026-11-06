@@ -1,5 +1,7 @@
 string target_id
 geometry_msgs/Pose2D target_pose
+# 레인 폴리라인. 첫 점은 로봇이 있는 곳, 끝 점은 target_pose. 비면 target_pose로 간다
+geometry_msgs/Pose[] path
 ---
 string REASON_NAV_ABORTED="NAV_ABORTED"
 string REASON_CANCELED="CANCELED"
