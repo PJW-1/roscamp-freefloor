@@ -67,6 +67,10 @@ class TrafficOffLane:
         span = self.site.lane(*m.off_lane_at).span
         on = e <= half and -half <= s <= span + half  # 직선이 아니라 구간 위
         m.back_on_lane = m.back_on_lane + 1 if on else 0
+        if not on:
+            m.back_on_lane_at = None
+        elif m.back_on_lane == self.params.release_confirm_samples:
+            m.back_on_lane_at = self._clock()
 
     def _stop_off_lane(self, m: _Mission, lane: tuple) -> None:
         """목표를 취소하고 구역은 쥔다. 기다리던 요청은 뒤 로봇을 막지 않게 거둔다."""
@@ -78,6 +82,7 @@ class TrafficOffLane:
         m.off_lane_since = self._clock()
         m.off_lane_at = lane
         m.back_on_lane = 0
+        m.back_on_lane_at = None
         m.stall_from = None
         m.wait_zone = None
         self.zones.cancel_all_requests(m.name)
@@ -92,8 +97,12 @@ class TrafficOffLane:
             self._end_off_lane(m)
             return
         lane = m.off_lane_at
-        if now - m.off_lane_since >= self.params.off_lane_timeout_s:
-            self._end_off_lane(m)  # 늦게 들어온 복귀 보고보다 시간 초과가 먼저다
+        deadline = m.off_lane_since + self.params.off_lane_timeout_s
+        back_in_time = m.back_on_lane_at is not None and m.back_on_lane_at < deadline
+        if now >= deadline and not back_in_time:
+            # 마감 전에 돌아왔으면 통신 복구를 기다려도 시간 초과가 아니다.
+            # 마감 뒤에 찬 복귀보다는 시간 초과가 먼저다.
+            self._end_off_lane(m)
             self._fail(m, OFF_LANE)
             self._event("ERROR", OFF_LANE,
                         f"not back on {lane[0]} to {lane[1]} in "
@@ -111,7 +120,7 @@ class TrafficOffLane:
     def _end_off_lane(self, m: _Mission) -> None:
         m.off_lane_since = None
         m.off_lane_at = None
-        m.back_on_lane = 0
+        m.back_on_lane, m.back_on_lane_at = 0, None
         m.off_lane, m.off_lane_warned, m.lane_ref = 0, False, None
         m.outside.clear()  # 서 있던 동안의 보고로 놓지 않는다
 

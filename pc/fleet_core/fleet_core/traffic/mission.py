@@ -117,6 +117,7 @@ class _Mission:
     off_lane_since: float | None = None  # 레인 이탈로 세운 시각
     off_lane_at: tuple | None = None  # 돌아와야 할 레인(a, b)
     back_on_lane: int = 0  # 그 레인 half_width 안의 연속 보고 수
+    back_on_lane_at: float | None = None  # 그 수가 찬 시각. 다시 벗어나면 None
 
     @property
     def live(self) -> bool:
