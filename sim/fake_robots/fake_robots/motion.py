@@ -69,6 +69,13 @@ def noisy_pose(x: float, y: float, sigma: float, rng: random.Random) -> tuple[fl
     return x + rng.gauss(0.0, sigma), y + rng.gauss(0.0, sigma)
 
 
+def drifted(x: float, y: float, yaw: float, offset: float) -> tuple[float, float]:
+    """진행 방향 왼쪽으로 offset만큼 민 위치. 레인 옆으로 밀린 보고를 흉내 낸다."""
+    if offset == 0.0:
+        return x, y
+    return x - math.sin(yaw) * offset, y + math.cos(yaw) * offset
+
+
 class DelayLine:
     """넣은 것이 `delay` 뒤에 순서대로 나온다. 지연이 없으면 바로 나온다."""
 
@@ -110,6 +117,11 @@ class FaultSchedule:
 
     def removed(self, t: float) -> bool:
         return any(f.type == "operator_remove" and t >= f.at_s for f in self._own)
+
+    def drift(self, t: float) -> float:
+        """이 시각 보고를 옆으로 미는 거리. 실제 위치는 그대로다."""
+        return sum(f.offset_m for f in self._own
+                   if f.type == "drift" and f.at_s <= t < f.at_s + f.duration_s)
 
     def take_nav_abort(self, t: float, target_id: str = "") -> bool:
         """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다. target이면 그 지점만."""

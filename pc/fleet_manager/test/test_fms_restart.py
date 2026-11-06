@@ -29,7 +29,7 @@ from rclpy.node import Node  # noqa: E402
 from rclpy.qos import qos_profile_action_status_default  # noqa: E402
 from rosgraph_msgs.msg import Clock  # noqa: E402
 
-DOMAIN = 56  # 시나리오 통합 테스트가 50~55를 쓴다
+DOMAIN = 56  # 시나리오 통합 테스트도 56까지 쓰지만 같은 pytest 안에서 차례로 돈다
 ROBOTS = ["pinky1", "pinky2", "pinky3"]
 WALL_TIMEOUT_S = 420
 STILL_M = 0.001

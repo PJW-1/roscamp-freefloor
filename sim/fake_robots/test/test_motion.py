@@ -1,4 +1,5 @@
 """직선 이동, 자세 잡음, 고장 일정."""
+import math
 import random
 
 import pytest
@@ -8,6 +9,7 @@ from fake_robots.motion import (
     FaultSchedule,
     Motion,
     abort_at_shutdown,
+    drifted,
     finish_action,
     noisy_pose,
 )
@@ -189,3 +191,16 @@ def test_abort_at_shutdown_survives_a_context_that_is_already_gone():
     handle = Gone()
     abort_at_shutdown(handle)
     assert handle.aborted
+
+
+def test_drift_pushes_the_report_only_inside_its_window_and_per_robot():
+    drift = [Fault(at_s=10, robot="pinky1", type="drift", duration_s=5, offset_m=0.3)]
+    s = FaultSchedule(drift, "pinky1")
+    assert [s.drift(t) for t in (9.9, 10.0, 14.9, 15.0)] == [0.0, 0.3, 0.3, 0.0]
+    assert FaultSchedule(drift, "pinky2").drift(12.0) == 0.0
+
+
+def test_a_drifted_report_is_to_the_left_of_the_heading():
+    assert drifted(1.0, 2.0, 0.0, 0.3) == pytest.approx((1.0, 2.3))
+    assert drifted(1.0, 2.0, math.pi / 2, 0.3) == pytest.approx((0.7, 2.0))
+    assert drifted(1.0, 2.0, 1.0, 0.0) == (1.0, 2.0)

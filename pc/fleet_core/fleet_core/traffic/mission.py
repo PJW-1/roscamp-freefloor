@@ -97,7 +97,7 @@ class _Mission:
     hold: bool = False  # 놓아 주거나 다음으로 보낼 때까지 스테이션에 둔다
     await_pick: bool = False  # 할 일 없이 스테이션에 있음, 다음 선택 뒤에 움직인다
     outside: dict = field(default_factory=dict)  # 구역 -> 벗어난 연속 보고 수
-    off_lane: int = 0  # 주행 레인에서 너무 먼 연속 보고 수
+    off_lane: int = 0  # 지금 달리는 레인에서 너무 먼 연속 보고 수
     off_lane_warned: bool = False
     wait_zone: str | None = None  # wait_since부터 기다리는 구역
     wait_since: float = 0.0
@@ -113,6 +113,10 @@ class _Mission:
     queue_since: float | None = None  # BLOCKED로 줄 서기를 시작한 시각
     detour_at: object = None  # 우회를 고른 지점. 여기를 떠나면 detour_avoid는 뜻이 없다
     detour_avoid: tuple = ()  # 그 지점에서 포기한 다음 구역들. 되돌아가지 않는다
+    lane_ref: tuple | None = None  # off_lane을 센 레인(a, b)
+    off_lane_since: float | None = None  # 레인 이탈로 세운 시각
+    off_lane_at: tuple | None = None  # 돌아와야 할 레인(a, b)
+    back_on_lane: int = 0  # 그 레인 half_width 안의 연속 보고 수
 
     @property
     def live(self) -> bool:
@@ -120,7 +124,7 @@ class _Mission:
 
     @property
     def available(self) -> bool:
-        return self.live and not self.comm
+        return self.live and not self.comm and self.off_lane_since is None
 
     @property
     def state(self) -> str:
