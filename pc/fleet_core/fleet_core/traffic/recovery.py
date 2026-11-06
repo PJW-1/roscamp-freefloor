@@ -14,6 +14,7 @@ from fleet_core.traffic.mission import (
     DOCKING,
     ERROR,
     IDLE,
+    LOCALIZING,
     OUT_OF_SERVICE,
     PARKED,
     RECOVERING,
@@ -56,6 +57,9 @@ class TrafficRecovery:
         m.called = False
         m.hold = False
         self._event("INFO", "ZONES_CLEARED", f"released {released}: {note}", robot)
+        if m.block:
+            self._clear_block(m, "cleared by the operator")
+        m.block_rejoin = None
         still_held = self.zones.held_by(robot)
         if still_held:
             # 이 로봇은 더는 자세로 판단하지 않으니 다른 무엇도 이 구역을 풀지 않는다.
@@ -82,7 +86,9 @@ class TrafficRecovery:
                 m.called = False
                 # 말 없는 로봇이 뒤 대기자에게 구역이 넘어가는 것을 막으면 안 된다.
                 self.zones.cancel_all_requests(m.name)
-                self._event("WARN", "COMM_LOST", f"no state for {now - m.last_seen:.1f} s", m.name)
+                what = "pose, LOCALIZING" if m.robot_state == LOCALIZING else "state"
+                self._event("WARN", "COMM_LOST", f"no {what} for {now - m.last_seen:.1f} s",
+                            m.name)
 
     def _begin_recovery(self, m: _Mission) -> None:
         m.comm = RECOVERING

@@ -14,6 +14,7 @@ qos_profiles:
   EVENT: {reliability: reliable, durability: volatile, depth: 50}
 
 topics:
+  # state에 BLOCKED(앞 물체로 섬), LOCALIZING(위치를 못 잡음)을 더했다. 필드는 그대로다.
   - {key: robot_state, name: "/{pinky}/state", type: fleet_interfaces/msg/RobotState, qos: STATE}
   - {key: arm_state, name: "/{arm}/state", type: fleet_interfaces/msg/ArmState, qos: STATE}
   - {key: vision_items, name: "/{arm}/vision/items", type: fleet_interfaces/msg/ItemArray, qos: LATCHED, instances: {arm: [arm1, arm2]}}
@@ -26,6 +27,7 @@ topics:
   - {key: events, name: "/central/events", type: fleet_interfaces/msg/FleetEvent, qos: EVENT}
 
 actions:
+  # 결과 reason에 HEARTBEAT_LOST(heartbeat가 끊겨 스스로 섬)를 더했다.
   - {key: move_to, name: "/{pinky}/move_to", type: fleet_interfaces/action/MoveTo}
   - {key: dock, name: "/{pinky}/dock", type: fleet_interfaces/action/Dock}
   # 작업 팔 두 대가 액션 하나를 쓴다. 바구니 공간 분담은 팔 팀이 정한다.
