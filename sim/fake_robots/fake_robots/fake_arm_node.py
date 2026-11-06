@@ -1,4 +1,4 @@
-"""FakeArm: the outbound arm. Takes the full basket off the tray and puts an empty one on."""
+"""FakeArm: 출고 팔. 트레이의 찬 바구니를 내리고 빈 바구니를 올린다."""
 from __future__ import annotations
 
 import random
@@ -95,7 +95,7 @@ class FakeArmNode(Node):
             self._publish_state()
 
     def _failure_step(self, steps: list[str]) -> tuple[str | None, str]:
-        """The step that fails in this goal and why. swap_partial always hits the empty one."""
+        """이 목표에서 실패할 단계와 이유. swap_partial은 항상 빈 바구니 단계를 친다."""
         if "PUT_EMPTY" in steps and self._faults.take_swap_partial(self._sc.now()):
             return "PUT_EMPTY", REASON_PUT_EMPTY
         if steps and self._rng.random() < self._cfg.fail_rate:
@@ -151,7 +151,7 @@ def main(args=None):
         executor.spin()
     except KeyboardInterrupt:
         pass
-    except Exception:  # SIGINT can land inside a message take; a real error has ROS still up
+    except Exception:  # SIGINT가 메시지 수신 중에 떨어질 수 있다. 진짜 오류면 ROS가 아직 살아 있다
         if rclpy.ok():
             raise
     finally:

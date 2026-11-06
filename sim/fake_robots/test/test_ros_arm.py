@@ -1,4 +1,4 @@
-"""FakeArm (arm3) through its real action, and the sim clock."""
+"""실제 액션으로 FakeArm(arm3)과 시뮬 시계를 시험한다."""
 import time
 
 import pytest
@@ -83,7 +83,7 @@ def test_swap_partial_takes_the_full_basket_but_fails_the_empty_one(harness, tmp
     assert result.success is False and result.took_full is True
     assert result.put_empty_done is False and result.reason
     assert wait_until(lambda: any(s.state == ArmState.STATE_ERROR for s in states), 2.0)
-    # The retry only has the open step left, and the fault is used up.
+    # 재시도에는 열기 단계만 남고 고장은 이미 다 썼다.
     retry, _ = swap(client, take_full=False, put_empty=True)
     assert retry.success is True and retry.took_full is False and retry.put_empty_done is True
 

@@ -1,4 +1,4 @@
-"""Helpers for the ROS tests. Importing this file never needs rclpy (pure tests run on Windows)."""
+"""ROS 테스트 도우미. 이 파일을 가져와도 rclpy가 필요 없다(순수 테스트는 Windows에서 돈다)."""
 import os
 import threading
 import time
@@ -27,7 +27,7 @@ def write_scenario(tmp_path, **over):
         "dock": {"duration_s": 0.6, "error_cm": 1.0},
     }
     data.update(over)
-    if data.get("faults"):  # the loader refuses a fault scenario that expects nothing shipped
+    if data.get("faults"):  # 출고 0건을 기대하는 고장 시나리오는 로더가 거부한다
         data.setdefault("expect", {"orders_shipped_min": 1})
     path = tmp_path / "scenario.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -47,7 +47,7 @@ def wait_until(predicate, timeout=10.0, step=0.02):
 def rclpy_session():
     rclpy = pytest.importorskip("rclpy")
     pytest.importorskip("fleet_interfaces.msg")
-    # These nodes publish /pinky1/state and serve /pinky1/move_to like real robots would.
+    # 이 노드들은 실제 로봇처럼 /pinky1/state를 발행하고 /pinky1/move_to를 받는다.
     if (os.environ.get("ROS_DOMAIN_ID", "") in ("", "6")
             or os.environ.get("ROS_AUTOMATIC_DISCOVERY_RANGE") != "LOCALHOST"):
         pytest.skip("set ROS_DOMAIN_ID (not 6) and ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST first")
@@ -57,7 +57,7 @@ def rclpy_session():
 
 
 class Harness:
-    """Runs nodes in one executor thread and destroys all of them afterwards."""
+    """노드를 한 실행기 스레드에서 돌리고 끝나면 모두 없앤다."""
 
     def __init__(self, rclpy):
         from rclpy.executors import MultiThreadedExecutor
@@ -78,7 +78,7 @@ class Harness:
 
     def close(self):
         for node in self.nodes:
-            getattr(node, "stop", lambda: None)()  # lets blocked action goals return
+            getattr(node, "stop", lambda: None)()  # 막힌 액션 목표가 돌아오게 한다
         self.executor.shutdown()
         self._thread.join(5.0)
         for node in self.nodes:

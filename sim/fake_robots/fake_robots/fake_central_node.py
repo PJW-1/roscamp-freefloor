@@ -1,4 +1,4 @@
-"""FakeCentral: stand-in for the central system. Holds the inventory record and the orders."""
+"""FakeCentral: 중앙 시스템 대역. 재고 기록과 주문을 가진다."""
 from __future__ import annotations
 
 import threading
@@ -50,8 +50,8 @@ class FakeCentralNode(Node):
         self._lock = threading.Lock()
         self._mode = OrderBoard.MODE_RUN
         self._record = dict(scenario.inventory)
-        self._waiting_release = list(scenario.orders)  # registration order
-        self._board: list[_Entry] = []  # oldest first
+        self._waiting_release = list(scenario.orders)  # 등록 순서
+        self._board: list[_Entry] = []  # 오래된 순
         self._final: set[str] = set()
         self._known_ids = set(scenario.order_ids)
         self._submitted = 0
@@ -80,7 +80,7 @@ class FakeCentralNode(Node):
         self._board.append(_Entry(order_id, items, self.get_clock().now().to_msg()))
 
     def _release_due(self) -> None:
-        """Scenario orders skip the submit checks: an order the record cannot cover is a test."""
+        """시나리오 주문은 접수 검사를 건너뛴다. 기록으로 못 채우는 주문도 시험 대상이다."""
         t = self._sc.now()
         released = []
         with self._lock:
@@ -94,7 +94,7 @@ class FakeCentralNode(Node):
             self._publish()
 
     def _reject_reason(self, items: Counter) -> str:
-        """Judged by the record as it stands now; orders on the board do not reserve anything."""
+        """지금 기록 기준으로 판단한다. 보드의 주문은 재고를 잡아 두지 않는다."""
         if not items:
             return "the order has no items"
         if min(items.values()) <= 0:
@@ -134,7 +134,7 @@ class FakeCentralNode(Node):
         return response
 
     def _settle_stock(self, request) -> list[tuple[str, str, str]]:
-        """Deduct what was placed and correct what turned out to be missing. Lock held."""
+        """놓은 만큼 빼고 없던 만큼 바로잡는다. 잠금을 잡은 채 호출한다."""
         out = []
         for item in request.placed:
             if item.kind in self._record:
@@ -144,7 +144,7 @@ class FakeCentralNode(Node):
             text = f"{request.order_id} {item.kind} missing {item.count}, record {left}"
             out.append(("WARN", "STOCK_MISMATCH" if left > 0 else "OUT_OF_STOCK", text))
             if item.kind in self._record:
-                self._record[item.kind] = 0  # the arm found none, so there are none
+                self._record[item.kind] = 0  # 팔이 하나도 못 찾았으니 재고는 0
         return out
 
     def _report(self, request, response):
@@ -155,7 +155,7 @@ class FakeCentralNode(Node):
                 response.accepted = False
                 return response
             response.accepted = True
-            if entry is None:  # a repeated report changes nothing
+            if entry is None:  # 같은 보고가 또 와도 바뀌는 것이 없다
                 return response
             self._board.remove(entry)
             self._final.add(request.order_id)
@@ -197,7 +197,7 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    except Exception:  # SIGINT can land inside a message take; a real error has ROS still up
+    except Exception:  # SIGINT가 메시지 수신 중에 떨어질 수 있다. 진짜 오류면 ROS가 아직 살아 있다
         if rclpy.ok():
             raise
     finally:

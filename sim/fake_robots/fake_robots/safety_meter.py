@@ -1,9 +1,9 @@
-"""SafetyMeter: how close the robots really came, on the true poses. No ROS imports.
+"""SafetyMeter: 실제 자세로 로봇이 얼마나 가까워졌는지 잰다. ROS를 쓰지 않는다.
 
-The same two numbers as the lane simulation (05_관제_시뮬레이션_레인.html). The judge stays as it
-is and these go next to its summary, in safety.json:
-  early: a zone was released with the body still within one radius of it.
-  near: two robots came closer than two radii. One count per pair, each time it happens.
+레인 시뮬레이션(05_관제_시뮬레이션_레인.html)과 같은 두 수치다. 심판은 그대로 두고
+이 값은 요약 옆 safety.json에 둔다.
+  early: 몸이 구역에서 반지름 안에 있는데 구역을 풀었다.
+  near: 두 로봇이 반지름 두 배보다 가까워졌다. 쌍마다 일어날 때마다 한 번 센다.
 """
 from __future__ import annotations
 

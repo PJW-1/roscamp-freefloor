@@ -1,8 +1,8 @@
-"""SimClock: publishes /clock at speed_factor times wall time. Must not use sim time itself.
+"""SimClock: /clock을 실제 시간의 speed_factor배로 발행한다. 자신은 시뮬 시간을 쓰면 안 된다.
 
-The clock stays at zero for start_delay_s of wall time. At speed_factor 5 a node that takes two
-seconds to start would otherwise miss ten scenario seconds: the fleet manager reports robots as
-not reporting and the judge misses the first moves.
+시계는 실제 시간으로 start_delay_s 동안 0에 머문다. speed_factor 5에서 노드 시작에 2초가
+걸리면 시나리오 10초를 놓친다. 플릿 매니저가 로봇을 무응답으로 보고하고 심판이
+첫 이동을 놓친다.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    except Exception:  # SIGINT can land inside a message take; a real error has ROS still up
+    except Exception:  # SIGINT가 메시지 수신 중에 떨어질 수 있다. 진짜 오류면 ROS가 아직 살아 있다
         if rclpy.ok():
             raise
     finally:

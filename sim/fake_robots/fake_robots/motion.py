@@ -1,4 +1,4 @@
-"""Straight-line motion, pose noise and the per-robot fault schedule. No ROS imports."""
+"""직선 이동, 자세 잡음, 로봇별 고장 일정. ROS를 쓰지 않는다."""
 from __future__ import annotations
 
 import math
@@ -7,7 +7,7 @@ from collections import deque
 
 
 def finish_action(handle, success: bool) -> None:
-    """Report the final action status. A goal that already succeeded stays a success."""
+    """액션 최종 상태를 알린다. 이미 성공한 목표는 성공으로 둔다."""
     if success:
         handle.succeed()
     elif handle.is_cancel_requested:
@@ -17,19 +17,19 @@ def finish_action(handle, success: bool) -> None:
 
 
 def abort_at_shutdown(handle) -> None:
-    """End a goal the node can no longer serve. Nobody is left to read the result.
+    """노드가 더는 처리할 수 없는 목표를 끝낸다. 결과를 읽을 쪽이 없다.
 
-    SIGINT shuts the context down before the worker thread notices. abort() still changes the
-    goal state and then raises while publishing the status, which is not a failure here.
+    SIGINT는 작업 스레드가 알아채기 전에 컨텍스트를 닫는다. abort()는 상태를 바꾼 뒤
+    상태 발행에서 예외를 내는데, 여기서는 실패가 아니다.
     """
     try:
         handle.abort()
-    except Exception:  # noqa: BLE001 - the error type depends on how far shutdown has got
+    except Exception:  # noqa: BLE001 - 예외 종류는 종료가 어디까지 진행됐는지에 달렸다
         pass
 
 
 class Motion:
-    """A point that drives in a straight line toward one target."""
+    """목표 하나를 향해 직선으로 가는 점."""
 
     def __init__(self, x: float, y: float, yaw: float = 0.0):
         self.x, self.y, self.yaw = x, y, yaw
@@ -70,7 +70,7 @@ def noisy_pose(x: float, y: float, sigma: float, rng: random.Random) -> tuple[fl
 
 
 class DelayLine:
-    """What goes in comes out `delay` later, in order. With no delay, straight through."""
+    """넣은 것이 `delay` 뒤에 순서대로 나온다. 지연이 없으면 바로 나온다."""
 
     def __init__(self, delay: float):
         self._delay = delay
@@ -90,7 +90,7 @@ class DelayLine:
 
 
 class FaultSchedule:
-    """Answers fault questions for one robot at a given scenario time."""
+    """한 로봇의 고장 여부를 시나리오 시각 기준으로 답한다."""
 
     def __init__(self, faults, robot: str):
         self._own = [f for f in faults if f.robot == robot]
@@ -107,7 +107,7 @@ class FaultSchedule:
         return any(f.type == "operator_remove" and t >= f.at_s for f in self._own)
 
     def take_nav_abort(self, t: float) -> bool:
-        """True when this new move goal must abort. Consumes one of the fault's count."""
+        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다."""
         for f in self._own:
             if f.type == "nav_abort" and t >= f.at_s and self._abort_left[id(f)] > 0:
                 self._abort_left[id(f)] -= 1
@@ -116,16 +116,16 @@ class FaultSchedule:
 
 
 class ArmFaults:
-    """Answers fault questions for the arms at a given scenario time."""
+    """팔의 고장 여부를 시나리오 시각 기준으로 답한다."""
 
     def __init__(self, faults):
         self._own = [f for f in faults if f.type in ("arm_fail", "swap_partial")]
         self._left = {id(f): f.count for f in self._own}
 
     def take_arm_fail(self, arm: str, t: float, units: int) -> int | None:
-        """The item at which this arm fails in a goal of `units` items, or None.
+        """`units`개짜리 목표에서 이 팔이 실패하는 물건 순번, 없으면 None.
 
-        Consumes one of the fault's count, but only when the arm gets that far in this goal.
+        이 목표에서 그 순번까지 갈 때만 고장 횟수를 하나 쓴다.
         """
         for f in self._own:
             if (f.type == "arm_fail" and f.arm == arm and t >= f.at_s
@@ -135,7 +135,7 @@ class ArmFaults:
         return None
 
     def take_swap_partial(self, t: float) -> bool:
-        """True when placing the empty basket must fail. Consumes one of the fault's count."""
+        """빈 바구니 놓기를 실패시켜야 하면 True. 고장 횟수를 하나 쓴다."""
         for f in self._own:
             if f.type == "swap_partial" and t >= f.at_s and self._left[id(f)] > 0:
                 self._left[id(f)] -= 1

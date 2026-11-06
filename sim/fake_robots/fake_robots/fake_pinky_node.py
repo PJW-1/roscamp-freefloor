@@ -1,4 +1,4 @@
-"""FakePinky: one fake mobile robot with robot_state, move_to and dock, plus scheduled faults."""
+"""FakePinky: robot_state, move_to, dock을 가진 가짜 이동 로봇. 일정대로 고장을 낸다."""
 from __future__ import annotations
 
 import random
@@ -35,7 +35,7 @@ from fake_robots.motion import (
 )
 
 NAV_ABORT_DELAY_S = 1.0
-OFF_COURSE_M = 1.0  # where a robot the operator removed ends up, outside the map corner
+OFF_COURSE_M = 1.0  # 운영자가 치운 로봇이 가는 곳(지도 모서리 밖)
 FEEDBACK_PERIOD_S = 0.2
 CONTROL_RATE_HZ = 20.0
 
@@ -65,7 +65,7 @@ class FakePinkyNode(Node):
                          parameter_overrides=parameter_overrides, **kwargs)
         self.declare_parameter("robot_id", "pinky1")
         self.declare_parameter("state_rate_hz", 10.0)
-        self.declare_parameter("heartbeat_timeout_s", -1.0)  # below 0: params file, 0: never stop
+        self.declare_parameter("heartbeat_timeout_s", -1.0)  # <0: 파일 값, 0: 안 멈춤
         self.robot_id = self.get_parameter("robot_id").value
         contract = load_contract_param(self)
         site = load_lane_map_param(self)
@@ -139,7 +139,7 @@ class FakePinkyNode(Node):
             self._last_beat = time.monotonic()
 
     def _heartbeat_lost(self) -> bool:
-        """Wall clock: it watches a process, and sim time runs ahead of a loaded machine."""
+        """실제 시계. 프로세스를 감시하는 것이고, 부하가 걸리면 시뮬 시간이 앞서가기 때문이다."""
         return 0 < self._beat_timeout < time.monotonic() - self._last_beat
 
     # -- goal handling ------------------------------------------------------------------
@@ -168,7 +168,7 @@ class FakePinkyNode(Node):
             if self._active is not None:
                 self._end(self._active, False, MoveTo.Result.REASON_CANCELED)
             self._active = goal
-            self._last_beat = time.monotonic()  # a goal shows somebody is there
+            self._last_beat = time.monotonic()  # 목표가 왔으면 누군가 있다는 뜻
             goal.start_at = t
             if kind == "move":
                 pose = handle.request.target_pose
@@ -177,7 +177,7 @@ class FakePinkyNode(Node):
                                                     self._rng))
                 if self._faults.take_nav_abort(t):
                     eta = self._motion.remaining() / self._cfg.speed_mps
-                    goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # abort before arrival
+                    goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
             else:
                 self._motion.clear_target()
                 goal.end_at = t + self._dock_cfg.duration_s
@@ -208,7 +208,7 @@ class FakePinkyNode(Node):
             with self._lock:
                 self._end(goal, False, MoveTo.Result.REASON_CANCELED)
         while self._running() and self._faults.comms_down(self._sc.now()):
-            time.sleep(0.02)  # results are held until comms return
+            time.sleep(0.02)  # 통신이 돌아올 때까지 결과를 쥐고 있는다
         if not self._running():
             abort_at_shutdown(handle)
             return action_type.Result()
@@ -258,7 +258,7 @@ class FakePinkyNode(Node):
                 self._end(goal, True)
 
     def _remove(self, goal: _Goal | None) -> None:
-        """The operator lifted the robot off the course and switched it off."""
+        """운영자가 로봇을 코스에서 들어내 전원을 껐다."""
         if self._removed:
             return
         self._removed = True
@@ -274,7 +274,7 @@ class FakePinkyNode(Node):
                 robot_id=self.robot_id,
                 pose=Pose2D(x=self._motion.x, y=self._motion.y, theta=self._motion.yaw)))
             if self._unreachable():
-                self._reports.clear()  # what had not gone out is lost with the link
+                self._reports.clear()  # 못 나간 보고는 링크와 함께 사라진다
                 return
             goal = self._active
             busy = goal is not None and not goal.done.is_set()
@@ -302,7 +302,7 @@ def main(args=None):
         executor.spin()
     except KeyboardInterrupt:
         pass
-    except Exception:  # SIGINT can land inside a message take; a real error has ROS still up
+    except Exception:  # SIGINT가 메시지 수신 중에 떨어질 수 있다. 진짜 오류면 ROS가 아직 살아 있다
         if rclpy.ok():
             raise
     finally:

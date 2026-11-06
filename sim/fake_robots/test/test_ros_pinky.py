@@ -1,4 +1,4 @@
-"""FakePinky driven through its real action and topic interfaces."""
+"""실제 액션과 토픽 인터페이스로 FakePinky를 시험한다."""
 import time
 
 import pytest
@@ -19,7 +19,7 @@ SITE = load_lane_map()
 
 
 class Probe:
-    """A client node's worth of subscriptions and action clients for pinky1."""
+    """pinky1용 구독과 액션 클라이언트 한 벌."""
 
     def __init__(self, harness):
         import rclpy.node
@@ -43,7 +43,7 @@ class Probe:
 
 
 def start(harness, tmp_path, heartbeat_timeout_s=0.0, **scenario):
-    """No FMS here, so by default the robot does not wait to hear from one."""
+    """여기엔 FMS가 없으니 기본적으로 로봇은 FMS 소식을 기다리지 않는다."""
     from fake_robots.fake_pinky_node import FakePinkyNode
     harness.add(FakePinkyNode(parameter_overrides=harness.params(
         robot_id="pinky1", scenario_file=write_scenario(tmp_path, **scenario),
@@ -152,10 +152,10 @@ def test_a_late_report_says_where_the_robot_was_when_it_was_measured(harness, tm
     p.goal("N")
     assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_MOVING, 5.0)
     assert wait_until(lambda: p.states[-1][1].pose.x != SITE.waypoint_pose("P-6")[0], 5.0)
-    time.sleep(0.5)  # moving at full speed for at least the whole delay
+    time.sleep(0.5)  # 지연 내내 최고 속도로 움직인다
     told, now = p.states[-1][1], truth[-1]
     gap = ((told.pose.x - now.pose.x) ** 2 + (told.pose.y - now.pose.y) ** 2) ** 0.5
-    assert gap == pytest.approx(0.1, abs=0.04)  # speed * delay
+    assert gap == pytest.approx(0.1, abs=0.04)  # 속도 * 지연
     age = (p.node.get_clock().now().nanoseconds / 1e9
            - (told.stamp.sec + told.stamp.nanosec / 1e9))
     assert age == pytest.approx(1.0, abs=0.3)
@@ -170,7 +170,7 @@ def test_reports_measured_during_a_comm_loss_never_come(harness, tmp_path):
     back = len(p.states)
     assert wait_until(lambda: len(p.states) > back, 6.0), "never came back"
     came = p.states[back][1].stamp
-    # Comms return at 4 s after the first tick of the clock. What was measured before that is gone.
+    # 통신은 시계 첫 틱 4초 뒤에 돌아온다. 그 전에 잰 값은 사라진다.
     first = p.states[0][1].stamp
     assert (came.sec + came.nanosec / 1e9) - (first.sec + first.nanosec / 1e9) > 2.5
 
@@ -189,7 +189,7 @@ def test_a_move_ends_off_its_target_by_the_stop_error(harness, tmp_path):
 
 
 def test_start_accepts_a_waiting_cell_name(harness, tmp_path):
-    p = start(harness, tmp_path)  # pinky1 starts at P-6
+    p = start(harness, tmp_path)  # pinky1은 P-6에서 시작
     assert wait_until(lambda: p.states, 5.0)
     x, y = SITE.waypoint_pose("P-6")
     assert (p.states[-1][1].pose.x, p.states[-1][1].pose.y) == pytest.approx((x, y), abs=1e-6)
@@ -207,7 +207,7 @@ def test_operator_remove_takes_the_robot_off_the_course_for_good(harness, tmp_pa
     moving = p.goal("S")
     assert moving.accepted
     res = result_of(moving).result
-    assert res.success is False  # the goal ended instead of hanging
+    assert res.success is False  # 목표가 멈추지 않고 끝났다
     assert wait_until(lambda: truth and truth[-1].pose.x < 0.0, 5.0)
     assert all(SITE.distance_to_zone(truth[-1].pose.x, truth[-1].pose.y, z) > 0.5
                for z in SITE.zones)
@@ -235,7 +235,7 @@ BEAT_TIMEOUT_S = 0.5
 
 
 def beat(p):
-    """Play the FMS: a heartbeat from now on."""
+    """FMS 역할: 지금부터 하트비트를 보낸다."""
     from std_msgs.msg import Header
     pub = p.node.create_publisher(Header, CONTRACT_OBJ.name("heartbeat"),
                                   to_ros_qos(CONTRACT_OBJ.qos("heartbeat")))

@@ -1,4 +1,4 @@
-"""Straight-line motion, pose noise and the fault schedule."""
+"""직선 이동, 자세 잡음, 고장 일정."""
 import random
 
 import pytest

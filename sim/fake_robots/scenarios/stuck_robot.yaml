@@ -1,10 +1,9 @@
-# pinky1 freezes for good and goes silent at 66 s on the avenue, on its way back after it has
-# shipped O-001. Every trip between the stations needs the avenue, so the others back up behind
-# it. pinky2 is already docked at OUTBOUND and ships O-002, then waits at the dock for AVENUE with
-# an empty basket. pinky3 holds O-003 and waits at the fill dock for AVENUE, so its full basket
-# never leaves. Nothing else can ship: two orders shipped, one stuck on a robot, three never
-# bound. The fleet manager must warn (COMM_LOST for pinky1, ZONE_WAIT_LONG for the two behind it)
-# and keep the zones held.
+# pinky1이 O-001을 출고하고 돌아오던 66초에 AVENUE 위에서 영영 멈추고 응답이 끊긴다.
+# 스테이션 사이 이동은 모두 AVENUE가 필요해 나머지가 뒤에 막힌다.
+# pinky2는 이미 OUTBOUND에 도킹해 O-002를 출고한 뒤, 빈 바구니로 도크에서 AVENUE를 기다린다.
+# pinky3은 O-003을 쥔 채 채움 도크에서 AVENUE를 기다려 찬 바구니가 나가지 못한다.
+# 더는 출고할 수 없다: 출고 2건, 로봇에 걸린 것 1건, 미배정 3건.
+# 플릿 매니저는 경고(pinky1은 COMM_LOST, 뒤의 둘은 ZONE_WAIT_LONG)를 내고 구역을 계속 쥐어야 한다.
 seed: 5
 speed_factor: 5.0
 timeout_s: 400

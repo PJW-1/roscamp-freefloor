@@ -1,7 +1,7 @@
-"""FakeWorkcell: the fill_basket server with arm1 and arm2 behind it.
+"""FakeWorkcell: arm1, arm2를 뒤에 둔 fill_basket 서버.
 
-Each requested item goes to an arm whose stock has that kind. Both arms pick at the same time,
-but one lock lets only one of them into the basket space (PLACING) at once.
+요청한 물건은 그 종류의 재고가 있는 팔에 간다. 두 팔이 동시에 집지만
+잠금 하나로 바구니 공간(PLACING)에는 한 팔만 들어간다.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def order_items(counts: Counter) -> list[OrderItem]:
 
 
 class _Run:
-    """One fill goal while the arm threads work on it."""
+    """팔 스레드가 처리하는 동안의 채움 목표 하나."""
 
     def __init__(self, handle):
         self.handle = handle
@@ -70,7 +70,7 @@ class FakeWorkcellNode(Node):
         self._busy_lock = threading.Lock()
         self._busy = False
         self._alive = True
-        # The rule the real server has to keep: only the holder of this lock may be PLACING.
+        # 실제 서버도 지킬 규칙: 이 잠금을 쥔 쪽만 PLACING이 될 수 있다.
         self._basket_space = threading.Lock()
         self._state_lock = threading.Lock()
         self._state = {arm: (ArmState.STATE_IDLE, "") for arm in self._arms}
@@ -118,8 +118,8 @@ class FakeWorkcellNode(Node):
             with self._state_lock:
                 self._publish_state(arm, locked=True)
             return
-        # Reading, stamping and publishing stay together so a stamp never goes back in time
-        # relative to a state change: the judge compares these stamps between the arms.
+        # 읽기, 스탬프, 발행을 한데 묶어 상태 변화보다 스탬프가 앞서지 않게 한다.
+        # 심판이 팔 사이의 스탬프를 비교한다.
         state, detail = self._state[arm]
         self._state_pubs[arm].publish(ArmState(
             arm_id=arm, state=state, detail=detail, stamp=self.get_clock().now().to_msg()))
@@ -145,7 +145,7 @@ class FakeWorkcellNode(Node):
     # -- planning -----------------------------------------------------------------------
 
     def _plan(self, items) -> tuple[dict[str, list[str]], Counter]:
-        """Give each requested item to the arm with most of that kind. Rest goes to missing."""
+        """요청한 물건을 그 종류가 가장 많은 팔에 준다. 나머지는 missing이다."""
         with self._stock_lock:
             left = {arm: Counter(self._stock[arm]) for arm in self._arms}
         units: dict[str, list[str]] = {arm: [] for arm in self._arms}
@@ -161,7 +161,7 @@ class FakeWorkcellNode(Node):
         return units, missing
 
     def _plan_failures(self, units: dict[str, list[str]]) -> dict[str, int]:
-        """Which arm fails in this goal, and before which of its items."""
+        """이 목표에서 실패할 팔과, 그 팔의 몇 번째 물건 전인지."""
         t = self._sc.now()
         fail_at = {}
         for arm in self._arms:
@@ -201,7 +201,7 @@ class FakeWorkcellNode(Node):
         for worker in workers:
             worker.join()
         if handle.is_cancel_requested and self._cancel_at is not None:
-            # A real arm takes time to stop, and the server stays busy until it has.
+            # 실제 팔은 멈추는 데 시간이 걸리고 그동안 서버는 바쁘다.
             self._sc.sleep_until(self._cancel_at + self._cfg.cancel_seconds, self._running)
 
         planned = sum(len(u) for u in units.values())
@@ -212,7 +212,7 @@ class FakeWorkcellNode(Node):
             reason = REASON_ARM_FAULT
         elif not complete:
             reason = REASON_CANCELED
-        # `missing` is only final when the server finished trying; a retry works it out again.
+        # `missing`은 서버가 시도를 마쳤을 때만 확정이다. 재시도하면 다시 계산한다.
         result = FillBasket.Result(
             success=success, placed=order_items(run.placed),
             missing=order_items(missing) if success else [], reason=reason)
@@ -244,12 +244,12 @@ class FakeWorkcellNode(Node):
                 break
             self._change_stock(arm, kind, -1)
             if not self._enter_basket_space(run):
-                self._change_stock(arm, kind, +1)  # back on the shelf, it never reached the basket
+                self._change_stock(arm, kind, +1)  # 바구니에 못 닿았으니 선반으로 되돌린다
                 break
             try:
                 self._set_state(arm, ArmState.STATE_PLACING, robot)
                 placed = self._sc.sleep_until(self._sc.now() + half, self._running)
-                # Published before the lock is released, so the other arm's PLACING comes later.
+                # 잠금을 풀기 전에 발행해야 다른 팔의 PLACING이 뒤에 온다.
                 self._set_state(arm, ArmState.STATE_IDLE)
             finally:
                 self._basket_space.release()
@@ -278,7 +278,7 @@ def main(args=None):
         executor.spin()
     except KeyboardInterrupt:
         pass
-    except Exception:  # SIGINT can land inside a message take; a real error has ROS still up
+    except Exception:  # SIGINT가 메시지 수신 중에 떨어질 수 있다. 진짜 오류면 ROS가 아직 살아 있다
         if rclpy.ok():
             raise
     finally:

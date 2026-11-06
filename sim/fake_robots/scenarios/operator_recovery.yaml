@@ -1,11 +1,10 @@
-# arm1 fails on three fill attempts in a row, which uses up the retry limit: pinky1 goes to ERROR
-# at the workspace dock with its order bound. At 60 s the operator lifts it off the course and
-# confirm_clear puts the order back at the front.
-# pinky2 takes that order and at 68 s, in the middle of its fill, the operator lifts it off too.
-# The workcell needs cancel_seconds to stop and is busy until then, and pinky3 reaches the dock
-# about 3 s after the clear. The fleet manager must hold pinky3's goal until the canceled goal
-# has its result. A goal sent earlier would be rejected and show up as a third FILL_RETRY.
-# pinky3 then finishes everything.
+# arm1이 채움에 세 번 연속 실패해 재시도 한도를 다 쓴다. pinky1은 주문을 쥔 채
+# 작업대 도크에서 ERROR가 된다. 60초에 운영자가 들어내고 confirm_clear가 주문을 맨 앞에 돌려놓는다.
+# pinky2가 그 주문을 받고 68초, 채우는 도중에 운영자가 이것도 들어낸다.
+# 작업셀은 멈추는 데 cancel_seconds가 걸려 그때까지 바쁘고, pinky3은 clear 약 3초 뒤 도크에 닿는다.
+# 플릿 매니저는 취소된 목표의 결과가 나올 때까지 pinky3의 목표를 쥐고 있어야 한다.
+# 먼저 보내면 거부돼 세 번째 FILL_RETRY로 나타난다.
+# 이후 pinky3이 전부 끝낸다.
 seed: 23
 speed_factor: 5.0
 timeout_s: 900

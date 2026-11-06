@@ -1,4 +1,4 @@
-"""FakeCentral through its real topics and services."""
+"""실제 토픽과 서비스로 FakeCentral을 시험한다."""
 import pytest
 
 pytest.importorskip("rclpy")
@@ -107,7 +107,7 @@ def test_submit_accepts_and_appends_to_the_board(harness, tmp_path):
 
 @pytest.mark.parametrize("items", [{"Z": 1}, {"A": 4}, {}, {"A": 0}])
 def test_submit_rejects_unknown_out_of_stock_and_empty(harness, tmp_path, items):
-    c = Central(harness, tmp_path, orders=[])  # the record says A: 3, B: 1, C: 3
+    c = Central(harness, tmp_path, orders=[])  # 기록: A 3, B 1, C 3
     res = c.submit(**items)
     assert not res.accepted and res.reason and res.order_id == ""
     c.wait_code("ORDER_REJECTED")
@@ -116,13 +116,13 @@ def test_submit_rejects_unknown_out_of_stock_and_empty(harness, tmp_path, items)
 
 def test_submit_goes_by_the_record_not_the_shelves(harness, tmp_path):
     c = Central(harness, tmp_path, orders=[], inventory={"A": 0, "E": 2})
-    assert not c.submit(A=1).accepted  # on the shelf, record says none
-    assert c.submit(E=1).accepted  # not on the shelf, record says some
+    assert not c.submit(A=1).accepted  # 선반에는 있고 기록은 0
+    assert c.submit(E=1).accepted  # 선반에는 없고 기록은 있음
 
 
 def test_submit_rejects_over_capacity(harness, tmp_path):
     c = Central(harness, tmp_path, orders=[], stock={"arm1": {"A": 9}, "arm2": {"C": 9}})
-    res = c.submit(A=3, C=2)  # 5 is over the capacity of 4 in fleet_params.yaml
+    res = c.submit(A=3, C=2)  # 5는 fleet_params.yaml의 용량 4를 넘는다
     assert not res.accepted and "fit" in res.reason
 
 
@@ -206,7 +206,7 @@ def test_after_a_correction_the_same_kind_is_out_of_stock(harness, tmp_path):
 
 
 def test_placed_is_deducted_before_missing_is_judged(harness, tmp_path):
-    """The record had exactly what was placed, so the shortfall is not a mismatch."""
+    """기록이 놓은 수와 정확히 같았으니 부족분은 불일치가 아니다."""
     c = Central(harness, tmp_path, inventory={"A": 1}, orders=[
         {"at_s": 0, "id": "O-1", "items": {"A": 2}}])
     c.wait_ids(["O-1"])

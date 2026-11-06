@@ -1,4 +1,4 @@
-# Happy path: six orders, three robots starting in the waiting cells, no faults.
+# 정상 경로: 주문 6건, 대기 칸에서 출발하는 로봇 3대, 고장 없음.
 seed: 7
 speed_factor: 5.0
 timeout_s: 900

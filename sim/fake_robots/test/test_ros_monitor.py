@@ -1,4 +1,4 @@
-"""ScenarioMonitor on a live graph, with the test playing the fleet manager."""
+"""살아 있는 그래프에서 ScenarioMonitor를 시험한다. 테스트가 플릿 매니저 역을 한다."""
 import json
 import time
 
@@ -61,7 +61,7 @@ def goal_result(client, goal):
 
 
 def run_one_order(probe, emit):
-    """What the fleet manager does for one order, minus the driving."""
+    """플릿 매니저가 주문 하나에 하는 일(주행 제외)."""
     items = [OrderItem(kind="A", count=1), OrderItem(kind="C", count=1)]
     fill = ActionClient(probe, FillBasket, C.name("fill_basket"))
     swap = ActionClient(probe, SwapBasket, C.name("swap_basket", arm="arm3"))
@@ -88,7 +88,7 @@ def test_a_finished_run_writes_a_passing_summary(harness, tmp_path):
         "events_include": ["ORDER_BOUND", "ORDER_SHIPPED"]})
     emit, zones = events_pub(probe), zones_pub(probe)
     zones({"P-6": "pinky1"})
-    time.sleep(1.0)  # let the monitor discover the stand-in, as a real start-up does
+    time.sleep(1.0)  # 실제 기동처럼 모니터가 대역을 찾게 한다
     zones({"P-6": "pinky1"})
     run_one_order(probe, emit)
     assert wait_until(lambda: monitor.exit_code is not None, 15.0)
@@ -153,5 +153,5 @@ def test_confirm_clear_waits_until_the_robot_is_off_the_course(harness, tmp_path
     probe.create_service(ConfirmClear, C.name("confirm_clear"),
                          lambda req, res: (calls.append(req), res)[1])
     monitor.judge.truth["pinky1"] = monitor.judge.site.waypoint_pose("P-6")
-    assert wait_until(lambda: calls, 8.0)  # the fake reports the removal, and only then
+    assert wait_until(lambda: calls, 8.0)  # 가짜가 제거를 알렸을 때만 호출된다
     assert monitor.judge.off_course("pinky1")

@@ -1,12 +1,12 @@
-# The record and the shelves disagree. D is out in both, so its orders end in OUT_OF_STOCK.
-# E and F are in the record but not on the shelves, so theirs end in STOCK_MISMATCH.
-#   O-001 all there                     SHIPPED
-#   O-002 A there, D out                PARTIAL  OUT_OF_STOCK
-#   O-003 only D                        HELD     OUT_OF_STOCK
-#   O-004 C there, E not on the shelf   PARTIAL  STOCK_MISMATCH
-#   O-005 only F                        HELD     STOCK_MISMATCH
-#   O-006 all there                     SHIPPED
-#   O-007 more than basket_capacity     HELD     the arms are not called, so nothing is missing
+# 기록과 선반이 다르다. D는 둘 다 없어 주문이 OUT_OF_STOCK으로 끝난다.
+# E와 F는 기록에만 있고 선반에 없어 STOCK_MISMATCH로 끝난다.
+#   O-001 전부 있음                     SHIPPED
+#   O-002 A 있음, D 없음                PARTIAL  OUT_OF_STOCK
+#   O-003 D만                           HELD     OUT_OF_STOCK
+#   O-004 C 있음, E 선반에 없음         PARTIAL  STOCK_MISMATCH
+#   O-005 F만                           HELD     STOCK_MISMATCH
+#   O-006 전부 있음                     SHIPPED
+#   O-007 basket_capacity 초과          HELD     팔을 부르지 않으니 부족분이 없다
 seed: 17
 speed_factor: 5.0
 timeout_s: 900

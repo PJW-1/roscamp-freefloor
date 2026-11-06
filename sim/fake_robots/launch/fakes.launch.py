@@ -1,11 +1,11 @@
-"""Start fake robots, workcell, arm, vision, central stand-in, sim clock and scenario monitor.
+"""가짜 로봇, 작업셀, 팔, 비전, 중앙 대역, 시뮬 시계, 시나리오 모니터를 띄운다.
 
   ros2 launch fake_robots fakes.launch.py scenario:=basic_orders result_dir:=/tmp/run1
-  ros2 launch fake_robots fakes.launch.py fake_robots:="pinky2 pinky3"   # pinky1 is real
-  ros2 launch fake_robots fakes.launch.py fake_arms:="arm3"              # real workcell
+  ros2 launch fake_robots fakes.launch.py fake_robots:="pinky2 pinky3"   # pinky1은 실물
+  ros2 launch fake_robots fakes.launch.py fake_arms:="arm3"              # 작업셀은 실물
 
-fake_arms: arm1 and arm2 together start the fake workcell and their two vision nodes, because
-one fill_basket server answers for both. arm3 starts the fake outbound arm.
+fake_arms: arm1과 arm2를 함께 주면 가짜 작업셀과 비전 노드 둘이 뜬다.
+fill_basket 서버 하나가 둘을 맡기 때문이다. arm3은 가짜 출고 팔을 띄운다.
 """
 import os
 
@@ -19,8 +19,8 @@ from launch_ros.actions import Node
 
 ALL_ROBOTS = "pinky1 pinky2 pinky3"
 ALL_ARMS = "arm1 arm2 arm3"
-CLOCK_START_DELAY_S = 5.0  # wall time for every node to start and find the others
-CLOCK_RATE_HZ = 50.0  # every node wakes up on every tick; 0.1 s of sim time at speed factor 5
+CLOCK_START_DELAY_S = 5.0  # 모든 노드가 뜨고 서로를 찾는 데 쓰는 실제 시간
+CLOCK_RATE_HZ = 50.0  # 틱마다 모든 노드가 깬다. speed factor 5에서 시뮬 시간 0.1초
 
 
 def _truthy(text: str) -> bool:

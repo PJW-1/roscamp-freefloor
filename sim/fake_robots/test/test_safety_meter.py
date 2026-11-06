@@ -1,4 +1,4 @@
-"""The two safety numbers of the lane simulation. Pure, no ROS."""
+"""레인 시뮬레이션의 안전 수치 두 개. ROS 없이 돈다."""
 import pytest
 from fake_robots.safety_meter import SafetyMeter
 from fleet_core.traffic.lane_map import LaneMap

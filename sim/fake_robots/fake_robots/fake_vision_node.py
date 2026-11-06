@@ -1,4 +1,4 @@
-"""FakeVision: publishes what one workspace arm's camera sees, from the true stock."""
+"""FakeVision: 실제 재고로 작업대 팔 하나의 카메라 화면을 발행한다."""
 from __future__ import annotations
 
 import json
@@ -22,7 +22,7 @@ from fake_robots.common import (
 from fake_robots.fake_workcell_node import STOCK_QOS
 
 REPUBLISH_S = 1.0
-ITEM_SPACING_M = 0.03  # items are spread out only so that no two poses are the same
+ITEM_SPACING_M = 0.03  # 자세가 겹치지 않게 물건을 조금씩 벌린다
 
 
 class FakeVisionNode(Node):
@@ -70,7 +70,7 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    except Exception:  # SIGINT can land inside a message take; a real error has ROS still up
+    except Exception:  # SIGINT가 메시지 수신 중에 떨어질 수 있다. 진짜 오류면 ROS가 아직 살아 있다
         if rclpy.ok():
             raise
     finally:

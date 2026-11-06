@@ -1,18 +1,18 @@
-"""ScenarioJudge: decides whether a scenario run passed. No ROS imports.
+"""ScenarioJudge: 시나리오 실행이 통과했는지 판정한다. ROS를 쓰지 않는다.
 
-The zone message has one holder per zone, so a double booking cannot show up there. The judge
-therefore checks physically: where each robot really is, and what the holder was. A fake robot
-publishes its noiseless position for this; a single report can be several sigma off and fail a
-good run, and it goes silent during a comm loss. A real robot is judged on its reports.
+구역 메시지는 구역마다 보유자가 하나라 이중 예약이 거기에 드러나지 않는다. 그래서
+물리적으로 검사한다: 로봇이 실제로 어디에 있는지, 보유자가 누구였는지. 가짜 로봇은 이를 위해
+잡음 없는 위치를 내보낸다. 보고 한 번은 표준편차 몇 배씩 틀려 정상 실행을 떨어뜨릴 수 있고
+통신 두절 중에는 끊긴다. 실제 로봇은 보고로 판정한다.
 
-Orders are judged from the event codes in the common design document: the central system's
-final reports and the fleet manager's ORDER_BOUND and ORDER_REQUEUED.
+주문은 공통 설계 문서의 이벤트 코드로 판정한다: 중앙의 최종 보고와
+플릿 매니저의 ORDER_BOUND, ORDER_REQUEUED.
 """
 from __future__ import annotations
 
 import re
 
-RATE_PERIOD_S = 0.5  # robots.csv is downsampled to 2 Hz
+RATE_PERIOD_S = 0.5  # robots.csv는 2 Hz로 줄여 쓴다
 EPS = 1e-9
 PLACING = "PLACING"
 FINAL_CODES = {"ORDER_SHIPPED": "SHIPPED", "ORDER_PARTIAL": "PARTIAL", "ORDER_HELD": "HELD"}
@@ -20,13 +20,13 @@ ORDER_ID = re.compile(r"[^\s:,;]+")
 
 
 def order_id_of(detail: str) -> str:
-    """Details of the order events start with the order ID."""
+    """주문 이벤트의 detail은 주문 ID로 시작한다."""
     match = ORDER_ID.match(detail.strip())
     return match.group(0) if match else ""
 
 
 def _out_of_order(sequence: list[str], rank: dict[str, int]) -> list[str]:
-    """Entries that came after a later-ranked one, or that have no rank at all."""
+    """순위가 더 뒤인 항목 다음에 온 항목, 또는 순위가 아예 없는 항목."""
     wrong = []
     highest = -1
     for item in sequence:
@@ -64,23 +64,23 @@ class ScenarioJudge:
         self._unheld_counted: set[tuple[str, str]] = set()
         self._over: set[tuple[str, ...]] = set()
         self._left_start: set[str] = set()
-        # Orders
+        # 주문
         self.registered: list[str] = list(scenario.order_ids)
         self.final: dict[str, str] = {}
         self.final_counts = {"SHIPPED": 0, "PARTIAL": 0, "HELD": 0}
         self.bound_log: list[str] = []
         self.ship_log: list[str] = []
-        self.order_log: list[tuple[str, str]] = []  # BOUND and REQUEUED, in order of arrival
+        self.order_log: list[tuple[str, str]] = []  # BOUND와 REQUEUED, 도착 순
         self.error_codes: list[str] = []
         self.board: list[str] = []
         self._bound_now: set[str] = set()
-        # Arms
+        # 팔
         fill_arms = [a for s in lane_map.stations.values() if s.action == "fill" for a in s.arms]
         self._placing: dict[str, list[tuple[float, float]]] = {a: [] for a in fill_arms}
         self._placing_open: dict[str, float | None] = dict.fromkeys(fill_arms)
         self._placing_seen: set[str] = set()
         self._arm_stamp: dict[str, float] = {}
-        # Laps
+        # 바퀴
         self._work_zones = self._station_zones("fill")
         self._out_zones = self._station_zones("swap")
         self._waiting_zones = {lane_map.zone_of[c] for c in lane_map.parking}
@@ -122,7 +122,7 @@ class ScenarioJudge:
             self.error_codes.append(code)
         order = order_id_of(detail)
         if code == "ORDER_ACCEPTED" and order not in self.registered:
-            self.registered.append(order)  # a scenario order is registered from the start
+            self.registered.append(order)  # 시나리오 주문은 처음부터 등록돼 있다
         elif code == "ORDER_BOUND":
             self.bound_log.append(order)
             self.order_log.append(("BOUND", order))
@@ -137,14 +137,14 @@ class ScenarioJudge:
                 self.ship_log.append(order)
 
     def note(self, t: float, source: str, code: str, detail: str) -> None:
-        """Log something for events.csv that must not count as a fleet event."""
+        """events.csv에 남기되 플릿 이벤트로 세면 안 되는 것을 기록한다."""
         self.event_rows.append((t, "NOTE", source, code, detail))
 
     def on_board(self, order_ids: list[str]) -> None:
         self.board = list(order_ids)
 
     def on_arm_state(self, stamp: float, arm: str, state: str) -> None:
-        """Takes the arm's own stamp: two topics can deliver out of order against each other."""
+        """팔 자신의 스탬프를 쓴다. 두 토픽은 서로 순서가 뒤바뀌어 올 수 있다."""
         if arm not in self._placing or stamp < self._arm_stamp.get(arm, -1e18):
             return
         self._arm_stamp[arm] = stamp
@@ -172,7 +172,7 @@ class ScenarioJudge:
         return {robot: self._position(robot) for robot in {*self.poses, *self.truth}}
 
     def off_course(self, robot: str) -> bool:
-        """True when the robot is known to be clear of every zone."""
+        """로봇이 모든 구역에서 벗어난 것이 확인되면 True."""
         position = self._position(robot)
         if position is None:
             return False
@@ -194,8 +194,8 @@ class ScenarioJudge:
         report = self.poses.get(robot)
         reported = self.site.distance_to_zone(report[0], report[1], zone) if report else ""
         self.release_rows.append((t, zone, robot, dist, reported))
-        # The manager decides on noisy reports and its extra margin exists to absorb that noise,
-        # so the true position only has to show the robot's body clear of the zone.
+        # 매니저는 잡음 낀 보고로 판단하고 여유 거리는 그 잡음을 흡수하려는 것이다.
+        # 그래서 실제 위치는 몸이 구역을 벗어났음만 보이면 된다.
         limit = self.radius_m if robot in self.truth else max(0.0, self.margin_m - 2 * noise)
         if dist <= limit:
             self._violate(t, f"{zone} released from {robot} while {dist:.2f} m from it")
@@ -223,10 +223,10 @@ class ScenarioJudge:
         return sum(order not in self._bound_now for order in self.board)
 
     def _track_lap(self, t: float, robot: str, zone: str) -> None:
-        """Follow a robot from the outbound zone to whichever it reaches first of the other two.
+        """출고 구역에서 나머지 둘 중 먼저 닿는 곳까지 로봇을 따라간다.
 
-        With at least as many unbound orders as robots every robot is called, so none of them
-        has a reason to enter the waiting loop.
+        미배정 주문이 로봇 수 이상이면 모든 로봇이 호출되므로
+        대기 루프에 들어갈 까닭이 없다.
         """
         if self._last_zone.get(robot) == zone:
             return
@@ -246,8 +246,8 @@ class ScenarioJudge:
                 self._violate(t, f"{robot} entered {zone} with {unbound} unbound orders waiting")
 
     def _still_on_start_cell(self, robot: str, x: float, y: float) -> bool:
-        """The manager takes a robot's first zone only once it has heard from every robot, and
-        at speed_factor 5 that can outlast the grace time. Nothing has driven the robot yet."""
+        """매니저는 모든 로봇의 보고를 들은 뒤에야 첫 구역을 잡는데, speed_factor 5에서는
+        유예 시간을 넘길 수 있다. 아직 로봇을 움직인 것은 없다."""
         cfg = self.scenario.robots.get(robot)
         if robot in self._left_start or cfg is None:
             return False
@@ -278,12 +278,12 @@ class ScenarioJudge:
                 self._unheld_counted.discard(key)
 
     def fifo_problems(self) -> list[str]:
-        """Bound in registration order and shipped in bound order. A requeued order goes back to
-        the front: it must be the next one bound. Nothing is bound twice without a requeue."""
+        """등록 순서로 배정하고 배정 순서로 출고한다. 재큐된 주문은 맨 앞으로 돌아가
+        다음에 배정돼야 한다. 재큐 없이 두 번 배정되면 안 된다."""
         rank = {o: i for i, o in enumerate(self.registered)}
         problems = []
-        open_bound: set[str] = set()  # bound and not requeued since, final or not
-        requeued: set[str] = set()  # waiting to be bound again
+        open_bound: set[str] = set()  # 배정 후 재큐되지 않은 것(최종 여부 무관)
+        requeued: set[str] = set()  # 다시 배정을 기다리는 것
         seen: set[str] = set()
         first_binds = []
         last_bind: dict[str, int] = {}
@@ -309,8 +309,8 @@ class ScenarioJudge:
         return problems
 
     def arms_never_placing(self) -> list[str]:
-        """Arms the shipped orders needed that never showed PLACING. Without their states the
-        overlap check would pass on no data. Only meaningful when two arms were needed."""
+        """출고된 주문에 필요했는데 PLACING을 한 번도 안 보인 팔. 그 상태가 없으면
+        겹침 검사가 데이터 없이 통과한다. 팔이 둘 필요했을 때만 의미가 있다."""
         stock = self.scenario.stock
         items = {o.id: o.items for o in self.scenario.orders}
         needed = {arm for order in self.ship_log for kind in items.get(order, {})
@@ -318,7 +318,7 @@ class ScenarioJudge:
         return sorted(needed - self._placing_seen) if len(needed) > 1 else []
 
     def dual_arm_overlap_list(self) -> list[tuple[float, float]]:
-        """Times at which two workspace arms were PLACING at once. Touching does not count."""
+        """작업대 팔 둘이 동시에 PLACING이던 시각. 맞닿기만 한 것은 세지 않는다."""
         latest = max(self._arm_stamp.values(), default=0.0)
         spans = {arm: [*done, *([(self._placing_open[arm], latest)]
                                 if self._placing_open[arm] is not None else [])]

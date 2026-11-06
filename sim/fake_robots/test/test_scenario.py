@@ -1,4 +1,4 @@
-"""Scenario YAML parsing and validation. No ROS needed."""
+"""시나리오 YAML 읽기와 검증. ROS가 필요 없다."""
 from pathlib import Path
 
 import pytest
@@ -193,7 +193,7 @@ def test_shared_lane_failure_has_both_faults(site):
 
 
 def fillable(sc, order):
-    """What the shelves can give this order, ignoring the other orders."""
+    """다른 주문은 무시하고 선반이 이 주문에 줄 수 있는 것."""
     return {k: min(c, sum(s.get(k, 0) for s in sc.stock.values())) for k, c in order.items.items()}
 
 

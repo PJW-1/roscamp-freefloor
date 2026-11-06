@@ -1,8 +1,8 @@
-# Eight orders at once and two more while they are being worked on. With orders queued a robot
-# leaving the outbound zone has to go straight back to the workspace, not through the waiting
-# loop: direct_returns_min counts those laps and parked_while_backlog counts the opposite.
-# The first three orders are taken by robots coming from the waiting cells. Orders stay queued
-# until the last two are bound, so each of the other seven must come from a direct lap.
+# 주문 8건이 한꺼번에 오고 처리 중에 2건이 더 온다. 주문이 밀려 있으면 출고 구역을 떠난 로봇은
+# 대기 루프를 거치지 않고 곧장 작업대로 가야 한다.
+# direct_returns_min은 그런 바퀴를, parked_while_backlog는 반대 경우를 센다.
+# 첫 3건은 대기 칸에서 오는 로봇이 받는다. 마지막 2건이 배정될 때까지 주문이 계속 밀려 있으므로
+# 나머지 7건은 모두 곧장 돌아온 바퀴에서 나와야 한다.
 seed: 11
 speed_factor: 5.0
 timeout_s: 1200

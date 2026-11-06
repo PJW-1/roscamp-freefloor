@@ -1,21 +1,21 @@
-"""ScenarioJudge: physical zone checks, order counts, order of work, the arms, the outcome."""
+"""ScenarioJudge: 물리 구역 검사, 주문 수, 작업 순서, 팔, 최종 판정."""
 import pytest
 from conftest import GRID_MAP
 from fake_robots.judge import ScenarioJudge, order_id_of
 from fake_robots.scenario import parse_scenario
 from fleet_core.traffic.lane_map import load_lane_map
 
-SITE = load_lane_map(GRID_MAP)  # these tests are about the judge, on the cell layout
+SITE = load_lane_map(GRID_MAP)  # 이 테스트는 작업셀 배치(격자 지도)에서 심판을 시험한다
 CELL = 2 * SITE.half_width
 NOISE = 0.03
-SAME_ZONE = ((9, 1), (9, 0))  # both in Z-R1
+SAME_ZONE = ((9, 1), (9, 0))  # 둘 다 Z-R1
 ZONE = "Z-R1"
-OTHER = (4, 0)  # in Z-R2
+OTHER = (4, 0)  # Z-R2
 OTHER_ZONE = "Z-R2"
-WAITING = ((3, 4), (3, 5))  # P-6 and P-5
-OUT = (9, 3)  # Z-OUT dock
-WORK = (5, 3)  # Z-WORK dock
-LANE = (9, 1)  # return lane, between Z-OUT and the waiting loop
+WAITING = ((3, 4), (3, 5))  # P-6, P-5
+OUT = (9, 3)  # Z-OUT 도크
+WORK = (5, 3)  # Z-WORK 도크
+LANE = (9, 1)  # 복귀 레인, Z-OUT과 대기 루프 사이
 
 
 def scenario(faults=(), orders=("O-1", "O-2", "O-3"), **expect):
@@ -64,7 +64,7 @@ def ship(j, *orders):
 
 
 def finish_everything(j):
-    """The events of a clean run, plus enough presence that the exact checks can hold."""
+    """깨끗한 실행의 이벤트에, 정확 검사가 성립할 만큼의 존재 기록을 더한다."""
     bind(j, "O-1", "O-2", "O-3")
     ship(j, "O-1", "O-2", "O-3")
     put(j, 1.0, "pinky1", WAITING[0], "IDLE")
@@ -108,7 +108,7 @@ def test_release_after_robot_left_with_noise_allowance_is_fine():
     j = judge()
     put(j, 1.0, "pinky1", SAME_ZONE[0])
     j.on_zones(1.0, {ZONE: "pinky1"})
-    # 0.10 m beyond the zone edge: more than margin(0.13) - 2*0.03 = 0.07
+    # 구역 가장자리에서 0.10 m 밖: margin(0.13) - 2*0.03 = 0.07보다 큼
     x, y = at(SAME_ZONE[0])
     j.on_robot_state(2.0, "pinky1", x + CELL / 2 + 0.10, y, "MOVING")
     j.on_zones(2.0, {ZONE: ""})
@@ -131,13 +131,13 @@ def test_pose_in_unheld_zone_counts_after_grace_only():
     j.tick(3.0)
     assert check(j, "unheld_zone_pose", 3.0)["value"] == 1
     assert check(j, "unheld_zone_pose", 3.0)["ok"] is False
-    j.tick(4.0)  # same episode, not counted again
+    j.tick(4.0)  # 같은 사건이라 다시 세지 않는다
     assert check(j, "unheld_zone_pose", 4.0)["value"] == 1
 
 
 def test_a_robot_that_has_not_left_its_start_cell_is_not_counted():
     j = judge()
-    put(j, 1.0, "pinky1", WAITING[1])  # pinky1 starts at P-5
+    put(j, 1.0, "pinky1", WAITING[1])  # pinky1은 P-5에서 시작
     j.tick(1.0)
     j.tick(9.0)
     assert check(j, "unheld_zone_pose", 9.0)["value"] == 0
@@ -151,7 +151,7 @@ def test_the_start_cell_exemption_ends_when_the_robot_first_moves():
     j.tick(2.0)
     j.tick(4.0)
     assert check(j, "unheld_zone_pose", 4.0)["value"] == 1
-    put(j, 5.0, "pinky1", WAITING[1])  # back on the start cell it counts like any other
+    put(j, 5.0, "pinky1", WAITING[1])  # 시작 칸으로 돌아오면 다른 칸과 똑같이 센다
     j.tick(5.0)
     j.tick(7.0)
     assert check(j, "unheld_zone_pose", 7.0)["value"] == 2
@@ -182,7 +182,7 @@ def test_release_inside_the_zone_is_a_violation_even_with_large_noise():
 def test_robot_outside_every_zone_is_not_counted_as_occupying_one():
     j = judge()
     x, y = at(SAME_ZONE[0])
-    # Just left of the cell: that cell is still the nearest, but the pose is outside the zone.
+    # 칸 바로 왼쪽: 그 칸이 여전히 가장 가깝지만 자세는 구역 밖이다.
     j.on_robot_state(1.0, "pinky1", x - CELL / 2 - 0.02, y, "MOVING")
     put(j, 1.0, "pinky2", SAME_ZONE[0])
     j.tick(1.0)
@@ -190,13 +190,13 @@ def test_robot_outside_every_zone_is_not_counted_as_occupying_one():
 
 
 def beyond(cell, gap):
-    """A pose `gap` metres past the edge of the zone that holds `cell`."""
+    """`cell`을 가진 구역의 가장자리에서 `gap` m 바깥의 자세."""
     x, y = at(cell)
     return x + CELL / 2 + gap, y
 
 
 def test_one_noisy_report_cannot_fail_a_release_when_the_robot_really_left():
-    """Seed 3 failed this way: a report 0.05 m away while the robot was already clear."""
+    """시드 3이 이렇게 실패했다: 로봇이 이미 벗어났는데 보고는 0.05 m 안쪽."""
     j = judge()
     put(j, 1.0, "pinky1", SAME_ZONE[0])
     j.on_zones(1.0, {ZONE: "pinky1"})
@@ -217,7 +217,7 @@ def test_a_good_looking_report_cannot_hide_a_release_while_really_inside():
 
 
 def test_a_robot_with_no_true_pose_is_judged_on_its_reports():
-    """A real robot has no /sim/truth topic."""
+    """실제 로봇에는 /sim/truth 토픽이 없다."""
     j = judge()
     put(j, 1.0, "pinky1", SAME_ZONE[0])
     j.on_zones(1.0, {ZONE: "pinky1"})
@@ -226,12 +226,12 @@ def test_a_robot_with_no_true_pose_is_judged_on_its_reports():
 
 
 def test_occupancy_follows_the_true_position_even_while_reports_are_silent():
-    """During a comm loss only the true position still moves."""
+    """통신 두절 중에는 실제 위치만 움직인다."""
     j = judge()
     put(j, 1.0, "pinky1", SAME_ZONE[0])
     put(j, 1.0, "pinky2", OTHER)
     j.on_true_pose("pinky1", *at(SAME_ZONE[0]))
-    j.on_true_pose("pinky2", *at(SAME_ZONE[1]))  # same zone, while its report still says OTHER
+    j.on_true_pose("pinky2", *at(SAME_ZONE[1]))  # 같은 구역인데 보고는 아직 OTHER
     j.tick(1.0)
     assert check(j, "zone_holder_max", 1.0)["value"] == 2
 
@@ -255,7 +255,7 @@ def test_summary_has_no_release_distance_when_nothing_was_released():
 
 @pytest.mark.parametrize("gap, violations", [(0.075, 1), (0.09, 0)])
 def test_a_true_position_is_held_to_the_robot_body(gap, violations):
-    """The extra margin is there to absorb report noise, so the true limit is the radius."""
+    """여유 거리는 보고 잡음을 흡수하려는 것이므로 실제 한계는 반지름이다."""
     j = ScenarioJudge(SITE, scenario(), margin_m=0.13, radius_m=0.08, grace_s=1.0)
     put(j, 1.0, "pinky1", SAME_ZONE[0])
     j.on_zones(1.0, {ZONE: "pinky1"})
@@ -268,7 +268,7 @@ def test_rows_for_csv_outputs():
     j = judge()
     for i in range(10):
         put(j, i * 0.1, "pinky1", SAME_ZONE[0])
-    assert len(j.robot_rows) == 2  # 2 Hz downsampling over about one second
+    assert len(j.robot_rows) == 2  # 약 1초 동안 2 Hz로 줄임
     j.on_zones(1.0, {ZONE: "pinky1"})
     j.on_zones(1.2, {ZONE: "pinky1"})
     j.on_zones(2.0, {ZONE: ""})
@@ -411,7 +411,7 @@ def test_event_counts_fail_when_the_code_never_appeared():
 
 def test_exact_means_exact_for_the_zero_limits_too():
     j = judge(zone_holder_max=2)
-    finish_everything(j)  # the run really had one robot per zone
+    finish_everything(j)  # 이 실행은 구역마다 로봇이 하나였다
     assert check(j, "zone_holder_max")["ok"] is False
 
 
@@ -498,7 +498,7 @@ def test_a_requeued_order_must_be_the_next_one_bound():
     j.on_zones(1.0, {"P-6": "pinky1", "P-5": "pinky2"})
     j.tick(1.0)
     s = j.summary(5.0)
-    assert s["checks"]["fifo_violations"]["value"] == 2, s["violations"]  # O-2 and O-3
+    assert s["checks"]["fifo_violations"]["value"] == 2, s["violations"]  # O-2, O-3
     assert s["pass"] is False
     assert any("ahead of requeued" in v for v in s["violations"])
 
@@ -571,16 +571,16 @@ def test_both_arms_placing_at_once_is_an_overlap():
 def test_one_arm_after_the_other_is_no_overlap():
     j = judge()
     place(j, "arm1", 1.0, 2.0)
-    place(j, "arm2", 2.0, 3.0)  # handover at the same stamp
+    place(j, "arm2", 2.0, 3.0)  # 같은 스탬프에서 인계
     place(j, "arm1", 3.0, 4.0)
     assert check(j, "dual_arm_overlaps")["value"] == 0
 
 
 def test_delivery_order_between_the_arms_does_not_matter():
-    """arm2's start can be delivered before arm1's end although it was published after it."""
+    """arm2의 시작이 arm1의 끝보다 나중에 발행됐어도 먼저 도착할 수 있다."""
     j = judge()
     j.on_arm_state(1.0, "arm1", "PLACING")
-    j.on_arm_state(2.0, "arm2", "PLACING")  # delivered early
+    j.on_arm_state(2.0, "arm2", "PLACING")  # 먼저 도착
     j.on_arm_state(2.0, "arm1", "IDLE")
     j.on_arm_state(3.0, "arm2", "IDLE")
     assert check(j, "dual_arm_overlaps")["value"] == 0
@@ -590,7 +590,7 @@ def test_an_arm_that_never_left_the_basket_space_still_overlaps():
     j = judge()
     j.on_arm_state(1.0, "arm1", "PLACING")
     j.on_arm_state(2.0, "arm2", "PLACING")
-    j.on_arm_state(3.0, "arm2", "PLACING")  # heartbeat, and arm1 reports nothing more
+    j.on_arm_state(3.0, "arm2", "PLACING")  # 하트비트이고 arm1은 더 보고하지 않는다
     assert check(j, "dual_arm_overlaps")["value"] == 1
 
 
@@ -614,7 +614,7 @@ def test_the_outbound_arm_is_not_part_of_the_overlap():
 
 
 def lap(j, robot, cells, start=1.0):
-    """Drive one robot through cells, one tick each, with nobody else around."""
+    """주변에 아무도 없이 로봇 하나를 칸마다 한 틱씩 지나가게 한다."""
     t = start
     for cell in cells:
         put(j, t, robot, cell)
@@ -645,7 +645,7 @@ def test_leaving_the_waiting_loop_for_work_is_not_a_direct_return():
 
 def test_entering_the_waiting_loop_with_a_backlog_is_a_violation():
     j = judge()
-    j.on_board(["O-1", "O-2"])  # two unbound orders, two robots: both must have been called
+    j.on_board(["O-1", "O-2"])  # 미배정 주문 둘, 로봇 둘: 둘 다 호출됐어야 한다
     lap(j, "pinky1", [OUT, LANE, WAITING[0]])
     assert check(j, "parked_while_backlog")["value"] == 1
     assert check(j, "parked_while_backlog")["ok"] is False and j.summary(9.0)["pass"] is False
@@ -653,7 +653,7 @@ def test_entering_the_waiting_loop_with_a_backlog_is_a_violation():
 
 def test_entering_the_waiting_loop_with_fewer_orders_than_robots_is_allowed():
     j = judge()
-    j.on_board(["O-1"])  # the other robot may hold the only call
+    j.on_board(["O-1"])  # 다른 로봇이 유일한 호출을 쥐고 있을 수 있다
     lap(j, "pinky1", [OUT, LANE, WAITING[0]])
     assert check(j, "parked_while_backlog")["value"] == 0
 
@@ -763,7 +763,7 @@ def clean_run(j):
 
 def test_a_timeout_fails_even_with_every_other_check_good():
     j = clean_run(judge())
-    put(j, 1.0, "pinky1", LANE, "MOVING")  # all shipped, but this robot never got back
+    put(j, 1.0, "pinky1", LANE, "MOVING")  # 모두 출고됐지만 이 로봇은 돌아오지 못했다
     s = j.summary(100.0)
     failed = [k for k, c in s["checks"].items() if not c["ok"]]
     assert failed == ["timed_out"] and s["timed_out"] is True and s["pass"] is False
@@ -876,5 +876,5 @@ def test_both_arms_seen_placing_without_overlap_passes():
 
 
 def test_orders_for_one_arm_do_not_need_the_other():
-    j = clean_run(judge())  # every order in this scenario is item A, on arm1
+    j = clean_run(judge())  # 이 시나리오의 주문은 모두 arm1의 물건 A
     assert check(j, "dual_arm_overlaps")["arms_never_placing"] == []

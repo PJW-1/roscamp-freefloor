@@ -1,19 +1,19 @@
-# The comparison map: one one-way lap, the same lane graph as 05_관제_시뮬레이션_레인.html on the
-# old 12 x 7 layout (0.33 m cells). Nothing can meet head-on here, which is why it says little.
+# 비교용 지도: 일방통행 한 바퀴. 옛 12 x 7 격자(칸 0.33 m)의 05_관제_시뮬레이션_레인.html과
+# 같은 레인 그래프다. 정면충돌이 일어날 수 없어서 알려 주는 것이 적다.
 half_width_m: 0.05
 lane_entry_m: 0.25
 origin_m: [0.0, 0.0]
 waypoints:
-  - {id: W, x: 1.815, y: 1.155}    # WORK dock, cell (5,3)
+  - {id: W, x: 1.815, y: 1.155}    # WORK 도크, 칸 (5,3)
   - {id: A, x: 2.145, y: 1.155}
   - {id: B, x: 2.145, y: 1.815}
   - {id: C, x: 3.135, y: 1.815}
   - {id: Q2, x: 3.135, y: 1.485}
-  - {id: O, x: 3.135, y: 1.155}    # OUTBOUND dock, cell (9,3)
+  - {id: O, x: 3.135, y: 1.155}    # OUTBOUND 도크, 칸 (9,3)
   - {id: E, x: 3.135, y: 0.165}
   - {id: F, x: 0.825, y: 0.165}
-  - {id: T, x: 0.825, y: 1.155}    # the split into the waiting line
-  - {id: M, x: 1.155, y: 1.155}    # the merge from the waiting line
+  - {id: T, x: 0.825, y: 1.155}    # 대기 줄로 갈라지는 곳
+  - {id: M, x: 1.155, y: 1.155}    # 대기 줄에서 합류하는 곳
   - {id: Q1, x: 1.485, y: 1.155}
   - {id: P-1, x: 0.825, y: 1.485}
   - {id: P-2, x: 0.825, y: 1.815}

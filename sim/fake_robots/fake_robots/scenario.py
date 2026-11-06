@@ -1,4 +1,4 @@
-"""Scenario files for the fake robots: parse, default and validate. No ROS imports."""
+"""가짜 로봇용 시나리오 파일: 읽기, 기본값, 검증. ROS를 쓰지 않는다."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -10,11 +10,11 @@ ORDER_RESULTS = ("SHIPPED", "PARTIAL", "HELD")
 ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove")
 ARM_FAULTS = ("arm_fail", "swap_partial")
 FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
-# A robot with one of these never comes back, so nobody waits for it to park.
+# 이 고장이 난 로봇은 돌아오지 않으므로 주차를 기다리지 않는다.
 GONE_FAULTS = ("stuck", "operator_remove")
 EXPECT_DEFAULTS = {
     "all_orders_finished": True,
-    "orders_shipped": None,  # None means not checked; a number has to match exactly
+    "orders_shipped": None,  # None은 검사 안 함, 숫자는 정확히 일치해야 함
     "orders_partial": None,
     "orders_held": None,
     "orders_shipped_min": 0,
@@ -25,18 +25,18 @@ EXPECT_DEFAULTS = {
     "unheld_zone_pose": 0,
     "direct_returns_min": 0,
     "parked_while_backlog": 0,
-    "timed_out": False,  # true only where the scenario is meant to run out of time
-    "unexpected_errors": 0,  # ERROR events whose code is not in events_include or event_counts
-    "order_results": {},  # order id: SHIPPED, PARTIAL or HELD
+    "timed_out": False,  # 시간 초과가 목적인 시나리오에서만 true
+    "unexpected_errors": 0,  # 코드가 events_include나 event_counts에 없는 ERROR 이벤트
+    "order_results": {},  # 주문 id: SHIPPED, PARTIAL, HELD
     "events_include": [],
-    "event_counts": {},  # code: how many times it has to appear, exactly
+    "event_counts": {},  # 코드: 정확히 몇 번 나와야 하는지
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
                   "arm", "dock", "faults", "expect"}
 
 
 class ScenarioError(ValueError):
-    """The scenario file is invalid."""
+    """시나리오 파일이 잘못됐다."""
 
 
 @dataclass(frozen=True)
@@ -44,8 +44,8 @@ class RobotCfg:
     start: tuple[int, int]
     speed_mps: float = 0.2
     pose_noise_m: float = 0.0
-    report_delay_s: float = 0.0  # a report goes out this long after it was measured
-    stop_error_m: float = 0.0  # one sigma per axis: where a move really ends around its target
+    report_delay_s: float = 0.0  # 측정하고 이만큼 지난 뒤에 보고가 나간다
+    stop_error_m: float = 0.0  # 축마다 표준편차: 이동이 목표 주변 어디서 끝나는지
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ class ArmCfg:
     seconds_per_item: float = 4.0
     swap_seconds: float = 8.0
     fail_rate: float = 0.0
-    cancel_seconds: float = 0.0  # fake workcell: time from a cancel to its result, server busy
+    cancel_seconds: float = 0.0  # 가짜 작업셀: 취소부터 결과까지 걸리는 시간(서버는 바쁨)
 
 
 @dataclass(frozen=True)
@@ -72,12 +72,12 @@ class OrderCfg:
 @dataclass(frozen=True)
 class Fault:
     at_s: float
-    robot: str = ""  # target of the robot faults
+    robot: str = ""  # 로봇 고장의 대상
     type: str = ""
     duration_s: float = 0.0
     count: int = 1
-    arm: str = ""  # target of arm_fail
-    after_items: int = 0  # arm_fail: how many items the arm places in a goal before it fails
+    arm: str = ""  # arm_fail의 대상
+    after_items: int = 0  # arm_fail: 한 목표에서 몇 개를 놓은 뒤 실패하는지
 
 
 @dataclass(frozen=True)
@@ -108,7 +108,7 @@ class Scenario:
     timeout_s: float
     stock: dict
     inventory: dict
-    orders: list  # in registration order
+    orders: list  # 등록 순서
     robots: dict
     arm: ArmCfg
     dock: DockCfg
@@ -145,7 +145,7 @@ def _resolve_start(raw, lane_map) -> tuple[int, int]:
             raise ScenarioError(f"start {raw!r} is not a zone of one waypoint")
         return next(iter(waypoints))
     if isinstance(raw, (list, tuple)) and len(raw) == 2:
-        # A waypoint of a converted grid map, named by its old [col, row].
+        # 변환한 격자 지도의 지점을 옛 [열, 행]으로 부른 것.
         waypoint = (int(raw[0]), int(raw[1]))
         if waypoint not in lane_map.zone_of:
             raise ScenarioError(f"start waypoint {waypoint} is on no route")
@@ -202,7 +202,7 @@ def _parse_orders(data: dict) -> list[OrderCfg]:
     ids = [o.id for o in orders]
     if len(ids) != len(set(ids)):
         raise ScenarioError(f"duplicate order ids in {ids}")
-    return sorted(orders, key=lambda o: o.at_s)  # stable: same at_s keeps the file order
+    return sorted(orders, key=lambda o: o.at_s)  # 안정 정렬: at_s가 같으면 파일 순서 유지
 
 
 def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:

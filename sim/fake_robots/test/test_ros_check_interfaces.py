@@ -1,4 +1,4 @@
-"""scripts/check_interfaces.py against running fakes."""
+"""떠 있는 가짜 노드에 scripts/check_interfaces.py를 돌린다."""
 import subprocess
 import sys
 
@@ -10,7 +10,7 @@ pytest.importorskip("fleet_interfaces.msg")
 from conftest import CONTRACT, REPO, write_scenario  # noqa: E402
 
 SCRIPT = REPO / "scripts" / "check_interfaces.py"
-# Providers that are not fakes: they belong to the fleet manager.
+# 가짜가 아닌 제공자: 플릿 매니저 몫이다.
 SKIP = "assignments,zones,robots,heartbeat,confirm_clear"
 
 

@@ -1,4 +1,4 @@
-"""FakeWorkcell and FakeVision through their real action and topics."""
+"""실제 액션과 토픽으로 FakeWorkcell과 FakeVision을 시험한다."""
 import threading
 import time
 from collections import Counter
@@ -31,7 +31,7 @@ class Cell:
                 arm_id=arm, scenario_file=scn)))
         probe = harness.add(rclpy.node.Node("cell_probe"))
         self.seen = {arm: [] for arm in ARMS}
-        self.log = []  # one list across both arms, in order of arrival
+        self.log = []  # 두 팔이 함께 쓰는 목록, 도착 순
         self.lock = threading.Lock()
         self.items = {arm: [] for arm in ARMS}
         for arm in ARMS:
@@ -89,13 +89,13 @@ def test_items_from_both_arms_are_placed(harness, tmp_path):
 def test_a_kind_not_in_stock_ends_up_missing(harness, tmp_path):
     cell = Cell(harness, tmp_path)
     result, _ = cell.fill(A=1, Z=2)
-    assert result.success is True  # finished trying
+    assert result.success is True  # 시도를 마침
     assert counts(result.placed) == {"A": 1} and counts(result.missing) == {"Z": 2}
 
 
 def test_more_than_the_stock_places_what_there_is(harness, tmp_path):
     cell = Cell(harness, tmp_path)
-    result, _ = cell.fill(B=3)  # arm1 has one B
+    result, _ = cell.fill(B=3)  # arm1에는 B가 하나
     assert result.success is True
     assert counts(result.placed) == {"B": 1} and counts(result.missing) == {"B": 2}
 
@@ -147,7 +147,7 @@ def test_arms_never_place_at_once_but_do_pick_at_once(harness, tmp_path):
 
 
 def test_the_lock_is_what_keeps_them_apart(harness, tmp_path):
-    """With the lock taken by somebody else nobody may reach PLACING."""
+    """다른 쪽이 잠금을 쥐면 아무도 PLACING에 못 간다."""
     cell = Cell(harness, tmp_path)
     assert cell.node._basket_space.acquire(timeout=1.0)
     handle, _ = cell.send(A=1, C=1)
@@ -208,13 +208,13 @@ def test_cancel_returns_canceled_with_what_was_placed(harness, tmp_path):
                 arm={"seconds_per_item": 0.4, "swap_seconds": 0.4, "fail_rate": 0.0})
     handle, fb = cell.send(A=5)
     assert handle.accepted
-    assert wait_until(lambda: fb, 10.0)  # at least one is in the basket
+    assert wait_until(lambda: fb, 10.0)  # 적어도 하나는 바구니에 있다
     cancel = handle.cancel_goal_async()
     assert wait_until(cancel.done, 5.0)
     result = result_of(handle)
     assert result.success is False and result.reason == "CANCELED"
     assert 1 <= counts(result.placed)["A"] < 5 and result.missing == []
-    # Nothing is lost: whatever did not reach the basket is still on the shelf.
+    # 잃는 것은 없다. 바구니에 못 닿은 것은 선반에 남는다.
     assert wait_until(lambda: cell.visible("arm1") == {"A": 6 - counts(result.placed)["A"]}, 5.0)
 
 
@@ -226,7 +226,7 @@ def test_slow_cancel_keeps_the_server_busy_until_its_result(harness, tmp_path):
     assert wait_until(lambda: fb, 10.0)
     canceled_at = time.monotonic()
     assert wait_until(handle.cancel_goal_async().done, 5.0)
-    time.sleep(0.6)  # the arm threads have stopped by now, and the cancel still runs
+    time.sleep(0.6)  # 팔 스레드는 이미 멈췄고 취소는 그래도 처리된다
     second, _ = cell.send(A=1)
     assert not second.accepted, "busy while the arm stops"
     result = result_of(handle)

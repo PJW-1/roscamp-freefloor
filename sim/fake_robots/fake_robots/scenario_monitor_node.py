@@ -1,7 +1,7 @@
-"""ScenarioMonitor: feeds topic data to ScenarioJudge, writes result files, exits 0 or 1.
+"""ScenarioMonitor: 토픽 데이터를 심판에 넘기고 결과 파일을 쓰며 0 또는 1로 끝난다.
 
-It also plays the operator: after a robot was taken off the course (fault operator_remove) it
-calls confirm_clear with the zones that robot still holds.
+운영자 역할도 한다. 로봇이 코스에서 치워지면(고장 operator_remove) 그 로봇이
+아직 쥔 구역으로 confirm_clear를 부른다.
 """
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ class ScenarioMonitorNode(Node):
             self.judge.note(self._sc.now(), "assignments", "ASSIGNMENTS", text)
 
     def _on_robots(self, msg: RobotStatusArray) -> None:
-        """One row each time a robot's status changes, leaving out what changes all the time."""
+        """로봇 상태가 바뀔 때마다 한 행. 늘 바뀌는 값은 뺀다."""
         for r in msg.robots:
             row = [r.robot_id, r.fsm_state, r.task_type, r.order_id, r.fault, r.fault_reason,
                    r.wait_zone, " ".join(r.wait_robots)]
@@ -137,7 +137,7 @@ class ScenarioMonitorNode(Node):
             self.judge.note(self._sc.now(), "order_board", "RUN_MODE", msg.run_mode)
 
     def _clear_removed_robots(self, t: float) -> None:
-        """Wait until the robot really is off the course and somebody can answer the call."""
+        """로봇이 실제로 코스에서 빠지고 호출에 답할 쪽이 생길 때까지 기다린다."""
         while self._removals and self._removals[0][0] <= t:
             robot = self._removals[0][1]
             if not self.judge.off_course(robot) or not self._confirm.service_is_ready():
@@ -200,7 +200,7 @@ def main(args=None):
             rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
-    except Exception:  # SIGINT can land inside a message take; a real error has ROS still up
+    except Exception:  # SIGINT가 메시지 수신 중에 떨어질 수 있다. 진짜 오류면 ROS가 아직 살아 있다
         if rclpy.ok():
             raise
     code = 1 if node.exit_code is None else node.exit_code
