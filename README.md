@@ -240,6 +240,8 @@ Python 패키지의 `setup.py`에는 `tests_require=['pytest']`를 넣어야 합
 
 ## 실제 FSM이 지켜야 하는 약속
 
+전체 계약(메시지, BLOCKED 판정, 관제 동작)은 `docs/핑키_계약.md`에 있습니다. 아래는 요약입니다.
+
 - `move_to`에 새 목표가 오면 이전 목표를 멈추고 `success=false`, `reason=CANCELED`로 끝냅니다.
 - 멈춰서 진행할 수 없으면 반드시 실패나 `TIMEOUT` 결과를 돌려줍니다. 관제는 목표가 열린 채 제자리인 로봇만 `stall_s`(6초, 도킹은 15초) 뒤에 취소하고 다시 보냅니다. 움직이면서 끝내지 않는 경우는 잡지 못하므로 FSM이 결과를 돌려줘야 합니다.
 - `move_to`의 성공은 목표 지점에서 `arrival_tolerance_m`(0.15 m) 안에 섰을 때만 돌려줍니다. 결과를 보낸 뒤 `arrival_settle_s`(1초)가 지나도록 보고된 위치가 그 안으로 들어오지 않으면 관제는 실패한 시도로 칩니다. 그동안 위치 보고가 하나도 없으면 판정하지 않고 통신 두절(`comm_timeout_s`)을 기다립니다. Nav2를 쓴다면 `xy_goal_tolerance`를 이 값보다 작게 둡니다. 이 약속과 값(추정)은 FSM·Nav2 담당과 확인 전입니다(`docs/GG_공통설계.md` 13절).
