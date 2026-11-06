@@ -243,7 +243,7 @@ faults:
 | `BACK_ON_LANE` | INFO | 세운 로봇이 레인에 돌아옴. 같은 목표를 다시 보냄(파트 3) |
 | `OFF_LANE` | ERROR | `off_lane_timeout_s`(20초) 안에 못 돌아옴. 자동 격리로 이어짐(파트 3) |
 | `ROBOT_ISOLATED` | ERROR | 지도에 오른 로봇이 ERROR가 되어 자동 격리. 주문은 바로 되돌림. 교환 중이면 그 결과까지, `ARM_NO_RESULT`면 `confirm_clear`까지 쥠(늦은 `took_full`이면 출고)(파트 5.5) |
-| `ROBOT_REINSTATED` | INFO | `/fleet/reinstate`를 받아들임. 로봇은 다음 위치 보고부터 시작 때와 같은 절차로 지도에 오름(이동·도킹 중이면 기다리고, 남의 구역이면 그 주인만 세움). 그동안 다른 로봇은 멈추지 않음. 거부는 `INPUT_REJECTED`와 응답 `reason`(파트 6) |
+| `ROBOT_REINSTATED` | INFO | `/fleet/reinstate`를 받아들임. 로봇은 다음 위치 보고부터 시작 때와 같은 절차로 지도에 오름(이동·도킹 중이면 기다리고, 남의 구역이면 그 주인만 세움). 그 주인 말고 다른 로봇은 멈추지 않음. 거부는 `INPUT_REJECTED`와 응답 `reason`(파트 6) |
 
 ## 실물로 교체
 
