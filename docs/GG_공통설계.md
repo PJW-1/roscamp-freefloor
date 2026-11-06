@@ -535,6 +535,7 @@ expect: {all_orders_finished: true, orders_shipped: 6, orders_partial: 0, orders
 
 | 검증 | 결과 |
 |---|---|
+| 최종 전체 시험(파트 8 마지막 커밋, 문서와 srv 주석) | (주 세션이 돌린 뒤 넣는다) |
 | 단위·통합 시험 | `0cb8525`(파트 6과 7 후속까지. 그 뒤 `f8c2eea`는 시험 설명 1줄, `6ab04fe`는 worklog뿐이다. 주 세션 확인, `p6q_full.log`): 빌드 통과, 1376건, 실패 0, 오류 0(`fleet_core` 944, `fake_robots` 341, `fleet_manager` 91), 시험 1017 s. 이전: 파트 7 `cd05720` 1294건, 파트 3 `ecab72c` 1237건, 0.5 뒤 875건, 파트 1·2 뒤 `533d351` 1036건, 파트 4 `a5a4745` 1100건, 파트 5 `df2a02b` 1163건, 파트 5.5 `33f01d7` 1199건(작업 기록) |
 | 시나리오 10개(기본 지도, 실제 launch, 통합 시험 목록, 도메인 50 + 순번) | `0cb8525` 전체 시험 안에서 10개(`basic_orders`, `order_burst`, `shared_lane_failure`, `stock_shortage`, `stuck_robot`, `operator_recovery`, `blocked_lane`, `auto_isolation` 57, `off_lane` 58, `reinstate` 59) 모두 통과. 출고 숫자는 따로 돌린 실행에서 적었다. `df2a02b`(`run_scenarios.sh`): `basic_orders` 6/6, `order_burst` 10/10, `shared_lane_failure` 6/6, `stock_shortage` 2/7, `stuck_robot` 2/6(시간 초과, 기대값), `operator_recovery` 4/4, `blocked_lane` 6/6(`LANE_BLOCKED` 1, `LANE_CLEARED` 1), 모두 심판 통과, 최소 해제 거리 0.165~0.187 m. `auto_isolation`은 파트 5.5 트리(`5ebd821` 반영분)에서 4/4, `shipped_before_operator` 1 |
 | 시나리오 `off_lane`(파트 3, 통합 시험 목록 9번째, 도메인 58) | `c99de32`(파트 3 단독): 통과, 6/6, 7.36초 `LANE_ERROR`(e 0.29 m), 15.35초 `BACK_ON_LANE`, 그동안 구역 S·L을 쥐고 pinky2는 S를 기다림, `released_while_off_lane` 0, 조기 해제 0. 파트 4·5 병합 트리에서도 통과(6/6). 그때 전체 시험은 `c99de32` 1064건 실패 0. 파트 3을 합친 `ecab72c`의 전체 시험(위 줄)에서도 통과 |

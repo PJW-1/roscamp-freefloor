@@ -202,6 +202,7 @@ cat /tmp/run1/summary.json
 | `parked_while_backlog` | 묶이지 않은 주문이 로봇 수 이상인데 출고 구역에서 대기 구간으로 들어간 횟수 |
 | `shipped_before_operator_min` | 첫 `ROBOT_ISOLATED`부터 격리된 로봇의 첫 `ZONES_CLEARED` 전까지 출고(SHIPPED, PARTIAL)한 건수의 최솟값. 로봇 1대가 고장 나도 플릿이 계속 운행하는지 봅니다. 기본 0 |
 | `detours_around_isolated_min` | 격리된 로봇이 치워지기 전에 그 로봇이 쥔 구역을 피한 `DETOUR`(detail의 `held by <로봇>`) 수의 최솟값. detail의 `held by <로봇>`을 모두 보고, 그중 하나라도 치우기 전의 격리 로봇이면 그 이벤트를 한 번 셉니다. 막힌 레인 이유만 있는 `DETOUR`는 세지 않습니다. 기본 0 |
+| `bound_after_reinstate_min` | `ROBOT_REINSTATED`를 받은 로봇이 그 뒤 묶은 주문(`ORDER_BOUND`) 수의 최솟값. 기본 0 |
 | `zone_holder_max` | 한 구역에 실제로 동시에 있었던 로봇 수의 최댓값 |
 | `released_without_position_check` | 로봇이 아직 구역을 벗어나지 않았는데 해제된 횟수 |
 | `unheld_zone_pose` | 잠그지 않은 구역에 로봇이 있었던 횟수 |
