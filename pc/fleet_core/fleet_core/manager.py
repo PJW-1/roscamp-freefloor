@@ -31,6 +31,7 @@ from fleet_core.common.validate import (
     reported_id_problem,
     robot_problem,
     run_mode_problem,
+    shown,
 )
 from fleet_core.orders.orchestrator import FILL, FILLING, SWAP, SWAPPING, OrderOrchestrator
 from fleet_core.orders.validate import orders_problem
@@ -112,8 +113,8 @@ class FleetManager:
         problem = (robot_problem(robot, self.traffic.robots)
                    or reported_id_problem(robot, robot_id)
                    or pose_problem(x, y, yaw, self._bounds, self.params.input_pose_margin_m))
-        if self._topic_rejected(("robot_state", str(robot)), problem, "robot state dropped",
-                                robot):
+        source = ("robot_state", robot if isinstance(robot, str) else shown(robot))
+        if self._topic_rejected(source, problem, "robot state dropped", robot):
             return
         self.traffic.on_robot_state(robot, x, y, yaw, state, battery)
         self._pump()

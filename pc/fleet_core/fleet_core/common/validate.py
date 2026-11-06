@@ -10,6 +10,14 @@ from numbers import Real
 RUN_MODES = ("RUN", "PAUSE", "STOP")
 
 
+def shown(value) -> str:
+    """이유 문장에 넣을 값. repr이 실패해도 예외를 내지 않는다."""
+    try:
+        return repr(value)
+    except Exception:
+        return f"<{type(value).__name__}>"
+
+
 def _number(value) -> bool:
     return isinstance(value, Real) and not isinstance(value, bool)
 
@@ -18,7 +26,7 @@ def pose_problem(x, y, yaw, bounds, margin) -> str:
     """bounds는 웨이포인트의 (min_x, min_y, max_x, max_y)."""
     for label, value in (("x", x), ("y", y), ("theta", yaw)):
         if not _number(value) or not math.isfinite(value):
-            return f"pose {label}={value!r} is not a finite number"
+            return f"pose {label}={shown(value)} is not a finite number"
     min_x, min_y, max_x, max_y = bounds
     if not (min_x - margin <= x <= max_x + margin and min_y - margin <= y <= max_y + margin):
         return (f"pose ({x:.2f}, {y:.2f}) is more than {margin} m outside the map "
@@ -28,7 +36,7 @@ def pose_problem(x, y, yaw, bounds, margin) -> str:
 
 def robot_problem(robot, robots) -> str:
     if not isinstance(robot, str) or robot not in robots:
-        return f"no such robot {robot!r}"
+        return f"no such robot {shown(robot)}"
     return ""
 
 
@@ -36,12 +44,12 @@ def reported_id_problem(robot, reported_id) -> str:
     """robot_id는 비워도 된다. 적었다면 토픽의 로봇과 같아야 한다."""
     if reported_id in (None, "") or reported_id == robot:
         return ""
-    return f"robot_id {reported_id!r} on the topic of {robot}"
+    return f"robot_id {shown(reported_id)} on the topic of {robot}"
 
 
 def run_mode_problem(run_mode) -> str:
     if not isinstance(run_mode, str) or run_mode not in RUN_MODES:
-        return f"run_mode {run_mode!r} is not one of {list(RUN_MODES)}"
+        return f"run_mode {shown(run_mode)} is not one of {list(RUN_MODES)}"
     return ""
 
 

@@ -459,3 +459,40 @@ def test_an_input_the_record_cannot_write_is_still_handled(tmp_path, orders):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="could not be recorded"):
         replay.replay(path)
+
+
+class _Unprintable:
+    """repr이 실패하는 값. 검사기는 이유를 만들다가 죽으면 안 된다."""
+
+    def __repr__(self):
+        raise RuntimeError("no repr")
+
+
+UNPRINTABLE = {
+    "a count": [OrderRecord("O-009", {"A": _Unprintable()})],
+    "an item name": [OrderRecord("O-009", {_Unprintable(): 1})],
+    "an order id": [OrderRecord(_Unprintable(), {"A": 1})],
+}
+
+
+@pytest.mark.parametrize("record", (False, True), ids=("plain", "recorded"))
+@pytest.mark.parametrize("orders", UNPRINTABLE.values(), ids=UNPRINTABLE.keys())
+def test_stop_with_an_order_that_cannot_be_printed_is_still_applied(orders, record):
+    if record:
+        core, now, lines = _recorded()
+    else:
+        core, now = make()
+        core.on_order_board("RUN", [O1])
+    core.on_order_board("STOP", orders)
+    assert not core.traffic.running
+    assert len(rejected(core.tick())) == 1
+
+
+def test_other_inputs_that_cannot_be_printed_are_rejected_without_raising():
+    core, now = make()
+    core.on_order_board(_Unprintable(), [O1])
+    core.on_robot_state("pinky1", _Unprintable(), 0.0, 0.0, "IDLE", 90.0, "pinky1")
+    core.on_robot_state("pinky2", 0.0, 0.0, 0.0, "IDLE", 90.0, _Unprintable())
+    core.on_robot_state(_Unprintable(), 0.0, 0.0, 0.0, "IDLE", 90.0)
+    core.on_move_result(_Unprintable(), 1, True, "")
+    assert len(rejected(core.tick())) == 5
