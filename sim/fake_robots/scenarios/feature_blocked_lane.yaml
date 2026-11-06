@@ -1,6 +1,7 @@
 # 특징 지도(지시서 5번)의 레인 막힘: blocked_lane과 같고 지도, 출발 칸, 물체 시각이 다르다.
-# 물체는 46초부터 30초. pinky1이 서쪽행 레인(F1->F2 근처)에서 막히면 O에서 오는 로봇이
-# 좁은 통로로 돌아간다(DETOUR). 시각은 ROS 없는 SimWorld로 골랐다. 실행마다 다를 수 있다.
+# 물체는 46초부터 30초. pinky1이 서쪽행 레인(F1->F2 근처)에서 막히면 pinky3이 좁은 통로로
+# 돌아간다(DETOUR). 대개 막힌 레인 뒤 F1에서 기다리는 pinky2를 피하고, 가끔 막힌 레인 자체를 피한다.
+# 11-06 실행 6번 모두 한 번씩 났다. 시각은 ROS 없는 SimWorld로 골랐다.
 map: feature_map
 seed: 7
 speed_factor: 5.0
@@ -31,6 +32,6 @@ expect:
   zone_holder_max: 1
   released_without_position_check: 0
   unheld_zone_pose: 0
-  events_include: [ORDER_BOUND, ORDER_SHIPPED, DOCKED, LANE_BLOCKED, LANE_CLEARED]
+  events_include: [ORDER_BOUND, ORDER_SHIPPED, DOCKED, LANE_BLOCKED, LANE_CLEARED, DETOUR]
   event_counts: {ORDER_BOUND: 6, LANE_BLOCKED: 1, LANE_CLEARED: 1, BLOCKED_TOO_LONG: 0, COMM_LOST: 0, GOAL_RETRY: 0, GOAL_STALLED: 0, GOAL_FAILED: 0, ROBOT_NOT_REPORTING: 0}
   order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED}
