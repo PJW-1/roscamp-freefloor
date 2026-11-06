@@ -440,6 +440,33 @@ def test_losing_comm_while_the_pose_is_awaited_leaves_the_judgement_to_recovery(
     assert "GOAL_RETRY" not in run.codes()
 
 
+def test_with_no_report_after_the_success_the_old_pose_costs_no_attempt():
+    """Reports that stop as a move ends say nothing about where it ended. Two real failures
+    before it, so an attempt counted on the old pose would end in GOAL_FAILED, not COMM_LOST."""
+    run = Run()
+    run.run_until(lambda: run.view()["attempts"] == 2, 20.0, nav_aborts)
+    run.run_until(lambda: len(run.sent) == 3, 20.0)
+    goal = run.sent[-1][1]
+    run.core.on_move_result(goal.robot, goal.goal_id, True, "")  # and no report from now on
+    for _ in range(round((run.core.params.comm_timeout_s + 0.5) / 0.1)):
+        run.now[0] = round(run.now[0] + 0.1, 6)
+        out = run.core.tick()
+        run.events += cmds(out, "EventOut")
+        assert not cmds(out, "MoveCmd"), "nothing goes out while the pose is awaited"
+    assert run.view()["state"] == "COMM_LOST"
+    assert run.view()["attempts"] == 2
+    assert "GOAL_FAILED" not in run.codes()
+
+
+def test_a_report_after_the_success_still_judges_the_arrival_when_the_window_is_over():
+    """Waiting for a report must not make a robot that stopped short look arrived."""
+    run = Run()
+    run.tick(says_success_without_moving)
+    run.run(SETTLE_S + 0.1)  # reports keep coming from the old place
+    assert run.view()["attempts"] == 1
+    assert "NOT_AT_TARGET" in [e.detail.split(": ")[-1] for e in run.events]
+
+
 def test_on_the_default_map_a_robot_counted_as_arrived_can_release_the_zone_behind_it():
     """A whole tolerance short on the shortest lane still has to leave s > d."""
     margin = load_site_map().shortest_exit_lane() - load_params().release_distance_m

@@ -73,12 +73,13 @@ class _ArmJob:
 
 @dataclass
 class _LostJob:
-    """A job given up on with ARM_NO_RESULT. Its result can still come."""
+    """A job given up on with ARM_NO_RESULT, or canceled by a clear. Its result can still come."""
 
     robot: str
     server: str
     kind: str  # FILL or SWAP
     order_id: str  # bound when it was given up on, empty if the order was already reported
+    cleared: bool = False  # canceled because the operator cleared the robot
 
 
 @dataclass
@@ -187,11 +188,14 @@ class OrchestratorCore:
         """The operator took the robot away. Its order goes back to its registration position."""
         r = self._robots[robot]
         if r.arm:
-            # What the arm did for a cleared robot is for the operator to count. The server is
-            # still busy stopping, and that must not count against the next robot.
+            # What the arm did for a cleared robot is for the operator to count, and a late
+            # result that did something says so. The server is still busy stopping, and that
+            # must not count against the next robot.
             self._out.append(CancelCmd(r.arm.server, r.arm.goal_id))
             self._cleared_jobs[r.arm.server] = (
                 r.arm.goal_id, self._clock() + self.params.arm_cancel_wait_s)
+            self._lost_jobs[r.arm.goal_id] = _LostJob(robot, r.arm.server, r.arm.kind,
+                                                      self.order_of(robot), cleared=True)
             r.arm = None
         if r.order:
             self._event("INFO", "ORDER_REQUEUED",
@@ -306,15 +310,15 @@ class OrchestratorCore:
 
     def _late_fill(self, goal_id: int, placed: dict[str, int]) -> None:
         lost = self._take_lost_job(goal_id, FILL)
-        if lost is None:
-            return
+        if lost is None or (lost.cleared and not placed):
+            return  # a canceled job that did nothing leaves the operator nothing to count
         self._late_event(goal_id, lost, f"placed {placed}")
         if self._still_bound(lost):
             _merge(self._robots[lost.robot].order.placed, placed)
 
     def _late_swap(self, goal_id: int, took_full: bool, put_empty_done: bool) -> None:
         lost = self._take_lost_job(goal_id, SWAP)
-        if lost is None:
+        if lost is None or (lost.cleared and not (took_full or put_empty_done)):
             return
         self._late_event(goal_id, lost, f"took_full={took_full} put_empty_done={put_empty_done}")
         r = self._robots[lost.robot]
@@ -340,8 +344,9 @@ class OrchestratorCore:
         else:
             then = (f"{lost.robot} was cleared and {lost.order_id} requeued, so it may be filled "
                     "or shipped twice: check the basket")
+        after = "the clear" if lost.cleared else "ARM_NO_RESULT"
         self._event("WARN", "ARM_LATE_RESULT",
-                    f"{lost.server} goal {goal_id} reported {reported} after ARM_NO_RESULT, {then}",
+                    f"{lost.server} goal {goal_id} reported {reported} after {after}, {then}",
                     lost.robot)
 
     # ---- orders -------------------------------------------------------------------------

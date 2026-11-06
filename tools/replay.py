@@ -15,6 +15,9 @@ two-way setting. Every line after it has the time `t` and one of:
 `in` is a method of FmsCore and `args` its arguments. A run is one `in` line after another, each
 followed by what it caused. `inside` is what the two cores said to each other and `out` what went
 to ROS. The clock is `t`: a core reads one time for the whole of one call, live as well.
+What the node decides on its own never goes through a core and is not in the record: the
+CANCEL_UNCONFIRMED and ORDER_REPORT_REFUSED events, and the replies to cancels and order
+reports they rest on. Both events go out on /central/events, so a bag has them.
 
 `"recorded": true` in the first line says the core itself wrote this, so what it caused is in the
 file and has to match. A record of inputs alone, as a converted bag would be, leaves that out and

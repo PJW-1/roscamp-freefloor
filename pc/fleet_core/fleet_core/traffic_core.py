@@ -99,6 +99,7 @@ class _Mission:
     attempts: int = 0
     retry_at: float = 0.0  # no new move or dock before this, after a failed attempt
     arrival_by: float | None = None  # a success came ahead of the pose: reports have until then
+    heard_since_success: bool = False  # a report came after that success, so the pose is news
     not_sent_warned: bool = False  # GOAL_NOT_SENT said, and no goal has reached a server since
     called: bool = False
     dispatch: _Dispatch | None = None  # a dispatch that named this robot
@@ -163,6 +164,8 @@ class TrafficCore:
         m = self._missions[robot]
         m.x, m.y, m.yaw, m.robot_state, m.battery = x, y, yaw, state, battery
         m.last_seen = self._clock()
+        if m.arrival_by is not None:
+            m.heard_since_success = True
         if not m.placed and m.fault != OUT_OF_SERVICE:
             self._place(m)
         elif m.comm == COMM_LOST and not m.fault:
@@ -233,6 +236,7 @@ class TrafficCore:
         if success and not m.comm and not self._at_target(m, goal.target_idx):
             m.settle_idx = goal.target_idx
             m.arrival_by = m.retry_at = self._clock() + self.params.arrival_settle_s
+            m.heard_since_success = False
         elif success:
             m.idx = max(m.idx, goal.target_idx)
             m.attempts = 0
@@ -533,7 +537,11 @@ class TrafficCore:
         return math.dist((m.x, m.y), target) <= self.params.arrival_tolerance_m
 
     def _judge_arrival(self, m: _Mission, now: float) -> None:
-        """A move said it succeeded with the last report too far off. Later reports decide."""
+        """A move said it succeeded with the last report too far off. Later reports decide.
+
+        Only a report that came after the success can fail it. With none, the pose is the old
+        one and says nothing, so it waits and the comm check speaks first.
+        """
         if m.arrival_by is None:
             return
         if self._at_target(m, m.settle_idx):
@@ -542,7 +550,7 @@ class TrafficCore:
             m.arrival_by = None
             m.retry_at = 0.0
             m.attempts = 0
-        elif now >= m.arrival_by:
+        elif now >= m.arrival_by and m.heard_since_success:
             m.arrival_by = None
             self._goal_failed(m, NOT_AT_TARGET)
 
@@ -962,7 +970,7 @@ class TrafficCore:
                         f"held by {self.zones.holder(zone) or 'nobody'}", m.name)
 
     def _issue_move(self, m: _Mission) -> None:
-        if m.goal is None and self._clock() < m.retry_at:
+        if m.goal is None and (self._clock() < m.retry_at or m.arrival_by is not None):
             return
         held = self.zones.held_by(m.name)
         if m.settle_idx is not None and m.goal is None:

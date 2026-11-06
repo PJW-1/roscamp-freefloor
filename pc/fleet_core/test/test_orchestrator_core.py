@@ -417,13 +417,57 @@ def test_a_late_put_after_the_order_was_reported_only_says_so():
     assert core.shipped == 1
 
 
-def test_the_result_of_a_job_canceled_by_the_clear_stays_silent():
-    """That job never reached ARM_NO_RESULT: the operator knew it was running when clearing."""
+def test_a_fill_the_clear_canceled_that_still_placed_something_warns_of_a_second_fill():
+    """The operator knew the job was running, not what it did after: only its result says."""
     core, _, fill = filling()
     core.on_robot_removed("r1")
     core.take_output()
-    core.on_fill_result(fill.goal_id, True, {"A": 1}, {})
+    core.on_fill_result(fill.goal_id, False, {"A": 1}, {}, "CANCELED")
+    detail = late_event(core.take_output())
+    assert "{'A': 1}" in detail and "O-001" in detail and "twice" in detail
+    assert core.robot_view("r1")["placed"] == {}
+    assert [o.order_id for o in core._pending()] == ["O-001"], "the requeue stays"
+
+
+def test_a_swap_the_clear_canceled_that_took_the_basket_warns_of_a_second_shipment():
+    core, _, swap = swapping()
+    core.on_robot_removed("r1")
+    assert "ORDER_REQUEUED" in codes(core.take_output())
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    out = core.take_output()
+    detail = late_event(out)
+    assert "took_full=True" in detail and "O-001" in detail and "twice" in detail
+    assert not cmds(out, "ReportOrderCmd")
+    assert core.shipped == 0
+
+
+def test_the_result_of_a_job_the_clear_canceled_stays_silent_when_the_arm_did_nothing():
+    core, _, fill = filling()
+    core.on_robot_removed("r1")
+    core.take_output()
+    core.on_fill_result(fill.goal_id, False, {}, {}, "CANCELED")
     assert core.take_output() == []
+    core, _, swap = swapping()
+    core.on_robot_removed("r1")
+    core.take_output()
+    core.on_swap_result(swap.goal_id, False, False, False, "CANCELED")
+    assert core.take_output() == []
+
+
+def test_a_job_the_clear_canceled_is_reported_once():
+    core, _, fill = filling()
+    core.on_robot_removed("r1")
+    core.take_output()
+    core.on_fill_result(fill.goal_id, False, {"A": 1}, {}, "CANCELED")
+    core.take_output()
+    core.on_fill_result(fill.goal_id, False, {"A": 1}, {}, "CANCELED")
+    assert core.take_output() == []
+
+
+def test_the_cancel_warning_waits_as_long_as_the_core_waits_for_an_arm():
+    """CANCEL_UNCONFIRMED from the node must not call an arm late that the core still waits for."""
+    params = load_params()
+    assert params.cancel_warn_after * params.cancel_retry_s >= params.arm_cancel_wait_s
 
 
 def test_a_result_nobody_waits_for_stays_silent():
