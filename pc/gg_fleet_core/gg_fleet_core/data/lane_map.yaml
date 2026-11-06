@@ -1,0 +1,60 @@
+# GG course map, draft. Robots drive straight between waypoints in any direction, and a lane can be
+# diagonal. The real layout comes after SLAM and the map meeting: replace this file, nothing else.
+#
+#                 P-5 ---> P-6 ------------> N
+#                /                           |  (crosses the avenue with no waypoint, so the two
+#             P-4                            |   lock each other as a conflict pair)
+#              ^                             v
+#             P-3     W                      |                 O (OUTBOUND)
+#              ^    ^   \                    |               ^   \
+#               \  /     v                   |              /     v
+#                 Q       A <===== AVENUE ===+====> B      QO      (two-way, one lock)
+#                  ^     /                   |        \   ^
+#                   \   v                    v         v /
+#                     L <------------------- S          R
+half_width_m: 0.05    # estimate: how far from a lane still counts as on it
+lane_entry_m: 0.25    # the lane's floor starts this far along it. Less half_width_m gives the
+                      # point past which a robot counts as in that lane's zone
+origin_m: [0.0, 0.0]
+bundle_two_way: true  # a two-way pair is one lock. tools/model_check.py measures it switched off
+waypoints:
+  - {id: W, x: 1.05, y: 1.55}      # WORK dock
+  - {id: A, x: 1.45, y: 1.15}      # west end of the avenue: W and B come in, L and B go out
+  - {id: L, x: 1.05, y: 0.75}      # the avenue and S merge here on the way back to the queue
+  - {id: Q, x: 0.65, y: 1.15}      # last choice: the dock or the waiting line
+  - {id: B, x: 2.55, y: 1.15}      # east end of the avenue
+  - {id: R, x: 2.95, y: 0.75}
+  - {id: QO, x: 3.35, y: 1.15}     # outbound queue
+  - {id: O, x: 2.95, y: 1.55}      # OUTBOUND dock
+  - {id: N, x: 2.00, y: 1.70}      # stop line before the crossing
+  - {id: S, x: 2.00, y: 0.60}      # far side of the crossing
+  - {id: P-3, x: 0.35, y: 1.55}    # waiting line, in driving order
+  - {id: P-4, x: 0.35, y: 1.95}
+  - {id: P-5, x: 0.80, y: 2.05}
+  - {id: P-6, x: 1.20, y: 2.05}
+two_way:
+  AVENUE: [A, B]
+lanes:
+  - {from: W, to: A}
+  - {from: A, to: L}
+  - {from: L, to: Q}
+  - {from: Q, to: W}
+  - {from: O, to: B}
+  - {from: B, to: R}
+  - {from: R, to: QO}
+  - {from: QO, to: O}
+  - {from: Q, to: P-3}
+  - {from: P-3, to: P-4}
+  - {from: P-4, to: P-5}
+  - {from: P-5, to: P-6}
+  - {from: P-6, to: N}
+  - {from: N, to: S}
+  - {from: S, to: L}
+# `server` is who answers the station's action. arm1 and arm2 work behind one fill action, so how
+# they share the basket space stays with the arm team. A robot heading to a dock can still be
+# sent elsewhere until it holds the commit waypoint's unit.
+stations:
+  WORK: {dock: W, queue: [[L, Q], [Q, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[R, QO], [QO, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+# In driving order. A waiting robot goes to the deepest free one, so the first in is the first out.
+parking: [P-3, P-4, P-5, P-6]

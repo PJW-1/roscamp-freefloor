@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a running ROS graph against interfaces/fleet_interfaces/contract.yaml.
+"""Check a running ROS graph against interfaces/gg_interfaces/contract.yaml.
 
 Fake mode (CI, simulation) skips entries that only exist on real robots; real mode checks
 them too. Entries whose provider is intentionally not running are skipped by key or name:
@@ -17,20 +17,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 try:
-    from fleet_core.contract import QosSpec, load_contract
-    from fleet_core.contract_check import compare
+    from gg_fleet_core.common.contract import QosSpec, load_contract
+    from gg_fleet_core.common.contract_check import compare
 except ImportError:  # run straight from a checkout, without colcon
-    sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
-    from fleet_core.contract import QosSpec, load_contract
-    from fleet_core.contract_check import compare
+    sys.path.insert(0, str(REPO / "pc" / "gg_fleet_core"))
+    from gg_fleet_core.common.contract import QosSpec, load_contract
+    from gg_fleet_core.common.contract_check import compare
 
 
 def default_contract() -> Path:
     try:
         from ament_index_python.packages import get_package_share_directory
-        return Path(get_package_share_directory("fleet_interfaces")) / "contract.yaml"
+        return Path(get_package_share_directory("gg_interfaces")) / "contract.yaml"
     except Exception:  # noqa: BLE001 - any lookup failure falls back to the checkout
-        return REPO / "interfaces" / "fleet_interfaces" / "contract.yaml"
+        return REPO / "interfaces" / "gg_interfaces" / "contract.yaml"
 
 
 def _spec(endpoint, expected: QosSpec) -> QosSpec:

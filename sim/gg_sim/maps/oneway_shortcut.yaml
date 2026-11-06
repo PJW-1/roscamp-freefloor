@@ -1,0 +1,50 @@
+# oneway_loop.yaml with one two-way shortcut, the one thing that makes a head-on possible. With
+# the bundle off, tools/model_check.py must find deadlocks here. With it on, none.
+half_width_m: 0.05
+lane_entry_m: 0.25
+origin_m: [0.0, 0.0]
+waypoints:
+  - {id: W, x: 1.815, y: 1.155}    # WORK dock, cell (5,3)
+  - {id: A, x: 2.145, y: 1.155}
+  - {id: B, x: 2.145, y: 1.815}
+  - {id: C, x: 3.135, y: 1.815}
+  - {id: Q2, x: 3.135, y: 1.485}
+  - {id: O, x: 3.135, y: 1.155}    # OUTBOUND dock, cell (9,3)
+  - {id: E, x: 3.135, y: 0.165}
+  - {id: F, x: 0.825, y: 0.165}
+  - {id: T, x: 0.825, y: 1.155}    # the split into the waiting line
+  - {id: M, x: 1.155, y: 1.155}    # the merge from the waiting line
+  - {id: Q1, x: 1.485, y: 1.155}
+  - {id: G, x: 2.145, y: 0.165}    # on the return lane, straight above A
+  - {id: P-1, x: 0.825, y: 1.485}
+  - {id: P-2, x: 0.825, y: 1.815}
+  - {id: P-3, x: 0.825, y: 2.145}
+  - {id: P-4, x: 1.155, y: 2.145}
+  - {id: P-5, x: 1.155, y: 1.815}
+  - {id: P-6, x: 1.155, y: 1.485}
+two_way:
+  SHORTCUT: [A, G]
+lanes:
+  - {from: W, to: A}
+  - {from: A, to: B}
+  - {from: B, to: C}
+  - {from: C, to: Q2}
+  - {from: Q2, to: O}
+  - {from: O, to: E}
+  - {from: E, to: G}
+  - {from: G, to: F}
+  - {from: F, to: T}
+  - {from: T, to: M}
+  - {from: M, to: Q1}
+  - {from: Q1, to: W}
+  - {from: T, to: P-1}
+  - {from: P-1, to: P-2}
+  - {from: P-2, to: P-3}
+  - {from: P-3, to: P-4}
+  - {from: P-4, to: P-5}
+  - {from: P-5, to: P-6}
+  - {from: P-6, to: M}
+stations:
+  WORK: {dock: W, queue: [[M, Q1], [Q1, W]], commit: M, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[C, Q2], [Q2, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+parking: [P-1, P-2, P-3, P-4, P-5, P-6]

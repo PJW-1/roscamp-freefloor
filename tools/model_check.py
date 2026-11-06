@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Exhaustive check of the real TrafficCore on a lane map, over every order of calls.
+"""Exhaustive check of the real TrafficController on a lane map, over every order of calls.
 
-    python3 tools/model_check.py --map sim/maps/oneway_shortcut.yaml --robots 3 --bundle off
+    python3 tools/model_check.py --map sim/gg_sim/maps/oneway_shortcut.yaml --robots 3 --bundle off
 
 The state is, per robot, its mission phase, what is left of its path, its running goal and where
 it stands, plus the zone locks and how many open calls there are. Orders are not in it. At every
@@ -55,12 +55,13 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
+sys.path.insert(0, str(REPO / "pc" / "gg_fleet_core"))
 
-from fleet_core.deadlock import find_cycle, wait_graph  # noqa: E402
-from fleet_core.params import load_params  # noqa: E402
-from fleet_core.site_map import load_site_map  # noqa: E402
-from fleet_core.traffic_core import DOCK, MOVE, TrafficCore, _Dispatch, _Goal  # noqa: E402
+from gg_fleet_core.common.params import load_params  # noqa: E402
+from gg_fleet_core.traffic.controller import TrafficController  # noqa: E402
+from gg_fleet_core.traffic.deadlock import find_cycle, wait_graph  # noqa: E402
+from gg_fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
+from gg_fleet_core.traffic.mission import DOCK, MOVE, _Dispatch, _Goal  # noqa: E402
 
 PAST = 0.01  # how far beyond d a robot reports when it passes
 NAMED = 100  # goal ids of named dispatches start here, so they never meet an open call's
@@ -77,13 +78,13 @@ class Model:
         self.site = site
         self.d = params.release_distance_m
         self.names = [f"r{i + 1}" for i in range(robots)]
-        self.core = TrafficCore(site, params, self.names, lambda: 0.0)
+        self.core = TrafficController(site, params, self.names, lambda: 0.0)
         _remember_plans(site)
         self._group = self._conflict_groups()
         spots = start or list(site.parking[-robots:])[::-1]
         self.pose = dict(zip(self.names, spots, strict=True))
         for name, node in self.pose.items():
-            self.core.on_robot_state(name, *site.cell_pose(node), 0.0, "IDLE")
+            self.core.on_robot_state(name, *site.waypoint_pose(node), 0.0, "IDLE")
         refused = [m.name for m in self.core._missions.values() if not m.placed]
         if refused:
             raise ValueError(f"{refused} cannot start on {spots}: the lock is taken")
@@ -180,7 +181,7 @@ class Model:
         if isinstance(pose, tuple) and pose[0] == "lane":
             lane = self.site.lane(pose[1], pose[2])
             return lane.ax + lane.ux * (self.d + PAST), lane.ay + lane.uy * (self.d + PAST)
-        return self.site.cell_pose(pose)
+        return self.site.waypoint_pose(pose)
 
     def has_cycle(self) -> bool:
         return bool(find_cycle(wait_graph(self.core.zones)))
@@ -455,7 +456,7 @@ def _way_to(dead: list[int], parents, parent_events, event_list) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
     parser.add_argument("--map", default=None,
-                        help="lane map YAML (default: the one in fleet_core)")
+                        help="lane map YAML (default: the one in gg_fleet_core)")
     parser.add_argument("--robots", type=int, default=3)
     parser.add_argument("--bundle", choices=("file", "on", "off"), default="file",
                         help="two-way bundling: as the map says, or forced")
@@ -470,7 +471,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     bundle = {"file": None, "on": True, "off": False}[args.bundle]
-    site = load_site_map(args.map, bundle_two_way=bundle)
+    site = load_lane_map(args.map, bundle_two_way=bundle)
     start = args.start.split(",") if args.start else None
 
     def show(known, frontier, dead):

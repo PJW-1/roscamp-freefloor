@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Play back a record of the FMS on the two cores, with no ROS, and compare what comes out.
 
-    ros2 run fleet_manager fms_node --record run.jsonl      (or record:=run.jsonl on pc.launch.py)
+    ros2 run gg_fleet fleet_manager_node --record run.jsonl   (or record:=run.jsonl on pc.launch.py)
     python3 tools/replay.py run.jsonl
 
 The first line says what the core was started with: robots, parameters, the map itself and its
@@ -12,9 +12,9 @@ two-way setting. Every line after it has the time `t` and one of:
     {"t": 12.6, "inside": "DispatchCmd", "goal_id": 3, "station_id": "WORK", "robot_id": ""}
     {"t": 12.6, "out": "MoveCmd", "robot": "pinky1", "goal_id": 4, "target_id": "N", ...}
 
-`in` is a method of FmsCore and `args` its arguments. A run is one `in` line after another, each
-followed by what it caused. `inside` is what the two cores said to each other and `out` what went
-to ROS. The clock is `t`: a core reads one time for the whole of one call, live as well.
+`in` is a method of FleetManager and `args` its arguments. A run is one `in` line after another,
+each followed by what it caused. `inside` is what the two cores said to each other and `out` what
+went to ROS. The clock is `t`: a core reads one time for the whole of one call, live as well.
 What the node decides on its own never goes through a core and is not in the record: the
 CANCEL_UNCONFIRMED and ORDER_REPORT_REFUSED events, and the replies to cancels and order
 reports they rest on. Both events go out on /central/events, so a bag has them.
@@ -41,12 +41,12 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
+sys.path.insert(0, str(REPO / "pc" / "gg_fleet_core"))
 
-from fleet_core.commands import OrderRecord  # noqa: E402
-from fleet_core.fms_core import FmsCore  # noqa: E402
-from fleet_core.params import FleetParams  # noqa: E402
-from fleet_core.site_map import SiteMap  # noqa: E402
+from gg_fleet_core.common.commands import OrderRecord  # noqa: E402
+from gg_fleet_core.common.params import FleetParams  # noqa: E402
+from gg_fleet_core.manager import FleetManager  # noqa: E402
+from gg_fleet_core.traffic.lane_map import LaneMap  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,7 @@ def _read(path) -> tuple[list[str], list[dict], bool]:
     return lines, entries, False
 
 
-def start_core(head: dict, clock) -> FmsCore:
+def start_core(head: dict, clock) -> FleetManager:
     missing = {"robots", "params", "map"} - set(head)
     if missing:
         raise ValueError(f"the first line has no {sorted(missing)}")
@@ -97,8 +97,8 @@ def start_core(head: dict, clock) -> FmsCore:
         params = FleetParams(**head["params"])
     except TypeError as error:
         raise ValueError(f"these parameters do not fit this code: {error}") from error
-    site = SiteMap(yaml.safe_load(head["map"]), head["map"], head.get("bundle_two_way"))
-    return FmsCore(site, params, head["robots"], clock)
+    site = LaneMap(yaml.safe_load(head["map"]), head["map"], head.get("bundle_two_way"))
+    return FleetManager(site, params, head["robots"], clock)
 
 
 def replay(path) -> Result:
@@ -131,7 +131,7 @@ def replay(path) -> Result:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("record", help="the JSONL file fms_node wrote with --record")
+    parser.add_argument("record", help="the JSONL file the fleet manager node wrote with --record")
     try:
         result = replay(parser.parse_args().record)
     except (ValueError, OSError) as error:

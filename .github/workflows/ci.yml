@@ -9,7 +9,7 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install pytest ruff pyyaml
       - run: ruff check .
-      - run: PYTHONPATH=pc/fleet_core python -m pytest pc/fleet_core/test -q
+      - run: PYTHONPATH=pc/gg_fleet_core python -m pytest pc/gg_fleet_core/test -q
   build:
     runs-on: ubuntu-24.04
     steps:
