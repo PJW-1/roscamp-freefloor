@@ -29,6 +29,8 @@ flowchart LR
       detour["detour<br/>우회"]
       isolation["isolation<br/>자동 격리"]
       offlane["off_lane<br/>레인 이탈"]
+      lanepath["lane_path<br/>레인 폴리라인"]
+      relfloor["release_floor<br/>해제 보강"]
       mission["mission"]
       recovery["recovery"]
       zones["zones<br/>ZoneLocks"]
@@ -56,8 +58,10 @@ flowchart LR
   manager --> orch & ctrl & mission & commands & cvalid & ovalid
   ovalid --> cvalid
   orch --> commands
-  ctrl --> mission & recovery & zones & selector & commands & blocking & detour & isolation & offlane
+  ctrl --> mission & recovery & zones & selector & commands & blocking & detour & isolation & offlane & lanepath & relfloor
   offlane --> mission
+  lanepath --> mission
+  relfloor --> mission
   blocking --> lanemap & mission
   detour --> mission
   isolation --> mission & commands
@@ -99,7 +103,7 @@ flowchart TB
   fm == "/pinkyN/move_to, /pinkyN/dock" ==> fsm
   fm -- "/fleet/heartbeat (제안)" --> fsm
   fsm -- "/pinkyN/state" --> fm
-  fsm == "navigate_to_pose" ==> nav
+  fsm == "follow_path (path 모드), navigate_to_pose" ==> nav
   nav -- "/cmd_vel" --> bring
   bring -- "/scan, /odom" --> nav
   fm == "/workcell/fill_basket" ==> wc
@@ -110,7 +114,7 @@ flowchart TB
   a3 -- "/arm3/state" --> central
 ```
 
-실선은 토픽, 점선은 서비스, 굵은 선은 액션입니다. 시험 때는 같은 인터페이스를 내는 가짜 노드(`fake_robots`의 `fake_pinky_node` ×3, `fake_workcell_node`, `fake_arm_node`, `fake_vision_node`, `fake_central_node`)와 심판 `scenario_monitor_node`, `sim_clock_node`가 관제 PC에서 대신 뜹니다. 11-06 개선 지시서의 제안 중 `/fleet/reinstate`는 구현되는 파트에서 이 그림에 더합니다. `MoveTo`의 `path`와 상태 값 `BLOCKED`는 들어갔습니다. 이름, 타입, QoS의 원본은 `interfaces/fleet_interfaces/contract.yaml`입니다.
+실선은 토픽, 점선은 서비스, 굵은 선은 액션입니다. 시험 때는 같은 인터페이스를 내는 가짜 노드(`fake_robots`의 `fake_pinky_node` ×3, `fake_workcell_node`, `fake_arm_node`, `fake_vision_node`, `fake_central_node`)와 심판 `scenario_monitor_node`, `sim_clock_node`가 관제 PC에서 대신 뜹니다. 11-06 개선 지시서의 제안 중 `/fleet/reinstate`는 구현되는 파트에서 이 그림에 더합니다. `MoveTo`의 `path`(파트 7)와 상태 값 `BLOCKED`는 들어갔습니다. `follow_path`는 핑키 안의 Nav2 액션이고 `contract.yaml`에는 아직 없습니다. 이름, 타입, QoS의 원본은 `interfaces/fleet_interfaces/contract.yaml`입니다.
 
 ## 폴더
 
