@@ -401,12 +401,14 @@ def test_a_robot_put_back_does_not_keep_saying_blocked(harness, tmp_path):
     assert wait_until(lambda: truth, 2.0)
     x0, y0 = truth[-1][1], truth[-1][2]
     assert time.monotonic() - began < 14.0, "too late: the goal must start well inside the window"
-    assert p.goal("P-3").accepted
     mark = time.monotonic()
+    assert p.goal("P-3").accepted
     time.sleep(2.5)
-    assert set(states_since(p, mark)) == {RobotState.STATE_MOVING}
+    seen = set(states_since(p, mark))
+    assert RobotState.STATE_BLOCKED not in seen, seen  # 도착 뒤 IDLE은 괜찮다
     moved = max(((x - x0) ** 2 + (y - y0) ** 2) ** 0.5 for when, x, y in truth if when >= mark)
     assert moved > 0.2, f"it moved only {moved:.2f} m"
+    assert time.monotonic() - began < 20.0, "the watch must end inside the obstacle window"
 
 
 def test_a_robot_says_localizing_until_it_has_a_pose(harness, tmp_path):
