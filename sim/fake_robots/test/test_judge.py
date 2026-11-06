@@ -842,6 +842,42 @@ def test_a_held_order_bound_after_a_reinstate_does_not_count():
     assert check(j, "shipped_after_reinstate_min")["value"] == 0
 
 
+def test_an_order_rebound_by_another_reinstated_robot_counts_for_neither_twice():
+    """두 대 모두 재투입. A가 묶은 주문을 B가 되돌림 없이 다시 묶으면 A 몫이 아니다."""
+    j = reinstated_judge()
+    event(j, "ROBOT_REINSTATED", "basket EMPTY", t=2.5, source="pinky1")
+    event(j, "ORDER_BOUND", "O-1", t=3.0, source="pinky2")
+    event(j, "ORDER_BOUND", "O-1", t=4.0, source="pinky1")
+    event(j, "ORDER_SHIPPED", "O-1", t=6.0)
+    assert check(j, "shipped_after_reinstate_min")["value"] == 1  # 끝낸 pinky1 몫 하나
+
+
+def test_a_final_event_twice_counts_once():
+    j = reinstated_judge()
+    event(j, "ORDER_BOUND", "O-1", t=3.0, source="pinky2")
+    event(j, "ORDER_HELD", "O-1", t=5.0)
+    event(j, "ORDER_SHIPPED", "O-1", t=6.0)
+    event(j, "ORDER_SHIPPED", "O-1", t=7.0)
+    assert check(j, "shipped_after_reinstate_min")["value"] == 0
+
+
+def test_a_partial_order_bound_after_a_reinstate_counts():
+    j = reinstated_judge()
+    event(j, "ORDER_BOUND", "O-1", t=3.0, source="pinky2")
+    event(j, "ORDER_PARTIAL", "O-1", t=6.0)
+    event(j, "ORDER_SHIPPED", "O-1", t=7.0)
+    assert check(j, "shipped_after_reinstate_min")["value"] == 1
+
+
+def test_an_order_bound_between_a_second_clear_and_reinstate_does_not_count():
+    j = reinstated_judge()
+    event(j, "ZONES_CLEARED", "lifted", t=3.0, source="pinky2")
+    event(j, "ORDER_BOUND", "O-1", t=3.5, source="pinky2")
+    event(j, "ORDER_SHIPPED", "O-1", t=6.0)
+    assert check(j, "shipped_after_reinstate_min")["value"] == 0
+    assert check(j, "bound_after_reinstate_min")["value"] == 1  # 기존 판정은 그대로
+
+
 def test_finish_waits_for_a_robot_after_a_comm_loss():
     lost = scenario(faults=[{"at_s": 1, "robot": "pinky1", "type": "comm_loss", "duration_s": 5}],
                     orders_shipped_min=1)

@@ -77,6 +77,7 @@ class ScenarioJudge:
         self.bound_after_reinstate = 0
         self._bound_by_reinstated: set[str] = set()  # 재투입 뒤 그 로봇이 묶어 아직 쥔 주문
         self.shipped_after_reinstate = 0
+        self._back_now: set[str] = set()  # 재투입 뒤 다시 치우지 않은 로봇
         # 주문
         self.registered: list[str] = list(scenario.order_ids)
         self.final: dict[str, str] = {}
@@ -155,9 +156,13 @@ class ScenarioJudge:
             self.registered.append(order)  # 시나리오 주문은 처음부터 등록돼 있다
         elif code == "ROBOT_REINSTATED":
             self._reinstated.add(source)
+            self._back_now.add(source)
+        elif code == "ZONES_CLEARED":
+            self._back_now.discard(source)
         elif code == "ORDER_BOUND":
             if source in self._reinstated:
                 self.bound_after_reinstate += 1
+            if source in self._back_now:
                 self._bound_by_reinstated.add(order)
             else:
                 self._bound_by_reinstated.discard(order)
@@ -170,10 +175,12 @@ class ScenarioJudge:
             self._bound_by_reinstated.discard(order)
         elif code in FINAL_CODES:
             self.final[order] = FINAL_CODES[code]
+            mine = order in self._bound_by_reinstated
+            self._bound_by_reinstated.discard(order)  # 최종 이벤트는 한 번만 센다
             self.final_counts[FINAL_CODES[code]] += 1
             if code != "ORDER_HELD":
                 self.ship_log.append(order)
-                if order in self._bound_by_reinstated:
+                if mine:
                     self.shipped_after_reinstate += 1
                 if self._isolated and not self._operator_came:
                     self.shipped_before_operator += 1
