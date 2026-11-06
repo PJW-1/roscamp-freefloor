@@ -62,12 +62,13 @@ from fleet_core.traffic.mission import (
     _Mission,
 )
 from fleet_core.traffic.recovery import TrafficRecovery
+from fleet_core.traffic.release_floor import TrafficReleaseFloor
 from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
 class TrafficController(TrafficRecovery, TrafficBlocking, TrafficDetour, TrafficIsolation,
-                        TrafficPath):
+                        TrafficPath, TrafficReleaseFloor):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -82,6 +83,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficDetour, Traffic
         self.site = site
         self.params = params
         self._check_goal_mode()
+        self._check_exit_floor()
         self.zones = ZoneLocks(site.zones, clock, site.conflict_pairs(
             2 * params.robot_radius_m, params.release_distance_m))
         self.selector = RobotSelector(site, params)
@@ -593,7 +595,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficDetour, Traffic
         lane = self._exit_lane(m, zone)
         if lane:
             s, _ = self.site.lane_progress(*lane, m.x, m.y)
-            return s > self.params.release_distance_m
+            return s > self.params.release_distance_m and self._clear_of_floor(m, zone, lane)
         return self._off_the_floor(m, zone)
 
     def _off_the_floor(self, m: _Mission, zone: str) -> bool:

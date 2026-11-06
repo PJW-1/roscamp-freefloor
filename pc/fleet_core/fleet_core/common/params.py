@@ -56,6 +56,8 @@ class FleetParams:
     detour_speed_mps: float = 0.2
     # path: 레인 폴리라인(FollowPath), point: 지점 하나(비교용). 이 값이 없던 기록은 point였다.
     lane_goal_mode: str = "point"
+    # 해제 보강: 구역의 다른 바닥 선에서도 d 이상(예각 합류). 이 값이 없던 기록은 예전 규칙
+    release_clear_of_floor: bool = False
 
 
 def load_params(path=None) -> FleetParams:
