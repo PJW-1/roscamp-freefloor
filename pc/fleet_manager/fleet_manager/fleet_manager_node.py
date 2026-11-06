@@ -170,7 +170,7 @@ class FleetManagerNode(Node):
             waited = params.cancel_warn_after * params.cancel_retry_s
             # "다시 요청"이 아니다. 수락된 적 없는 goal에는 취소를 보낼 핸들이 없다.
             detail = (f"goal {goal_id} on {server} has no result {waited:.0f} s after it was "
-                      "canceled; the cancel is resent while a result can still come")
+                      "canceled; the cancel stays open while a result can still come")
             self._dispatch(EventOut("WARN", "CANCEL_UNCONFIRMED", detail, server), now)
 
     def _flush_reports(self, now: float) -> None:
