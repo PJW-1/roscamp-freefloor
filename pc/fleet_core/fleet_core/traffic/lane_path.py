@@ -104,6 +104,8 @@ class TrafficPath:
         밀린 보고나 예각에 다가오는 로봇이 다음 레인에 앞서 걸린다. 진행 인덱스는 이 보고로
         _track_progress가 넘길 곳까지 셈한다(해제 거리만큼 지나야 넘고 예각도 막는다).
         """
+        if m.idx == 0 and self._short_of_start(m):
+            return None
         k = min(m.idx, m.goal.target_idx)
         while k < m.goal.target_idx:
             s, _ = self.site.lane_progress(m.path[k], m.path[k + 1], m.x, m.y)
@@ -113,3 +115,18 @@ class TrafficPath:
         last = min(k, m.goal.target_idx - 1)
         lanes = [(m.path[i], m.path[i + 1]) for i in range(max(first, last - 1), last + 1)]
         return min(reversed(lanes), key=lambda lane: self._gap_to(m, lane))
+
+    def _short_of_start(self, m: _Mission) -> bool:
+        """경로 첫 지점에 아직 닿지 않았나(FMS 재시작 뒤 레인 중간에 선 로봇 등).
+
+        첫 레인에서 첫 지점 뒤(s < 0)이고 그 지점으로 들어오는 다른 레인이 더 가까우면 아직
+        오는 중이다. point는 첫 목표가 그 지점까지라 이탈을 보지 않는데, path는 그 뒤까지
+        묶으므로 같은 뜻으로 뺀다. 첫 지점을 지나 옆으로 밀린 로봇(s >= 0)은 그대로 잰다.
+        """
+        start, first_lane = m.path[0], (m.path[0], m.path[1])
+        s, _ = self.site.lane_progress(*first_lane, m.x, m.y)
+        if s >= 0:
+            return False
+        here = self._gap_to(m, first_lane)
+        return any(self._gap_to(m, key) < here for key in self.site.lanes
+                   if key[1] == start and key[0] != m.path[1])

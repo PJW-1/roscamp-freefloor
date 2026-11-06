@@ -205,6 +205,20 @@ def test_a_report_pushed_sideways_before_a_turn_is_measured_on_the_lane_it_is_on
     assert core._error_lane(m) in (((4, 3), (5, 3)), ((5, 3), (6, 3)))
 
 
+@pytest.mark.parametrize("before, watched", [(0.14, False), (0.0, True)])
+def test_a_goal_starting_short_of_its_first_waypoint_has_no_lane_to_measure_yet(before, watched):
+    """FMS 재시작(test_fms_restart): 로봇이 P-6→N 위 N 앞 0.14 m에 섰고 새 경로는 N부터다.
+    path 목표는 N→S까지 묶이므로 N에 닿기 전에 N→S로 재면 0.26 m 이탈로 세운다.
+    point는 첫 목표가 N까지라 보지 않는다. N에 선 로봇은 첫 레인으로 잰다."""
+    core, _ = make({"r1": "W"})
+    m = core._missions["r1"]
+    m.path, m.idx = ["N", "S", "L"], 0
+    m.goal = _Goal(MOVE, 1, 2)
+    lane, (x, y) = core.site.lane("P-6", "N"), xy(core, "N")
+    m.x, m.y = x - lane.ux * before, y - lane.uy * before
+    assert core._error_lane(m) == (("N", "S") if watched else None)
+
+
 def test_a_running_goal_is_extended_round_the_corner_when_the_next_zone_comes():
     core, first, sent = extend_from_p5("path")
     assert first.target_id == "P-6"
