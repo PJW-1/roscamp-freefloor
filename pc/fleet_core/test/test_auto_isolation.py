@@ -426,3 +426,16 @@ def test_requeued_orders_keep_registration_order_ahead_of_never_bound_ones():
     core.on_robot_isolated("r2", "GOAL_FAILED")
     core.take_output()
     assert [o.order_id for o in core._pending()] == ["O-001", "O-002", "O-003"]
+
+
+def test_a_clear_before_the_swap_result_requeues_at_once_and_a_late_take_only_warns():
+    """정책: confirm_clear는 늘 되돌린다. ARM_NO_RESULT 뒤와 같은 규칙이고 창은 약 5초다."""
+    core, _, swap, _ = swapping_then_isolated()
+    core.on_robot_removed("r1")
+    out = core.take_output()
+    assert codes(out).count("ORDER_REQUEUED") == 1
+    assert core.order_of("r1") == ""
+    core.on_swap_result(swap.goal_id, False, True, False, "CANCELED")
+    out = core.take_output()
+    assert "ARM_LATE_RESULT" in codes(out)
+    assert not cmds(out, "ReportOrderCmd") and core.shipped == 0

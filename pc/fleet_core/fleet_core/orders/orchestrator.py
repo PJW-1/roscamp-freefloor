@@ -193,7 +193,8 @@ class OrderOrchestrator:
     def on_robot_removed(self, robot) -> None:
         """운영자가 로봇을 뺐다. 아직 묶인 주문은 등록 순서 자리로 돌아간다.
 
-        격리된 로봇은 주문을 이미 되돌렸으니 여기서 할 일이 없다.
+        격리된 로봇은 대개 주문을 이미 되돌렸다. 예외 둘은 여기서 되돌린다: 교환 취소 결과를
+        기다리던 주문(그 뒤 took_full이 와도 ARM_LATE_RESULT만 낸다), ARM_NO_RESULT로 쥔 주문.
         """
         r = self._robots.get(robot)
         if r is None:
