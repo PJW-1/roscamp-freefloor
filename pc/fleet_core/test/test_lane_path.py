@@ -6,6 +6,7 @@ path 모드: 잠금을 쥔 데까지 방향이 바뀌어도 한 목표로 묶고
 import json
 import math
 from dataclasses import asdict, replace
+from pathlib import Path
 
 import pytest
 from core_helpers import cmds, codes
@@ -14,6 +15,9 @@ from fleet_core.common.params import FleetParams, load_params
 from fleet_core.manager import FleetManager
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.lane_map import load_lane_map
+from fleet_core.traffic.mission import MOVE, _Goal
+
+REPO = Path(__file__).resolve().parents[3]
 
 
 def make(where, mode="path"):
@@ -152,6 +156,22 @@ def extend_from_p5(mode):
     for _ in range(2):
         sent += drive(core, "P-5", d + 0.05, "P-6")[1]
     return core, first, sent
+
+
+@pytest.mark.parametrize("a, b, along, expect", [
+    ("F0", "T2", 0.25, "T2"), ("F0", "T2", 0.78, "T2"), ("T2", "T1", 0.25, "T1")])
+def test_an_acute_turn_is_not_passed_before_the_robot_gets_round_it(a, b, along, expect):
+    """F0→T2→T1은 예각이다. F0→T2 위의 로봇도 T2→T1에 투영하면 0.2 m 넘게 앞서 보인다."""
+    feature = load_lane_map(REPO / "sim/fake_robots/maps/feature_map.yaml")
+    core = TrafficController(feature, replace(load_params(), lane_goal_mode="path"), ["r1"],
+                             lambda: 0.0)
+    m = core._missions["r1"]
+    m.path, m.idx = ["O", "F0", "T2", "T1", "QW"], 1
+    m.goal = _Goal(MOVE, 1, 4)
+    lane, (x, y) = feature.lane(a, b), feature.waypoint_pose(a)
+    m.x, m.y = x + lane.ux * along, y + lane.uy * along
+    core._track_progress(m)
+    assert m.path[m.idx] == expect
 
 
 def test_a_running_goal_is_extended_round_the_corner_when_the_next_zone_comes():

@@ -83,6 +83,18 @@ class TrafficPath:
             return i
         return i + 1
 
+    def _round_the_corner(self, m: _Mission) -> bool:
+        """경로 인덱스를 넘겨도 되나. path는 들어오는 레인보다 나가는 레인에 가까워야 한다.
+
+        예각에서는 들어오는 레인 위의 로봇도 나가는 레인에 투영하면 d 넘게 앞서 보인다.
+        point는 목표가 꺾임에서 끝나 이 경우가 없다.
+        """
+        i = m.idx
+        if not self._follows_path or i == 0:
+            return True
+        return (self._gap_to(m, (m.path[i], m.path[i + 1]))
+                <= self._gap_to(m, (m.path[i - 1], m.path[i])))
+
     def _error_lane(self, m: _Mission) -> tuple:
         """이탈을 재는 레인. point는 목표 직전 레인, path는 지금 달리는 레인이다."""
         last = (m.path[m.goal.target_idx - 1], m.path[m.goal.target_idx])

@@ -566,7 +566,7 @@ class TrafficController(TrafficRecovery, TrafficBlocking, TrafficDetour, Traffic
             return
         while m.idx < m.goal.target_idx:
             s, _ = self.site.lane_progress(m.path[m.idx], m.path[m.idx + 1], m.x, m.y)
-            if s <= self.params.release_distance_m:
+            if s <= self.params.release_distance_m or not self._round_the_corner(m):
                 return
             m.idx += 1
 
