@@ -88,6 +88,10 @@ class ScenarioJudge:
         self._from_outbound: set[str] = set()
         self.direct_returns = 0
         self.parked_while_backlog = 0
+        # 자동 격리: 첫 ROBOT_ISOLATED부터 다음 ZONES_CLEARED 전까지 출고한 수
+        self.shipped_before_operator = 0
+        self._isolated = False
+        self._operator_came = False
 
     def _station_zones(self, action: str) -> set[str]:
         return {self.site.zone_of[s.dock] for s in self.site.stations.values()
@@ -120,6 +124,10 @@ class ScenarioJudge:
         self.event_rows.append((t, level, source, code, detail))
         if level == "ERROR":
             self.error_codes.append(code)
+        if code == "ROBOT_ISOLATED":
+            self._isolated = True
+        elif code == "ZONES_CLEARED" and self._isolated:
+            self._operator_came = True
         order = order_id_of(detail)
         if code == "ORDER_ACCEPTED" and order not in self.registered:
             self.registered.append(order)  # 시나리오 주문은 처음부터 등록돼 있다
@@ -135,6 +143,8 @@ class ScenarioJudge:
             self.final_counts[FINAL_CODES[code]] += 1
             if code != "ORDER_HELD":
                 self.ship_log.append(order)
+                if self._isolated and not self._operator_came:
+                    self.shipped_before_operator += 1
 
     def note(self, t: float, source: str, code: str, detail: str) -> None:
         """events.csv에 남기되 플릿 이벤트로 세면 안 되는 것을 기록한다."""
@@ -392,6 +402,8 @@ class ScenarioJudge:
             "unheld_zone_pose": exact(self.unheld_violations, ex.unheld_zone_pose),
             "direct_returns_min": at_least(self.direct_returns, ex.direct_returns_min),
             "parked_while_backlog": exact(self.parked_while_backlog, ex.parked_while_backlog),
+            "shipped_before_operator": at_least(self.shipped_before_operator,
+                                                ex.shipped_before_operator_min),
             "timed_out": exact(timed_out, ex.timed_out),
             "unexpected_errors": {"value": len(unexpected), "expected": ex.unexpected_errors,
                                   "codes": unexpected,

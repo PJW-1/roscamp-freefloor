@@ -30,6 +30,7 @@ EXPECT_DEFAULTS = {
     "order_results": {},  # 주문 id: SHIPPED, PARTIAL, HELD
     "events_include": [],
     "event_counts": {},  # 코드: 정확히 몇 번 나와야 하는지
+    "shipped_before_operator_min": 0,  # 격리 뒤 confirm_clear 전 출고(지시서 5.5)
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
                   "arm", "dock", "faults", "expect"}
@@ -100,6 +101,7 @@ class Expect:
     order_results: dict = field(default_factory=dict)
     events_include: list = field(default_factory=list)
     event_counts: dict = field(default_factory=dict)
+    shipped_before_operator_min: int = 0
 
 
 @dataclass(frozen=True)

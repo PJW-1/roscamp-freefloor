@@ -9,7 +9,7 @@ from fleet_core.traffic.lane_map import load_lane_map
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 SIX = {"basic_orders", "order_burst", "shared_lane_failure", "stock_shortage", "stuck_robot",
-       "operator_recovery", "blocked_lane"}
+       "operator_recovery", "blocked_lane", "auto_isolation"}
 
 
 @pytest.fixture(scope="module")
@@ -238,6 +238,20 @@ def test_operator_recovery_fails_three_times_then_clears(site):
     assert sc.expect.orders_shipped == len(sc.orders)
     assert sc.expect.all_orders_finished is True
     assert "ORDER_REQUEUED" in sc.expect.events_include
+
+
+def test_auto_isolation_ships_before_the_operator_and_requeues_once(site):
+    sc = load_scenario(SCENARIOS / "auto_isolation.yaml", site)
+    fail = next(f for f in sc.faults if f.type == "arm_fail")
+    remove = next(f for f in sc.faults if f.type == "operator_remove")
+    assert fail.count == 3 and remove.at_s > fail.at_s
+    first = sc.orders[0]
+    assert all(sc.stock[fail.arm].get(kind, 0) == 0 for kind in first.items), \
+        "the first order needs no item of the failing arm"
+    assert sc.expect.shipped_before_operator_min >= 1
+    assert sc.expect.event_counts["ORDER_REQUEUED"] == 1, "the clear does not requeue again"
+    assert sc.expect.event_counts["ROBOT_ISOLATED"] == 1
+    assert sc.expect.orders_shipped == len(sc.orders)
 
 
 def test_params_file_gives_the_basket_capacity():

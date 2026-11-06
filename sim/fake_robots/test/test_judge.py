@@ -878,3 +878,24 @@ def test_both_arms_seen_placing_without_overlap_passes():
 def test_orders_for_one_arm_do_not_need_the_other():
     j = clean_run(judge())  # 이 시나리오의 주문은 모두 arm1의 물건 A
     assert check(j, "dual_arm_overlaps")["arms_never_placing"] == []
+
+
+# ---- 자동 격리(지시서 5.5) -------------------------------------------------------------------
+
+
+def test_shipped_before_operator_counts_from_the_isolation_to_the_first_clear():
+    j = judge(shipped_before_operator_min=1, all_orders_finished=False)
+    ship(j, "O-1")  # 격리 전
+    assert check(j, "shipped_before_operator")["value"] == 0
+    j.on_event(2.0, "ERROR", "fleet", "ROBOT_ISOLATED", "GRIPPER: stopped where it is")
+    assert check(j, "shipped_before_operator")["ok"] is False
+    event(j, "ORDER_PARTIAL", "O-2", t=3.0)
+    event(j, "ZONES_CLEARED", "released ['Z-WORK']: lifted", t=4.0)
+    ship(j, "O-3")  # 사람이 온 뒤
+    result = check(j, "shipped_before_operator")
+    assert (result["value"], result["minimum"], result["ok"]) == (1, 1, True)
+
+
+def test_shipped_before_operator_is_not_checked_by_default():
+    j = judge()
+    assert check(j, "shipped_before_operator") == {"value": 0, "minimum": 0, "ok": True}

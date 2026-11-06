@@ -27,6 +27,7 @@ from fleet_core.common.commands import (
     ZoneView,
 )
 from fleet_core.traffic.blocking import TrafficBlocking
+from fleet_core.traffic.isolation import TrafficIsolation
 from fleet_core.traffic.mission import (
     _COMM_REASON,
     AT_STATION,
@@ -63,7 +64,7 @@ from fleet_core.traffic.selector import RobotInfo, RobotSelector
 from fleet_core.traffic.zones import ZoneLocks
 
 
-class TrafficController(TrafficRecovery, TrafficBlocking):
+class TrafficController(TrafficRecovery, TrafficBlocking, TrafficIsolation):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -468,7 +469,8 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
         m.goal = None
 
     def _fail(self, m: _Mission, reason: str = "") -> None:
-        """운영자가 봐야 한다. 구역은 계속 쥔다."""
+        """구역은 계속 쥔다. 처음 ERROR가 되면 격리한다(isolation.py)."""
+        first = not m.fault
         m.fault = ERROR
         m.fault_reason = reason
         m.called = False
@@ -476,6 +478,8 @@ class TrafficController(TrafficRecovery, TrafficBlocking):
         if m.dispatch:
             self._out.append(DispatchResult(m.dispatch.goal_id, False, m.name, reason))
             m.dispatch = None
+        if first:
+            self._isolate(m, reason)
 
     def _at_target(self, m: _Mission, index: int) -> bool:
         target = self.site.waypoint_pose(m.path[index])
