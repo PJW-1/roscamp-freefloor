@@ -476,3 +476,68 @@ def test_a_clear_while_waiting_for_the_result_drops_the_wait():
 
 def core_params():
     return load_params()
+
+
+# ---- 자동 격리, 우회와 함께(b84f4d0 병합) ----------------------------------------------
+
+
+def test_an_isolated_robot_cleared_and_reinstated_takes_its_requeued_order_again():
+    """격리(5.5) → confirm_clear → reinstate. 되돌린 주문을 다시 맡고 바구니는 관리자 값이다."""
+    from grid_map import grid_site
+    from test_auto_isolation import drive as drive_one
+    from test_auto_isolation import report as report_one
+
+    now = [0.0]
+    core = FleetManager(grid_site(), load_params(), ["r1"], lambda: now[0])
+    report_one(core, "r1", (4, 3))
+    core.on_order_board("RUN", [O1, O2])
+    out = drive_one(core, "r1", lambda: core.robot_view("r1")["order"] == "O-001")
+    fill = cmds(out, "FillCmd")[0]
+    core.on_fill_result(fill.goal_id, True, {"A": 1}, {})
+    seen = []
+    for _ in range(100):  # 출고하러 가다 이동 실패 세 번으로 ERROR
+        seen += core.tick()
+        m = core.traffic._missions["r1"]
+        if m.fault:
+            break
+        if m.goal is not None and m.goal.kind == "move":
+            core.on_move_result("r1", m.goal.id, False, "ABORTED")
+        now[0] += core.params.move_retry_wait_s + 0.1
+        report_one(core, "r1", m.path[m.idx])
+    seen += core.tick()
+    assert "ROBOT_ISOLATED" in codes(seen)
+    assert [e.detail.split()[0] for e in cmds(seen, "EventOut")
+            if e.code == "ORDER_REQUEUED"] == ["O-001"]
+    assert (core.robot_view("r1")["order"], core.robot_view("r1")["basket"]) == (None, "NONE")
+    core.confirm_clear("r1", core.zones.held_by("r1"), "lifted off")
+    seen += core.tick()
+    assert core.reinstate("r1", "EMPTY", "new basket")
+    seen += core.tick()
+    view = core.robot_view("r1")
+    assert (view["order"], view["basket"]) == (None, "EMPTY")
+    report_one(core, "r1", (2, 4))
+    seen += drive_one(core, "r1", lambda: core.robot_view("r1")["order"] == "O-001")
+    assert codes(seen).count("ORDER_REQUEUED") == 1, "requeued once, by the isolation"
+    assert core.robot_view("r1")["basket"] == "EMPTY"
+
+
+def test_a_holder_stopped_for_a_placement_is_a_standing_robot_with_no_end():
+    """재투입 충돌로 세운 주인은 저절로 풀리지 않는다. 우회 판단에서 못 비키는(inf) 로봇이다."""
+    import math
+
+    core, now = cleared()
+    core.on_order_board("RUN", [O1])
+    for _ in range(20):
+        now[0] += 0.5
+        core.tick()
+        if core.traffic._missions["pinky1"].goal is not None:
+            break
+    m = core.traffic._missions["pinky1"]
+    assert m.goal is not None
+    core.reinstate("pinky2", "EMPTY", "back")
+    report(core, "pinky2", m.path[m.idx])
+    core.tick()
+    assert not core.traffic.available("pinky1") and m.goal is None
+    assert core.traffic._standing_wait_s(m) == math.inf
+    report(core, "pinky2", "P-3")  # 빈 자리로 옮겨 올렸다
+    assert core.traffic._standing_wait_s(m) != math.inf

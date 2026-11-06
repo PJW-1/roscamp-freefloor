@@ -50,6 +50,10 @@ class FleetParams:
     blocked_timeout_s: float = 60.0
     blocked_rejoin_s: float = 10.0
     queue_gap_m: float = 0.6
+    # 우회(지시서 5번). 이 값이 없던 기록은 우회 없이 재생한다. 파일의 기본은 true다
+    detour_enabled: bool = False
+    station_wait_estimate_s: float = 30.0
+    detour_speed_mps: float = 0.2
 
 
 def load_params(path=None) -> FleetParams:

@@ -1,0 +1,40 @@
+# 자동 격리(지시서 5.5). arm1이 세 번 연속 실패해 재시도 한도를 다 쓴다.
+# O-001은 arm2 물건만 있어 pinky1은 정상으로 채우고 출고하러 간다.
+# pinky2는 O-002(arm1 물건)를 쥔 채 작업대 도크에서 ERROR가 되고, 플릿이 바로 격리한다:
+# 구역은 쥐고, O-002는 사람 없이 대기 맨 앞으로 돌아간다(ORDER_REQUEUED, ROBOT_ISOLATED).
+# pinky1은 사람을 기다리지 않고 O-001을 출고한다(shipped_before_operator).
+# 이 지도는 작업대로 가는 길이 하나라 나머지는 도크 앞에서 기다린다.
+# 120초에 운영자가 pinky2를 들어내고 confirm_clear는 구역만 푼다. 주문은 다시 되돌리지 않는다.
+# 그 뒤 O-002가 먼저 묶이고 나머지가 모두 출고된다.
+seed: 29
+speed_factor: 5.0
+timeout_s: 900
+stock: {arm1: {A: 6, B: 6}, arm2: {C: 6, D: 6}}
+orders:
+  - {at_s: 0, id: O-001, items: {C: 1}}
+  - {at_s: 0, id: O-002, items: {A: 1}}
+  - {at_s: 10, id: O-003, items: {C: 1, D: 1}}
+  - {at_s: 20, id: O-004, items: {B: 1}}
+robots:
+  pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 1.0, error_cm: 1.0}
+faults:
+  - {at_s: 0, arm: arm1, type: arm_fail, count: 3}
+  - {at_s: 120, robot: pinky2, type: operator_remove}
+expect:
+  all_orders_finished: true
+  orders_shipped: 4
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  shipped_before_operator_min: 1
+  events_include: [FILL_RETRY, FILL_FAILED, ROBOT_ISOLATED, ORDER_REQUEUED, ZONES_CLEARED]
+  event_counts: {FILL_RETRY: 2, FILL_FAILED: 1, ROBOT_ISOLATED: 1, ORDER_REQUEUED: 1, ZONES_CLEARED: 1, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED}

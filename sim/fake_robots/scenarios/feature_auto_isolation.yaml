@@ -1,0 +1,39 @@
+# 특징 지도의 자동 격리(지시서 5.5). 느린 pinky1이 F2로 가는 이동을 세 번 중단해
+# F1, F2를 쥔 채 레인 위에서 격리된다. 나머지는 좁은 통로로 돌아가 출고한다.
+# 심판: 격리 로봇을 피한 DETOUR 1 이상, 격리 뒤 관리자 전 출고 4 이상. 자세한 것은 작업 기록.
+map: feature_map
+seed: 7
+speed_factor: 5.0
+timeout_s: 900
+stock: {arm1: {A: 6, B: 6}, arm2: {C: 6, D: 6}}
+orders:
+  - {at_s: 0, id: O-001, items: {A: 1, C: 1}}
+  - {at_s: 0, id: O-002, items: {B: 1, D: 1}}
+  - {at_s: 10, id: O-003, items: {A: 2}}
+  - {at_s: 20, id: O-004, items: {C: 1, D: 1, A: 1}}
+  - {at_s: 40, id: O-005, items: {B: 2, C: 2}}
+  - {at_s: 60, id: O-006, items: {D: 1}}
+robots:
+  pinky1: {start: P-3, speed_mps: 0.04, pose_noise_m: 0.03}
+  pinky2: {start: P-2, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-1, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults:
+  - {at_s: 0, robot: pinky1, type: nav_abort, count: 3, target: F2}
+  - {at_s: 400, robot: pinky1, type: operator_remove}
+expect:
+  all_orders_finished: true
+  orders_shipped: 6
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  shipped_before_operator_min: 4
+  detours_around_isolated_min: 1
+  events_include: [ROBOT_ISOLATED, GOAL_FAILED, DETOUR, ZONES_CLEARED, ORDER_SHIPPED]
+  event_counts: {ROBOT_ISOLATED: 1, GOAL_FAILED: 1, ZONES_CLEARED: 1, ORDER_REQUEUED: 0, COMM_LOST: 0, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED}

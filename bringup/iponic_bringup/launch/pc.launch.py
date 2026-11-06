@@ -18,11 +18,26 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
+def _scenario_map(scenario: str) -> str:
+    """시나리오 파일의 `map`이 고른 지도. 없으면 빈 값(기본 지도)."""
+    import os
+
+    from ament_index_python.packages import get_package_share_directory
+    from fake_robots.scenario import scenario_map_file
+    share = get_package_share_directory("fake_robots")
+    path = scenario if os.path.isfile(scenario) else os.path.join(
+        share, "scenarios", scenario if scenario.endswith(".yaml") else scenario + ".yaml")
+    return scenario_map_file(path) if os.path.isfile(path) else ""
+
+
 def _setup(context):
     get = lambda name: LaunchConfiguration(name).perform(context)  # noqa: E731
     use_fake = get("use_fake").lower() == "true"
     use_sim_clock = use_fake and get("use_sim_clock").lower() == "true"
     record = get("record")
+    map_file = get("map_file")
+    if use_fake and not map_file:
+        map_file = _scenario_map(get("scenario"))
 
     actions = [
         Node(
@@ -34,7 +49,7 @@ def _setup(context):
             parameters=[{
                 "use_sim_time": use_sim_clock,
                 "robots": get("robots").split(),
-                "map_file": get("map_file"),
+                "map_file": map_file,
                 "params_file": get("params_file"),
                 "contract_file": get("contract_file"),
             }],
@@ -51,7 +66,7 @@ def _setup(context):
                 "fake_central": get("fake_central"),
                 "use_sim_clock": str(use_sim_clock).lower(),
                 "result_dir": get("result_dir"),
-                "map_file": get("map_file"),
+                "map_file": map_file,
                 "params_file": get("params_file"),
                 "contract_file": get("contract_file"),
             }.items(),

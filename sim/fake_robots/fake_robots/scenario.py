@@ -33,9 +33,23 @@ EXPECT_DEFAULTS = {
     "order_results": {},  # 주문 id: SHIPPED, PARTIAL, HELD
     "events_include": [],
     "event_counts": {},  # 코드: 정확히 몇 번 나와야 하는지
+    "shipped_before_operator_min": 0,  # 격리 뒤 confirm_clear 전 출고(지시서 5.5)
+    "detours_around_isolated_min": 0,  # 격리된 로봇을 피한 DETOUR(치우기 전)
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
-                  "arm", "dock", "faults", "expect"}
+                  "arm", "dock", "faults", "expect", "map"}
+
+
+def scenario_map_file(scenario_path) -> str:
+    """시나리오의 `map`(maps 폴더의 지도 이름)을 절대 경로로. 없으면 빈 값(기본 지도)."""
+    path = Path(scenario_path)
+    name = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("map")
+    if not name:
+        return ""
+    found = path.resolve().parent.parent / "maps" / f"{name}.yaml"
+    if not found.is_file():
+        raise ScenarioError(f"map {name!r} is not in {found.parent}")
+    return str(found)
 
 
 class ScenarioError(ValueError):
@@ -84,6 +98,7 @@ class Fault:
     after_items: int = 0  # arm_fail: 한 목표에서 몇 개를 놓은 뒤 실패하는지
     start: tuple | None = None  # operator_reinstate: 로봇을 다시 놓는 지점
     basket: str = "EMPTY"  # operator_reinstate: 관리자가 알리는 바구니
+    target: str = ""  # nav_abort: 이 지점으로 가는 목표만 중단. 비면 모든 목표
 
 
 @dataclass(frozen=True)
@@ -106,6 +121,8 @@ class Expect:
     order_results: dict = field(default_factory=dict)
     events_include: list = field(default_factory=list)
     event_counts: dict = field(default_factory=dict)
+    shipped_before_operator_min: int = 0
+    detours_around_isolated_min: int = 0
 
 
 @dataclass(frozen=True)
@@ -238,9 +255,13 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
         start = _resolve_start(raw["start"], lane_map)
         if basket not in REINSTATE_BASKETS:
             raise ScenarioError(f"operator_reinstate basket must be one of {REINSTATE_BASKETS}")
+    target = str(raw.get("target", ""))
+    if target and (kind != "nav_abort" or target not in lane_map.zone_of):
+        raise ScenarioError(f"target needs nav_abort and a waypoint of the map in {raw}")
     return Fault(float(raw["at_s"]), raw.get("robot", ""), kind,
                  float(raw.get("duration_s", 0.0)), int(raw.get("count", 1)),
-                 raw.get("arm", ""), int(raw.get("after_items", 0)), start, basket)
+                 raw.get("arm", ""), int(raw.get("after_items", 0)),
+                 start=start, basket=basket, target=target)
 
 
 def _check_reinstates(faults: list) -> None:
@@ -318,5 +339,5 @@ def parse_scenario(data: dict, lane_map) -> Scenario:
 def load_scenario(path, lane_map=None) -> Scenario:
     if lane_map is None:
         from fleet_core.traffic.lane_map import load_lane_map
-        lane_map = load_lane_map()
+        lane_map = load_lane_map(scenario_map_file(path) or None)
     return parse_scenario(yaml.safe_load(Path(path).read_text(encoding="utf-8")), lane_map)

@@ -133,10 +133,11 @@ class FaultSchedule:
                 if f.type in ("operator_remove", "operator_reinstate") and f.at_s <= t]
         return sorted(done, key=lambda f: f.at_s)[-1] if done else None
 
-    def take_nav_abort(self, t: float) -> bool:
-        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다."""
+    def take_nav_abort(self, t: float, target_id: str = "") -> bool:
+        """새 이동 목표를 중단해야 하면 True. 고장 횟수를 하나 쓴다. target이면 그 지점만."""
         for f in self._own:
-            if f.type == "nav_abort" and t >= f.at_s and self._abort_left[id(f)] > 0:
+            if (f.type == "nav_abort" and t >= f.at_s and self._abort_left[id(f)] > 0
+                    and f.target in ("", target_id)):
                 self._abort_left[id(f)] -= 1
                 return True
         return False

@@ -1,0 +1,63 @@
+# 특징 지도 (2026-11-06). 파트 5 우회 시험용. 구역 14개.
+#  - 넓은 길: 방향별 레인 한 줄씩 둘(E 동쪽행, F 서쪽행), 간격 0.35 m, 레인마다 0.35 m 구간 둘
+#  - 좁은 양방향 통로 TUN(T1-T2): 잠금 하나. 돌아가는 길은 넓은 길(E, F)
+#  - 노드 없는 교차: F1->P-1 레인이 TUN을 가로지른다
+#  - 스테이션 WORK, OUTBOUND, 대기 칸 P-1~P-3, 도크 앞 대기 지점 QW, QO
+# 경고: e는 Gazebo 시뮬 값 0.067 m를 임시로 쓴 것이다(실측 전). 레인 간격은 2r + 2e + 여유 이상.
+#
+#        W ---> E0 ---> E1 ---> E2 ---> O                  E: 동쪽행
+#        ^                              |  ^
+#        |   F2 <--- F1 <--- F0 <-------+  |               F: 서쪽행
+#        |   |        |        |          |
+#       QW <-+(T1)    |(교차)   +--(T2)--> QO              TUN: T1 <==> T2 (양방향)
+#        ^            v
+#        +--- P-3 <-- P-2 <-- P-1                          대기 줄
+half_width_m: 0.05    # 추정: 레인에서 이 거리까지는 레인 위로 친다
+lane_entry_m: 0.25    # 레인 바닥이 시작되는 거리
+origin_m: [0.0, 0.0]
+bundle_two_way: true  # 양방향 쌍은 잠금 하나
+waypoints:
+  - {id: W, x: 0.70, y: 1.325}     # WORK 도크
+  - {id: QW, x: 0.60, y: 0.90}     # WORK 앞 대기 지점
+  - {id: E0, x: 1.00, y: 1.50}     # 동쪽행 레인
+  - {id: E1, x: 1.35, y: 1.50}
+  - {id: E2, x: 1.70, y: 1.50}
+  - {id: O, x: 2.00, y: 1.325}     # OUTBOUND 도크
+  - {id: QO, x: 2.40, y: 0.90}     # OUTBOUND 앞 대기 지점
+  - {id: F0, x: 1.70, y: 1.15}     # 서쪽행 레인
+  - {id: F1, x: 1.35, y: 1.15}     # 갈림: 계속 서쪽, 또는 대기 줄로
+  - {id: F2, x: 1.00, y: 1.15}     # 갈림: 도크 앞, 또는 좁은 통로로
+  - {id: T1, x: 1.00, y: 0.60}     # 좁은 통로 서쪽 끝
+  - {id: T2, x: 2.00, y: 0.40}     # 좁은 통로 동쪽 끝
+  - {id: P-1, x: 1.35, y: 0.25}    # 대기 칸, 주행 순서대로
+  - {id: P-2, x: 0.80, y: 0.25}
+  - {id: P-3, x: 0.30, y: 0.40}
+two_way:
+  TUN: [T1, T2]
+lanes:
+  # ---- 넓은 길 ----
+  - {from: W, to: E0}
+  - {from: E0, to: E1}
+  - {from: E1, to: E2}
+  - {from: E2, to: O}
+  - {from: O, to: F0}
+  - {from: F0, to: F1}
+  - {from: F1, to: F2}
+  - {from: F2, to: W}
+  # ---- 좁은 통로로 드나드는 길 ----
+  - {from: F2, to: T1}
+  - {from: T1, to: QW}
+  - {from: F0, to: T2}
+  - {from: T2, to: QO}
+  - {from: QW, to: W}
+  - {from: QO, to: O}
+  # ---- 대기 줄: F1에서 TUN을 가로질러 내려가 도크 앞으로 돌아온다 ----
+  - {from: F1, to: P-1}
+  - {from: P-1, to: P-2}
+  - {from: P-2, to: P-3}
+  - {from: P-3, to: QW}
+stations:
+  WORK: {dock: W, queue: [[QW, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[QO, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+# 주행 순서대로. 대기 로봇은 가장 깊은 빈 곳으로 가므로 먼저 온 로봇이 먼저 나간다.
+parking: [P-1, P-2, P-3]

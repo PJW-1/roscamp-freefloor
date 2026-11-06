@@ -957,3 +957,55 @@ def test_both_arms_seen_placing_without_overlap_passes():
 def test_orders_for_one_arm_do_not_need_the_other():
     j = clean_run(judge())  # 이 시나리오의 주문은 모두 arm1의 물건 A
     assert check(j, "dual_arm_overlaps")["arms_never_placing"] == []
+
+
+# ---- 자동 격리(지시서 5.5) -------------------------------------------------------------------
+
+
+def test_shipped_before_operator_counts_from_the_isolation_to_the_first_clear():
+    j = judge(shipped_before_operator_min=1, all_orders_finished=False)
+    ship(j, "O-1")  # 격리 전
+    assert check(j, "shipped_before_operator")["value"] == 0
+    j.on_event(2.0, "ERROR", "fleet", "ROBOT_ISOLATED", "GRIPPER: stopped where it is")
+    assert check(j, "shipped_before_operator")["ok"] is False
+    event(j, "ORDER_PARTIAL", "O-2", t=3.0)
+    event(j, "ZONES_CLEARED", "released ['Z-WORK']: lifted", t=4.0)
+    ship(j, "O-3")  # 사람이 온 뒤
+    result = check(j, "shipped_before_operator")
+    assert (result["value"], result["minimum"], result["ok"]) == (1, 1, True)
+
+
+def test_clearing_a_robot_that_is_not_isolated_does_not_end_the_count():
+    j = judge(shipped_before_operator_min=2, all_orders_finished=False)
+    j.on_event(1.0, "ERROR", "pinky1", "ROBOT_ISOLATED", "GRIPPER: stopped where it is")
+    j.on_event(2.0, "INFO", "pinky2", "ZONES_CLEARED", "released ['Z-R1']: lifted")
+    ship(j, "O-1")
+    j.on_event(3.0, "INFO", "pinky1", "ZONES_CLEARED", "released ['Z-WORK']: lifted")
+    ship(j, "O-2")
+    assert check(j, "shipped_before_operator")["value"] == 1
+
+
+def test_shipped_before_operator_is_not_checked_by_default():
+    j = judge()
+    assert check(j, "shipped_before_operator") == {"value": 0, "minimum": 0, "ok": True}
+
+
+def test_detours_around_isolated_count_only_detours_naming_an_isolated_robot():
+    j = judge(detours_around_isolated_min=1, all_orders_finished=False)
+    detour = "avoids F1 held by pinky1, standing inf s; new path F0 T2 T1 QW W"
+    j.on_event(1.0, "INFO", "pinky2", "DETOUR", detour)  # 격리 전
+    j.on_event(2.0, "INFO", "pinky2", "DETOUR", "avoids lane F1 to F2 blocked; new path F0 T2")
+    assert check(j, "detours_around_isolated")["ok"] is False
+    j.on_event(3.0, "ERROR", "pinky1", "ROBOT_ISOLATED", "NAV_ABORTED: stopped where it is")
+    j.on_event(4.0, "INFO", "pinky2", "DETOUR", "avoids F1 held by pinky3, standing 16 s; new path")
+    assert check(j, "detours_around_isolated")["value"] == 0
+    j.on_event(5.0, "INFO", "pinky2", "DETOUR", detour)
+    j.on_event(6.0, "INFO", "pinky1", "ZONES_CLEARED", "released ['F1', 'F2']: lifted")
+    j.on_event(7.0, "INFO", "pinky3", "DETOUR", detour)  # 치운 뒤
+    result = check(j, "detours_around_isolated")
+    assert (result["value"], result["minimum"], result["ok"]) == (1, 1, True)
+
+
+def test_detours_around_isolated_is_not_checked_by_default():
+    j = judge()
+    assert check(j, "detours_around_isolated") == {"value": 0, "minimum": 0, "ok": True}
