@@ -151,6 +151,13 @@ class FaultSchedule:
                 return True
         return False
 
+    def give_back_nav_abort(self) -> None:
+        """중단이 나기 전에 끝난 목표의 고장 횟수를 돌려준다."""
+        for f in self._own:
+            if f.type == "nav_abort" and self._abort_left[id(f)] < f.count:
+                self._abort_left[id(f)] += 1
+                return
+
 
 class ArmFaults:
     """팔의 고장 여부를 시나리오 시각 기준으로 답한다."""

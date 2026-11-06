@@ -131,6 +131,14 @@ def test_nav_abort_consumes_count_after_start_time():
     assert [s.take_nav_abort(80.0) for _ in range(3)] == [True, True, False]
 
 
+def test_a_nav_abort_given_back_is_taken_by_the_next_goal():
+    """중단 전에 대체되거나 취소된 목표는 고장 횟수를 돌려준다."""
+    s = FaultSchedule(faults(), "pinky2")
+    assert [s.take_nav_abort(80.0) for _ in range(2)] == [True, True]
+    s.give_back_nav_abort()
+    assert [s.take_nav_abort(81.0) for _ in range(2)] == [True, False]
+
+
 def test_stuck_never_recovers_and_is_per_robot():
     s = FaultSchedule(faults(), "pinky2")
     assert not s.stuck(89.0) and s.stuck(90.0) and s.stuck(1e6)

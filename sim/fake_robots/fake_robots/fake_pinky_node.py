@@ -160,6 +160,9 @@ class FakePinkyNode(Node):
         return CancelResponse.REJECT if self._unreachable() else CancelResponse.ACCEPT
 
     def _end(self, goal: _Goal, success: bool, reason: str = "") -> None:
+        if (goal.abort_at is not None and not goal.done.is_set()
+                and reason != MoveTo.Result.REASON_NAV_ABORTED):
+            self._faults.give_back_nav_abort()  # 대체·취소된 목표의 중단은 다음 목표로
         goal.finish(success, reason)
         if self._active is goal:
             self._rest = (RobotState.STATE_DOCKED if goal.kind == "dock" and success
