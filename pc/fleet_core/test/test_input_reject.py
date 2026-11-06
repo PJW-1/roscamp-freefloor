@@ -375,3 +375,61 @@ def test_a_run_with_rejected_inputs_plays_back_the_same(tmp_path):
     result = replay.replay(path)
     assert result.same and result.compared, result
     assert json.loads(lines[0])["params"]["input_pose_margin_m"] == 1.0
+
+
+def _recorded():
+    """기록을 켜고 주문 하나로 시작한 코어."""
+    now = [0.0]
+    core = FleetManager(load_lane_map(), load_params(), list(SPOTS), lambda: now[0])
+    lines = []
+    core.record_to(lines.append)
+    for robot, waypoint in SPOTS.items():
+        report(core, robot, waypoint)
+    core.on_order_board("RUN", [O1])
+    for _ in range(3):
+        now[0] += 0.1
+        core.tick()
+    return core, now, lines
+
+
+def _play(tmp_path, lines):
+    path = tmp_path / "run.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return replay.replay(path)
+
+
+def test_stop_with_an_order_the_record_cannot_write_is_still_applied(tmp_path):
+    core, now, lines = _recorded()
+    core.on_order_board("STOP", [object()])
+    out = core.tick()
+    assert not core.traffic.running
+    assert len(rejected(out)) == 1
+    result = _play(tmp_path, lines)
+    assert result.compared and result.same, result
+
+
+WRONG_SHAPES = {
+    "none": None,
+    "a string": "O-009",
+    "a dict missing items": [{"order_id": "O-009"}],
+    "a dict that looks like an order": [{"order_id": "O-009", "items": {"A": 1}}],
+    "a list in a list": [[1, 2]],
+}
+
+
+@pytest.mark.parametrize("orders", WRONG_SHAPES.values(), ids=WRONG_SHAPES.keys())
+def test_a_board_of_the_wrong_shape_plays_back_the_same(tmp_path, orders):
+    core, now, lines = _recorded()
+    core.on_order_board("PAUSE", orders)
+    assert len(rejected(core.tick())) == 1
+    result = _play(tmp_path, lines)
+    assert result.compared and result.same, result
+
+
+def test_a_robot_id_that_is_not_a_string_plays_back_the_same(tmp_path):
+    core, now, lines = _recorded()
+    x, y = core.site.waypoint_pose("P-6")
+    core.on_robot_state("pinky1", x, y, 0.0, "IDLE", 90.0, 0)
+    assert len(rejected(core.tick())) == 1
+    result = _play(tmp_path, lines)
+    assert result.compared and result.same, result

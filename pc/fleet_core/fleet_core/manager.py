@@ -11,7 +11,7 @@ ROS 없이 재생할 수 있다(형식은 tools/replay.py).
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 
 from fleet_core.common.commands import (
     AssignmentView,
@@ -20,6 +20,7 @@ from fleet_core.common.commands import (
     DispatchFeedback,
     DispatchResult,
     EventOut,
+    OrderRecord,
     ReleaseCmd,
     RobotFaultCmd,
     RobotStatusView,
@@ -41,6 +42,22 @@ from fleet_core.traffic.mission import (
     TO_OUTBOUND,
     TO_WORK,
 )
+
+
+def _recordable(value):
+    """JSON에 못 쓰는 값은 repr로 남긴다. 기록 때문에 입력 처리가 멈추면 안 된다."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    return repr(value)
+
+
+def _recorded_orders(orders):
+    """OrderRecord는 필드로, dict와 객체는 repr 문자열로 남긴다. 재생에서도 주문이 아니다."""
+    if not isinstance(orders, (list, tuple)):
+        return orders
+    return [asdict(o) if isinstance(o, OrderRecord)
+            else o if o is None or isinstance(o, (str, int, float, list))
+            else repr(o) for o in orders]
 
 
 class FleetManager:
@@ -91,7 +108,7 @@ class FleetManager:
         """robot은 토픽의 로봇, robot_id는 메시지에 적힌 이름(빈 값 가능)."""
         # 받은 그대로 기록한다. robot_id가 없던 기록도 똑같이 읽힌다.
         self._input("on_robot_state", robot, x, y, yaw, state, battery,
-                    *([robot_id] if robot_id else []))
+                    *([robot_id] if robot_id != "" else []))
         problem = (robot_problem(robot, self.traffic.robots)
                    or reported_id_problem(robot, robot_id)
                    or pose_problem(x, y, yaw, self._bounds, self.params.input_pose_margin_m))
@@ -106,7 +123,7 @@ class FleetManager:
 
         틀린 주문 하나가 STOP을 막으면 안 되고, 하나만 빼면 철회로 보이기 때문이다.
         """
-        self._input("on_order_board", run_mode, orders)
+        self._input("on_order_board", run_mode, _recorded_orders(orders))
         mode_problem = run_mode_problem(run_mode)
         if mode_problem:
             self._topic_rejected(("order_board",), mode_problem, "order board dropped")
@@ -260,7 +277,8 @@ class FleetManager:
         self._fed = True
         self._time = self._clock()
         if self._write:
-            self._write(json.dumps({"t": self._time, "in": method, "args": args}, default=asdict))
+            self._write(json.dumps({"t": self._time, "in": method, "args": args},
+                                   default=_recordable))
 
     def _reject(self, detail, robot="") -> None:
         known = robot if isinstance(robot, str) and robot in self.traffic.robots else ""

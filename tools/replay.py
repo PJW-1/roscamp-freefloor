@@ -69,7 +69,9 @@ def _count(lines: list[str], key: str) -> int:
 def _arguments(entry: dict) -> list:
     if entry["in"] == "on_order_board":
         mode, orders = entry["args"]
-        return [mode, [OrderRecord(**order) for order in orders]]
+        if isinstance(orders, list):  # 주문이 아니던 원소는 기록에 문자열로 남아 그대로 둔다
+            orders = [OrderRecord(**o) if isinstance(o, dict) else o for o in orders]
+        return [mode, orders]
     return entry["args"]
 
 

@@ -11,10 +11,13 @@ import fleet_core
 PACKAGE = Path(fleet_core.__file__).parent
 
 
-def _package(name):
-    """패키지 자신(__init__.py)과 그 안의 모듈."""
-    return [name] + sorted(f"{name}.{p.stem}" for p in (PACKAGE / name).glob("*.py")
-                           if p.stem != "__init__")
+def _package(name, root=PACKAGE):
+    """패키지 자신과 그 아래 모든 모듈. 하위 패키지도 들어간다."""
+    found = set()
+    for path in (root / name).rglob("*.py"):
+        parts = path.relative_to(root).with_suffix("").parts
+        found.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+    return sorted(found)
 
 
 TRAFFIC = _package("traffic")
@@ -182,6 +185,7 @@ def test_orders_do_not_import_traffic():
     """둘은 FleetManager가 실어 나르는 명령으로만 대화한다."""
     assert not {m for m in _closure(*ORDERS) if _traffic_side(m)}
 
+
 def test_a_module_brings_in_the_packages_above_it():
     """서브모듈을 임포트하면 위 패키지의 __init__.py도 실행된다. 맨 위 fleet_core는 ""."""
     assert {"traffic", ""} <= _closure("traffic.controller")
@@ -192,3 +196,12 @@ def test_both_sides_include_their_package_init():
     assert "traffic" in TRAFFIC and "orders" in ORDERS
     assert _traffic_side("traffic") and _traffic_side("traffic.zones")
     assert not _traffic_side("orders") and not _traffic_side("")
+
+
+def test_modules_in_a_subpackage_are_found(tmp_path):
+    for rel in ("traffic/__init__.py", "traffic/zones.py", "traffic/sub/__init__.py",
+                "traffic/sub/deep.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("", encoding="utf-8")
+    assert _package("traffic", tmp_path) == ["traffic", "traffic.sub", "traffic.sub.deep",
+                                             "traffic.zones"]
