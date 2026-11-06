@@ -11,8 +11,10 @@
   - 구역을 기다린다: 그 구역을 기다린 시간.
   - 재시도나 도착 확인을 기다린다: 남은 시간.
   - 달린다: 주행 단계(TO_*, DOCKING)인데 위 대기가 아니다. 목표 사이라 이 tick에 다음 목표를 받는다.
+    막힘 표시 때 취소한 goal의 결과를 기다리는 로봇은 빼고 아래로 간다.
   - 그 밖(스테이션, 대기 칸, 할 일 대기): station_wait_estimate_s.
 고르는 때: 현재 구역 말고 쥔 것이 없어 다음 구역을 청할 때. 다음 구역을 이미 쥐었으면 안 바꾼다.
+막힌 로봇과 취소 결과를 기다리는 로봇(_held_for_block)은 다시 고르지 않는다.
 다음 구역에 벌점이 있거나 남은 경로에 막힌 레인이 있을 때만 계산한다.
 새 길이 지금 길보다 싸야 바꾼다. 동점이면 그대로, 길이 없으면 그대로 기다린다.
 한 지점에서 포기한 다음 구역은 그 지점을 떠날 때까지 못 지난다(왕복 금지).
@@ -48,7 +50,7 @@ class TrafficDetour:
         later = max(m.retry_at, m.arrival_by or 0.0)
         if later > now:
             return later - now
-        if m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK, DOCKING):
+        if m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK, DOCKING) and not self._held_for_block(m):
             return None  # 목표 사이다. 이 tick에 다음 목표를 받는다
         return self.params.station_wait_estimate_s
 
@@ -77,8 +79,8 @@ class TrafficDetour:
 
     def _consider_detour(self, m: _Mission, following: str) -> bool:
         """다음 구역을 청하기 직전. 더 싼 길로 바꿨으면 True."""
-        if not self.params.detour_enabled or m.block:
-            return False
+        if not self.params.detour_enabled or m.block or self._held_for_block(m):
+            return False  # 막힌 로봇과 취소 결과를 기다리는 로봇은 다시 고르지 않는다
         anchor = self._anchor(m)
         here = m.path[anchor]
         if m.detour_at != here:

@@ -136,6 +136,21 @@ def test_a_robot_between_two_goals_on_its_way_runs():
     assert core._standing_wait_s(m) == 30.0
 
 
+def test_a_robot_waiting_for_its_cancel_result_stands_and_does_not_replan():
+    # 파트 4: 표시 때 취소한 goal의 결과 전에는 단계가 없다. 우회도 다시 고르지 않는다
+    core, _ = make({"r1": "F0", "r2": "F1"})
+    m = core._missions["r2"]
+    m.phase, m.path, m.idx, m.block_cancel = "TO_WORK", ["F1", "F2", "W"], 0, 41
+    assert core._standing_wait_s(m) == 30.0
+    core.on_robot_fault("r2", "x")
+    m1 = core._missions["r1"]
+    m1.phase, m1.dest, m1.path, m1.idx = "TO_WORK", "WORK", ["F0", "F1", "F2", "W"], 0
+    m1.block_cancel = 42
+    assert core._consider_detour(m1, "F1") is False
+    m1.block_cancel = None
+    assert core._consider_detour(m1, "F1") is True
+
+
 def test_a_robot_that_waits_on_its_retry_stands_for_the_rest_of_it():
     core, now = make({"r1": "F0", "r2": "F1"})
     m = core._missions["r2"]

@@ -170,7 +170,7 @@ class FleetManagerNode(Node):
             waited = params.cancel_warn_after * params.cancel_retry_s
             # "다시 요청"이 아니다. 수락된 적 없는 goal에는 취소를 보낼 핸들이 없다.
             detail = (f"goal {goal_id} on {server} has no result {waited:.0f} s after it was "
-                      "canceled, and the cancel stands until one comes")
+                      "canceled; the cancel stays open while a result can still come")
             self._dispatch(EventOut("WARN", "CANCEL_UNCONFIRMED", detail, server), now)
 
     def _flush_reports(self, now: float) -> None:
@@ -275,13 +275,18 @@ class FleetManagerNode(Node):
             partial(self._goal_result, key, on_result, on_rejected))
 
     def _goal_result(self, key, on_result, on_rejected, future) -> None:
-        self._goals.finished(key)
         try:
             result = adapters.goal_result(future.result())
         except Exception as exc:
             self.get_logger().error(f"goal {key} lost its result: {exc}")
+            if on_rejected == self._robot_rejected and self._goals.canceling(key):
+                # 취소한 로봇 goal은 끝났는지 모른다. 취소를 남겨 CANCEL_UNCONFIRMED로 알린다
+                self._goals.lost(key)
+                return
+            self._goals.finished(key)
             on_rejected(key)
             return
+        self._goals.finished(key)
         on_result(key, result)
 
     def _robot_rejected(self, key) -> None:
