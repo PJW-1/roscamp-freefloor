@@ -466,8 +466,10 @@ def test_a_canceled_goal_that_was_never_sent_ends_the_wait():
 def test_a_clear_while_waiting_for_the_result_drops_the_wait():
     pilot, goal = blocked_holder_held_by_a_reinstate()
     core = pilot.core
-    assert core.confirm_clear("pinky1", core.zones.held_by("pinky1"), "lifted") is not None
     m = pilot.mission()
+    pilot.run(core_params().blocked_mark_s)
+    assert m.block.marked and core.traffic.blocked_lanes() and m.block_cancel == goal
+    assert core.confirm_clear("pinky1", core.zones.held_by("pinky1"), "lifted") is not None
     assert m.block_cancel is None and m.block is None
     assert core.traffic.blocked_lanes() == []
 

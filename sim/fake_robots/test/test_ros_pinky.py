@@ -383,10 +383,12 @@ def test_blocked_lasts_past_a_cancel_while_the_obstacle_is_there(harness, tmp_pa
 
 def test_a_robot_put_back_does_not_keep_saying_blocked(harness, tmp_path):
     """막혀 선 로봇을 치웠다 다른 곳에 놓으면 앞 막힘을 잊는다(병합 리뷰 2번)."""
+    began = time.monotonic()
     p = start(harness, tmp_path, robots=ONE, faults=[
-        {"at_s": 1.0, "robot": "pinky1", "type": "blocked", "duration_s": 8.0},
+        {"at_s": 1.0, "robot": "pinky1", "type": "blocked", "duration_s": 20.0},
         {"at_s": 3.0, "robot": "pinky1", "type": "operator_remove"},
         {"at_s": 4.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-5"}])
+    truth = watch_truth(p)
     assert wait_until(lambda: p.states, 5.0)
     p.goal("N")
     assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 8.0)
@@ -395,12 +397,16 @@ def test_a_robot_put_back_does_not_keep_saying_blocked(harness, tmp_path):
     mark = time.monotonic()
     time.sleep(1.0)
     assert set(states_since(p, mark - 0.3)) == {RobotState.STATE_IDLE}
-    # 물체는 들어낸 자리에 남았다. 다시 달려도 막히지 않는다(물체 구간은 9초까지)
+    # 물체는 들어낸 자리에 남았다. 다시 달려도 막히지 않는다(물체 구간은 21초까지)
+    assert wait_until(lambda: truth, 2.0)
+    x0, y0 = truth[-1][1], truth[-1][2]
+    assert time.monotonic() - began < 14.0, "too late: the goal must start well inside the window"
     assert p.goal("P-3").accepted
     mark = time.monotonic()
-    time.sleep(2.0)
-    seen = set(states_since(p, mark))
-    assert RobotState.STATE_MOVING in seen and RobotState.STATE_BLOCKED not in seen
+    time.sleep(2.5)
+    assert set(states_since(p, mark)) == {RobotState.STATE_MOVING}
+    moved = max(((x - x0) ** 2 + (y - y0) ** 2) ** 0.5 for when, x, y in truth if when >= mark)
+    assert moved > 0.2, f"it moved only {moved:.2f} m"
 
 
 def test_a_robot_says_localizing_until_it_has_a_pose(harness, tmp_path):
