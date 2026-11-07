@@ -242,12 +242,12 @@ class PinkyFsmNode(Node):
             if kind == "move" and now - last_fb >= FEEDBACK_PERIOD_S:
                 last_fb = now
                 with self._lock:
-                    # 교체된 목표에는 새 목표의 남은 거리를 보내지 않는다(곧 결과가 나간다)
-                    running = self._fsm.is_running(key)
-                    pose = self._pose() if running else None
-                    left = self._fsm.distance_remaining(pose[:3] if pose else None)
-                if running:
-                    handle.publish_feedback(MoveTo.Feedback(distance_remaining=float(left)))
+                    # 교체된 목표에는 새 목표의 남은 거리를 보내지 않는다(곧 결과가 나간다).
+                    # 교체도 이 잠금 안에서 일어나므로 잠금을 쥔 채 보낸다
+                    if self._fsm.is_running(key):
+                        pose = self._pose()
+                        left = self._fsm.distance_remaining(pose[:3] if pose else None)
+                        handle.publish_feedback(MoveTo.Feedback(distance_remaining=float(left)))
             slot.done.wait(0.02)
         with self._lock:
             self._slots.pop(key, None)
