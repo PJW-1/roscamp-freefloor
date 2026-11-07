@@ -50,6 +50,7 @@ from fleet_gz_sim.drive_plan import (
 
 # 대기 줄 → WORK 도크 → OUTBOUND 도크 → 대기 줄. 로봇이 서 있는 지점부터 돈다
 CYCLE = ("P-3", "W", "O")
+TRUTH_GAP_S = 0.25  # 실제 위치 기록(약 30 Hz)이 이보다 오래 비면 그동안은 보지 못한 것이다
 SETTLE_LIMIT_S = 6.0
 ARRIVAL_M = 0.15
 HEARTBEAT_PERIOD_S = 0.5
@@ -201,6 +202,7 @@ def drive_trip(node: DriveCheck, lane_map, ids: list[str], cut_heartbeat: bool =
     out = {"route": "→".join(ids), "extensions": len(extensions), "segment": trip.segment}
     with node.lock:
         cmd, truth, yaw = list(node.cmd), list(node.truth), list(node.truth_yaw)
+        recorded_until = time.monotonic()
     linear = [(t, v) for t, v, _ in cmd]
     # 주행 중 선속도 0이 0.1 s 넘게 이어진 구간 수. 연장 주행과 한 번에 보낸 주행을 비교하면
     # 연장 때문에 더 선 횟수가 나온다(모서리 제자리 회전은 양쪽에 같이 있다)
@@ -220,7 +222,7 @@ def drive_trip(node: DriveCheck, lane_map, ids: list[str], cut_heartbeat: bool =
         return out
     out.update(result="success" if record["success"] else record["reason"])
     if cut is not None:
-        out["heartbeat_cut"] = finish_cut(cut, record, cmd, truth, yaw)
+        out["heartbeat_cut"] = finish_cut(cut, record, cmd, truth, yaw, recorded_until)
     elif record["success"]:
         target = points[-1]
         true_xy = min(truth, key=lambda s: abs(s[0] - record["done"]))[1]
@@ -240,14 +242,16 @@ def cut_signal(node: DriveCheck) -> dict:
             "pose_at_cut": node.true_pose()}
 
 
-def finish_cut(cut: dict, record: dict, cmd, truth, yaw) -> dict:
+def finish_cut(cut: dict, record: dict, cmd, truth, yaw, recorded_until: float) -> dict:
     last = cut["last_signal"]
-    # cmd_vel은 선속도·각속도가 모두 0이 된 때. 실제 위치는 0.2 s 동안 0.02 m/s 밑으로 움직이고
-    # 0.1 rad/s 밑으로 돈 때(제자리 회전을 정지로 치지 않는다). 같은 메시지라 표본이 짝이 맞다
-    cmd_stop = time_to_stop([(t, max(abs(v), abs(w))) for t, v, w in cmd], cut["cut"])
+    # cmd_vel은 선속도·각속도가 모두 0이 되어 기록 끝까지(controller는 0을 한 번 내고 멈춘다)
+    # 이어진 때. 실제 위치는 0.2 s 동안 0.02 m/s 밑으로 움직이고 0.1 rad/s 밑으로 돈 때
+    # (제자리 회전을 정지로 치지 않는다). 같은 메시지라 표본이 짝이 맞다
+    cmd_stop = time_to_stop([(t, max(abs(v), abs(w))) for t, v, w in cmd], cut["cut"],
+                            end=recorded_until)
     motion = [(t, max(v, 0.2 * w)) for (t, v), (_, w) in zip(speeds(truth), turn_speeds(yaw),
                                                              strict=True)]
-    true_stop = time_to_stop(motion, cut["cut"], still=0.02)
+    true_stop = time_to_stop(motion, cut["cut"], still=0.02, max_gap=TRUTH_GAP_S)
     stop_xy = None
     if true_stop is not None:
         stop_xy = min(truth, key=lambda s: abs(s[0] - (cut["cut"] + true_stop)))[1]

@@ -128,6 +128,20 @@ def test_time_to_stop_needs_the_stop_to_last():
     assert time_to_stop(samples[:22], 0.0) is None  # 2.0 s 정지가 0.3 s 이어지는 것을 못 봤다
 
 
+def test_a_command_holds_after_the_last_zero_until_the_record_ends():
+    """controller는 목표가 끝나면 0을 한 번 내고 발행을 멈춘다. 마지막 값이 이어진다."""
+    cmd = [(0.0, 0.2), (0.05, 0.2), (0.1, 0.0)]
+    assert time_to_stop(cmd, 0.0, end=1.0) == pytest.approx(0.1)
+    assert time_to_stop(cmd, 0.0) is None  # 기록이 언제 끝났는지 모르면 이어졌는지 모른다
+
+
+def test_a_gap_in_a_streamed_record_is_not_seen_as_a_stop():
+    """위치 기록은 계속 오는 표본이다. 비어 있던 동안 서 있었는지는 모른다(Codex 재리뷰)."""
+    assert time_to_stop([(0.0, 0.0), (1.0, 0.0)], 0.0, max_gap=0.1) is None
+    truth = [(0.0, 0.0)] + [(1.0 + i / 20, 0.0) for i in range(8)]
+    assert time_to_stop(truth, 0.0, max_gap=0.1) == pytest.approx(1.0)
+
+
 def test_settle_time_counts_from_the_last_entry_into_the_radius():
     target = (1.0, 0.0)
     truth = [(0.0, (0.0, 0.0)), (1.0, (0.9, 0.0)), (2.0, (0.7, 0.0)),

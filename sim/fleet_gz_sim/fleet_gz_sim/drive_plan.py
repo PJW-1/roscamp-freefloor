@@ -127,21 +127,30 @@ def turn_speeds(headings: Sequence[tuple[float, float]],
     return out
 
 
-def time_to_stop(samples: Sequence[tuple[float, float]], t0: float,
-                 still: float = 0.01, hold: float = 0.3) -> float | None:
-    """t0 뒤 속도가 still 밑으로 떨어져 hold초 넘게 이어지기 시작한 때까지(초).
+def time_to_stop(samples: Sequence[tuple[float, float]], t0: float, still: float = 0.01,
+                 hold: float = 0.3, end: float | None = None,
+                 max_gap: float | None = None) -> float | None:
+    """t0 뒤 속도가 still 밑으로 떨어져 hold초 넘게 이어지기 시작한 때까지(초). 못 봤으면 None.
 
-    감속 중 한 표본만 낮아졌다가 다시 움직이는 것은 정지가 아니다. 끝까지 못 봤으면 None."""
-    start = None
+    감속 중 한 표본만 낮아졌다가 다시 움직이는 것은 정지가 아니다. 표본 사이에는 앞 값이
+    이어진다고 본다(cmd_vel: controller는 목표가 끝나면 0을 한 번 내고 멈춘다). end는 기록이
+    끝난 때다. max_gap을 주면 그보다 긴 빈틈은 보지 못한 것으로 친다(계속 오는 위치 기록)."""
+    start = prev = None
     for s, v in samples:
         if s < t0:
             continue
+        if start is not None and max_gap is not None and s - prev > max_gap:
+            start = None
         if abs(v) < still:
             start = s if start is None else start
             if s - start >= hold - 1e-9:
                 return start - t0
         else:
             start = None
+        prev = s
+    if (start is not None and end is not None and end - start >= hold - 1e-9
+            and (max_gap is None or end - prev <= max_gap)):
+        return start - t0
     return None
 
 
