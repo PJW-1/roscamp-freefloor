@@ -151,13 +151,14 @@ class PinkyFsm:
         tx, ty, tyaw = (float(v) for v in target)
         if path:
             points = [(float(p[0]), float(p[1])) for p in path]
-            if math.dist(points[-1], (tx, ty)) > 1e-6:
-                points.append((tx, ty))
+            # 받은 path로 판정한다. target까지 붙이는 선이 로봇을 지나도 연결된 것이 아니다
             _, off = Polyline(points).project(here)
             if off > self.p.connect_tolerance_m:
                 # 안내 2.2: 따라가지 않고 실패. 이전 목표도 끝나므로 선다
                 return (self._end_active(CANCELED, stop=True)
                         + [Finish(goal_id, False, PATH_NOT_CONNECTED)])
+            if math.dist(points[-1], (tx, ty)) > 1e-6:
+                points.append((tx, ty))
         else:
             points = [here, (tx, ty)]  # 점 목표: 지금 자리에서 곧게
         cmds = self._end_active(CANCELED, stop=False)  # 안내 2.1: 서지 않고 새 경로로

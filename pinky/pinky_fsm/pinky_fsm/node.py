@@ -102,8 +102,7 @@ class PinkyFsmNode(Node):
         self._cancel_on_accept: set[int] = set()
         self._late: list[tuple[int, str]] = []  # 다음 주기에 core에 넘길 FollowPath 결과
         self._speed = (0.0, 0.0)
-        self._grid: Grid | None = None
-        self._grid_frame = ""
+        self._costmap: tuple[Grid, str] | None = None  # (격자, 틀). 한 번에 바꿔 짝이 맞게 둔다
         self._battery = UNKNOWN_BATTERY
 
         self._tf = Buffer()
@@ -173,11 +172,11 @@ class PinkyFsmNode(Node):
 
     def _on_costmap(self, msg: OccupancyGrid) -> None:
         o = msg.info.origin
-        self._grid = Grid(msg.info.resolution, o.position.x, o.position.y,
-                          quaternion_yaw(o.orientation.x, o.orientation.y, o.orientation.z,
-                                         o.orientation.w),
-                          msg.info.width, msg.info.height, msg.data)
-        self._grid_frame = msg.header.frame_id
+        grid = Grid(msg.info.resolution, o.position.x, o.position.y,
+                    quaternion_yaw(o.orientation.x, o.orientation.y, o.orientation.z,
+                                   o.orientation.w),
+                    msg.info.width, msg.info.height, msg.data)
+        self._costmap = (grid, msg.header.frame_id)
 
     def _on_battery(self, msg: BatteryState) -> None:
         if not math.isnan(msg.percentage):
@@ -196,9 +195,10 @@ class PinkyFsmNode(Node):
         return (p.x, p.y, quaternion_yaw(q.x, q.y, q.z, q.w), tf.header.stamp)
 
     def _obstacle(self, points) -> bool:
-        grid, frame = self._grid, self._grid_frame
-        if grid is None or not points:
+        costmap = self._costmap
+        if costmap is None or not points:
             return False
+        grid, frame = costmap
         if frame and frame != self._map_frame:
             try:
                 tf = self._tf.lookup_transform(frame, self._map_frame, Time())
@@ -242,9 +242,12 @@ class PinkyFsmNode(Node):
             if kind == "move" and now - last_fb >= FEEDBACK_PERIOD_S:
                 last_fb = now
                 with self._lock:
-                    pose = self._pose()
+                    # 교체된 목표에는 새 목표의 남은 거리를 보내지 않는다(곧 결과가 나간다)
+                    running = self._fsm.is_running(key)
+                    pose = self._pose() if running else None
                     left = self._fsm.distance_remaining(pose[:3] if pose else None)
-                handle.publish_feedback(MoveTo.Feedback(distance_remaining=float(left)))
+                if running:
+                    handle.publish_feedback(MoveTo.Feedback(distance_remaining=float(left)))
             slot.done.wait(0.02)
         with self._lock:
             self._slots.pop(key, None)

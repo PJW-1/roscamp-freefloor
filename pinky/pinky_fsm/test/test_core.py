@@ -153,6 +153,16 @@ def test_path_within_the_tolerance_is_followed():
     assert kinds(cmds) == ["SendPath"]
 
 
+def test_connection_is_judged_on_the_received_path_not_the_line_to_the_target():
+    """path 끝이 target_pose와 다르면 target까지 잇는 선을 붙인다. 그 선이 로봇을 지나도
+    받은 path가 떨어져 있으면 따라가지 않는다(안내 2.2, Codex 리뷰)."""
+    fsm = ready()
+    away = [(0.70, 1.95), (0.70, 1.55)]  # 로봇에서 0.35 m 옆, 끝이 target과 다르다
+    cmds = fsm.move("g1", 1.0, "X", (*P3, NORTH), away, (*P3, NORTH))
+    assert "SendPath" not in kinds(cmds)
+    assert cmds[-1] == Finish("g1", False, PATH_NOT_CONNECTED)
+
+
 def test_point_goals_are_not_checked_for_connection():
     fsm = ready()
     cmds = fsm.move("g1", 1.0, "X", (2.0, 2.0, 0.0), [], (*P3, NORTH))
