@@ -23,7 +23,7 @@ jobs:
           source /opt/ros/jazzy/setup.bash
           rosdep update
           rosdep install --from-paths src --ignore-src -r -y \
-            --skip-keys "pinky_bringup pinky_navigation"
+            --skip-keys "pinky_bringup pinky_navigation pinky_description"
           colcon build
           source install/setup.bash
           export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
