@@ -1,0 +1,81 @@
+<?xml version="1.0"?>
+<!-- 생성 파일: python3 -m fleet_gz_sim.arena 로 다시 만든다. 손으로 고치지 않는다.
+     월드 좌표 = 지도 좌표 = lane_map.yaml 좌표. 레인은 바닥 그림이고 벽·상자는 레인에서
+     0.25 m 넘게 떨어져 있다. -->
+<sdf version="1.9">
+  <world name="lane_arena">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <scene>
+      <ambient>0.7 0.7 0.7 1</ambient>
+      <background>0.85 0.85 0.85 1</background>
+      <grid>false</grid>
+    </scene>
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.3 0.2 -0.9</direction>
+    </light>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+          <material>
+            <ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="arena">
+      <static>true</static>
+      <link name="link">
+      <collision name="wall_south"><pose>1.85 0.225 0.15 0 0 0</pose><geometry><box><size>3.8 0.05 0.3</size></box></geometry></collision>
+      <visual name="wall_south_visual"><pose>1.85 0.225 0.15 0 0 0</pose><geometry><box><size>3.8 0.05 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="wall_north"><pose>1.85 2.425 0.15 0 0 0</pose><geometry><box><size>3.8 0.05 0.3</size></box></geometry></collision>
+      <visual name="wall_north_visual"><pose>1.85 2.425 0.15 0 0 0</pose><geometry><box><size>3.8 0.05 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="wall_west"><pose>-0.025 1.325 0.15 0 0 0</pose><geometry><box><size>0.05 2.15 0.3</size></box></geometry></collision>
+      <visual name="wall_west_visual"><pose>-0.025 1.325 0.15 0 0 0</pose><geometry><box><size>0.05 2.15 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="wall_east"><pose>3.725 1.325 0.15 0 0 0</pose><geometry><box><size>0.05 2.15 0.3</size></box></geometry></collision>
+      <visual name="wall_east_visual"><pose>3.725 1.325 0.15 0 0 0</pose><geometry><box><size>0.05 2.15 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="block_sw"><pose>0.25 0.375 0.15 0 0 0</pose><geometry><box><size>0.5 0.25 0.3</size></box></geometry></collision>
+      <visual name="block_sw_visual"><pose>0.25 0.375 0.15 0 0 0</pose><geometry><box><size>0.5 0.25 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="block_w"><pose>0.075 0.875 0.15 0 0 0</pose><geometry><box><size>0.15 0.25 0.3</size></box></geometry></collision>
+      <visual name="block_w_visual"><pose>0.075 0.875 0.15 0 0 0</pose><geometry><box><size>0.15 0.25 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="block_se"><pose>3.5 0.4 0.15 0 0 0</pose><geometry><box><size>0.4 0.3 0.3</size></box></geometry></collision>
+      <visual name="block_se_visual"><pose>3.5 0.4 0.15 0 0 0</pose><geometry><box><size>0.4 0.3 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="block_n"><pose>2.9 2.25 0.15 0 0 0</pose><geometry><box><size>0.6 0.3 0.3</size></box></geometry></collision>
+      <visual name="block_n_visual"><pose>2.9 2.25 0.15 0 0 0</pose><geometry><box><size>0.6 0.3 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <visual name="lane_W-A"><pose>1.25 1.35 0.0005 0 0 -0.7854</pose><geometry><box><size>0.5657 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_A-L"><pose>1.25 0.95 0.0005 0 0 -2.3562</pose><geometry><box><size>0.5657 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_L-Q"><pose>0.85 0.95 0.0005 0 0 2.3562</pose><geometry><box><size>0.5657 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_Q-W"><pose>0.85 1.35 0.0005 0 0 0.7854</pose><geometry><box><size>0.5657 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_O-B"><pose>2.75 1.35 0.0005 0 0 -2.3562</pose><geometry><box><size>0.5657 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_B-R"><pose>2.75 0.95 0.0005 0 0 -0.7854</pose><geometry><box><size>0.5657 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_R-QO"><pose>3.15 0.95 0.0005 0 0 0.7854</pose><geometry><box><size>0.5657 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_QO-O"><pose>3.15 1.35 0.0005 0 0 2.3562</pose><geometry><box><size>0.5657 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_Q-P-3"><pose>0.5 1.35 0.0005 0 0 2.2143</pose><geometry><box><size>0.5 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_P-3-P-4"><pose>0.35 1.75 0.0005 0 0 1.5708</pose><geometry><box><size>0.4 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_P-4-P-5"><pose>0.575 2 0.0005 0 0 0.2187</pose><geometry><box><size>0.461 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_P-5-P-6"><pose>1 2.05 0.0005 0 0 0</pose><geometry><box><size>0.4 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_P-6-N"><pose>1.6 1.875 0.0005 0 0 -0.4124</pose><geometry><box><size>0.8732 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_N-S"><pose>2 1.15 0.0005 0 0 -1.5708</pose><geometry><box><size>1.1 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_S-L"><pose>1.525 0.675 0.0005 0 0 2.985</pose><geometry><box><size>0.9618 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_A-B"><pose>2 1.15 0.0005 0 0 0</pose><geometry><box><size>1.1 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      </link>
+    </model>
+  </world>
+</sdf>

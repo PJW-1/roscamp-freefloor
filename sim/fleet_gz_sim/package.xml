@@ -2,12 +2,27 @@
 <package format="3">
   <name>fleet_gz_sim</name>
   <version>0.1.0</version>
-  <description>Placeholder for the three-robot Gazebo simulation (owned by the fleet role)</description>
+  <description>Gazebo simulation: one Pinky with Nav2 and pinky_fsm (three-robot fleet launch is still a placeholder)</description>
   <maintainer email="team@example.com">team-2</maintainer>
   <license>Apache-2.0</license>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>fleet_core</exec_depend>
+  <exec_depend>fleet_interfaces</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>pinky_description</exec_depend>
+  <exec_depend>pinky_nav_config</exec_depend>
+  <exec_depend>pinky_fsm</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>rviz2</exec_depend>
   <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
   <export><build_type>ament_python</build_type></export>
 </package>

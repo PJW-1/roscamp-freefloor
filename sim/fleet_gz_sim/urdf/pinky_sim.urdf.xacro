@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<!--
+  Gazebo용 핑키. 제조사 모델(pinky_description, pinky_pro 014a09f)에 Gazebo 플러그인만 붙인다.
+  제조사 pinky_gz.urdf.xacro는 쓰지 않는다: 램프 플러그인(pinky_gz_sim, 이 컴퓨터에서 빌드 실패)과
+  1280x720 카메라가 있어 주행 확인에 필요 없이 무겁다. 바퀴·라이다 값은 그 파일과 같다.
+
+  gz 토픽은 /model/<name>/... 이고 one_pinky.launch.py의 브리지가 /<name>/...로 옮긴다.
+  프레임 이름(odom, base_footprint, rplidar_link)에는 접두사가 없다(TF는 /<name>/tf로 나뉜다).
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="pinky">
+  <xacro:arg name="name" default="pinky1"/>
+  <xacro:property name="gz" value="/model/$(arg name)"/>
+  <xacro:include filename="$(find pinky_description)/urdf/pinky.urdf.xacro"/>
+  <xacro:insert_robot namespace="" is_sim="false" cam_tilt_deg="8" screen_tilt_deg="-25"/>
+
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+      <left_joint>l_wheel_joint</left_joint>
+      <right_joint>r_wheel_joint</right_joint>
+      <wheel_separation>0.0961</wheel_separation>
+      <wheel_radius>0.028</wheel_radius>
+      <min_velocity>-1.0</min_velocity>
+      <max_velocity>1.0</max_velocity>
+      <min_acceleration>-2.0</min_acceleration>
+      <max_acceleration>2.0</max_acceleration>
+      <topic>${gz}/cmd_vel</topic>
+      <odom_topic>${gz}/odom</odom_topic>
+      <tf_topic>${gz}/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+      <odom_publisher_frequency>30</odom_publisher_frequency>
+    </plugin>
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <topic>${gz}/joint_states</topic>
+      <joint_name>l_wheel_joint</joint_name>
+      <joint_name>r_wheel_joint</joint_name>
+    </plugin>
+    <!-- 시험용 실제 위치. 월드 좌표 = 지도 좌표라 map 틀 그대로다. TF로는 내보내지 않는다 -->
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>map</odom_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odom_topic>${gz}/truth</odom_topic>
+      <tf_topic>${gz}/truth_tf</tf_topic>
+      <odom_publish_frequency>30</odom_publish_frequency>
+      <dimensions>2</dimensions>
+    </plugin>
+  </gazebo>
+
+  <gazebo reference="l_wheel">
+    <self_collide>0</self_collide>
+    <mu1>200</mu1>
+    <mu2>200</mu2>
+    <kp>10000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <gazebo reference="r_wheel">
+    <self_collide>0</self_collide>
+    <mu1>200</mu1>
+    <mu2>200</mu2>
+    <kp>10000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <gazebo reference="caster_wheel">
+    <self_collide>0</self_collide>
+    <mu1>0.1</mu1>
+    <mu2>0.1</mu2>
+    <kp>10000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+
+  <gazebo reference="rplidar_link">
+    <sensor name="gpu_lidar" type="gpu_lidar">
+      <topic>${gz}/scan</topic>
+      <update_rate>10</update_rate>
+      <gz_frame_id>rplidar_link</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>640</samples>
+            <min_angle>${-pi}</min_angle>
+            <max_angle>${pi}</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>1</samples>
+            <resolution>0.01</resolution>
+            <min_angle>0</min_angle>
+            <max_angle>0</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>0.05</min>
+          <max>12.0</max>
+          <resolution>0.03</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.02</stddev>
+        </noise>
+      </lidar>
+      <always_on>1</always_on>
+      <visualize>false</visualize>
+    </sensor>
+  </gazebo>
+</robot>
