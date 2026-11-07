@@ -1,0 +1,146 @@
+"""실제 액션·토픽 인터페이스로 pinky_fsm 노드를 시험한다. Nav2 대신 FakeNav를 쓴다."""
+import math
+import time
+
+import pytest
+
+pytest.importorskip("rclpy")
+pytest.importorskip("fleet_interfaces.msg")
+pytest.importorskip("nav2_msgs.action")
+
+from conftest import CONTRACT, wait_until  # noqa: E402
+from fake_nav import FakeNav  # noqa: E402
+from fleet_interfaces.action import Dock, MoveTo  # noqa: E402
+from fleet_interfaces.msg import RobotState  # noqa: E402
+from probe import WAYPOINTS, Probe, lane_goal  # noqa: E402
+
+
+def start(harness, heartbeat_timeout_s=0.0, nav=True, beat_hz=0.0, **fsm_params):
+    from pinky_fsm.node import PinkyFsmNode
+    fake = harness.add(FakeNav()) if nav else None
+    harness.add(PinkyFsmNode(parameter_overrides=harness.params(
+        robot_id="pinky1", contract_file=str(CONTRACT),
+        heartbeat_timeout_s=heartbeat_timeout_s, **fsm_params)))
+    probe = harness.add(Probe(beat_hz=beat_hz))
+    assert probe.ready()
+    if nav:
+        assert wait_until(lambda: (s := probe.last_state()) is not None
+                          and s.state == RobotState.STATE_IDLE, 10.0)
+    return fake, probe
+
+
+def test_reports_localizing_without_a_pose(harness):
+    _, probe = start(harness, nav=False)
+    assert wait_until(lambda: len(probe.states) >= 3, 5.0)
+    s = probe.last_state()
+    assert s.state == RobotState.STATE_LOCALIZING and s.robot_id == "pinky1"
+
+
+def test_state_is_published_at_ten_hertz_with_the_map_pose(harness):
+    _, probe = start(harness)
+    t0 = time.monotonic()
+    time.sleep(2.0)
+    n = len([1 for t, _ in probe.states if t >= t0])
+    assert 17 <= n <= 23
+    s = probe.last_state()
+    assert (s.pose.x, s.pose.y) == (pytest.approx(0.35, abs=1e-3), pytest.approx(1.55, abs=1e-3))
+    assert s.current_goal == ""
+
+
+def test_path_goal_arrives_within_the_tolerance(harness):
+    _, probe = start(harness)
+    h = probe.send(lane_goal(["P-3", "P-4"]))
+    assert wait_until(lambda: probe.last_state().state == RobotState.STATE_MOVING, 2.0)
+    assert probe.last_state().current_goal == "P-4"
+    res = probe.result(h)
+    assert res.result.success is True and res.result.reason == ""
+    time.sleep(0.3)
+    s = probe.last_state()
+    assert math.dist((s.pose.x, s.pose.y), WAYPOINTS["P-4"]) <= 0.15
+    assert s.state == RobotState.STATE_IDLE
+
+
+def test_extension_replaces_the_goal_without_stopping(harness):
+    """안내 2.1: 경로를 늘린 새 move_to가 와도 서지 않는다."""
+    fake, probe = start(harness)
+    first = probe.send(lane_goal(["P-3", "P-4"]))
+    time.sleep(0.4)
+    t_ext = time.monotonic()
+    second = probe.send(lane_goal(["P-3", "P-4", "P-5"]))
+    old = probe.result(first)
+    assert old.result.success is False and old.result.reason == MoveTo.Result.REASON_CANCELED
+    new = probe.result(second)
+    assert new.result.success is True
+    assert fake.cancels == []  # FollowPath를 취소하지 않고 새 목표를 바로 보냈다
+    assert len(fake.goals) >= 2  # 셋째부터는 끝 근처 재전송(R13)이다
+    assert not fake.stopped_between(t_ext - 0.2, t_ext + 0.4)
+
+
+def test_cancel_stops_and_returns_canceled(harness):
+    fake, probe = start(harness)
+    h = probe.send(lane_goal(["P-3", "P-4", "P-5"]))
+    time.sleep(0.3)
+    h.cancel_goal_async()
+    res = probe.result(h)
+    assert res.result.success is False and res.result.reason == MoveTo.Result.REASON_CANCELED
+    assert wait_until(lambda: len(fake.cancels) >= 1, 2.0)
+    assert wait_until(lambda: fake.v == 0.0, 1.0)
+    assert wait_until(lambda: probe.last_state().state == RobotState.STATE_IDLE, 1.0)
+
+
+def test_disconnected_path_fails_and_is_not_followed(harness):
+    """안내 2.2: 로봇에서 0.15 m 넘게 떨어진 경로는 따라가지 않는다."""
+    fake, probe = start(harness)
+    goal = lane_goal(["P-5", "P-6"])  # 로봇은 P-3에 있다
+    res = probe.result(probe.send(goal))
+    assert res.result.success is False
+    assert res.result.reason == MoveTo.Result.REASON_PATH_NOT_CONNECTED
+    assert fake.goals == []
+
+
+def test_point_goal_drives_to_the_target(harness):
+    _, probe = start(harness)
+    res = probe.result(probe.send(lane_goal(["P-3", "P-4"], path=False)))
+    assert res.result.success is True
+
+
+def test_heartbeat_loss_stops_the_robot(harness):
+    fake, probe = start(harness, heartbeat_timeout_s=1.0)
+    t0 = time.monotonic()
+    h = probe.send(lane_goal(["P-3", "P-4", "P-5", "P-6", "N"]))
+    res = probe.result(h)
+    took = time.monotonic() - t0
+    assert res.result.success is False
+    assert res.result.reason == MoveTo.Result.REASON_HEARTBEAT_LOST
+    assert 0.9 <= took <= 1.5
+    assert wait_until(lambda: fake.v == 0.0 and len(fake.cancels) >= 1, 1.0)
+
+
+def test_heartbeat_keeps_the_goal_running(harness):
+    _, probe = start(harness, heartbeat_timeout_s=1.0, beat_hz=2.0)
+    res = probe.result(probe.send(lane_goal(["P-3", "P-4", "P-5"])))
+    assert res.result.success is True
+
+
+def test_obstacle_ahead_reports_blocked_and_resumes(harness):
+    """핑키_계약 4절: 서고 2초 안에 BLOCKED, 목표는 끝내지 않고, 비키면 이어 간다."""
+    fake, probe = start(harness)
+    fake.obstacle = (0.35, 1.95)  # P-4 위
+    h = probe.send(lane_goal(["P-3", "P-4", "P-5"]))
+    assert wait_until(lambda: fake.v == 0.0 and fake.pose[1] > 1.6, 5.0)
+    t_stop = time.monotonic()
+    assert wait_until(lambda: probe.last_state().state == RobotState.STATE_BLOCKED, 2.5)
+    assert time.monotonic() - t_stop <= 2.0 + 0.2
+    time.sleep(1.5)  # FakeNav는 1초 뒤 FollowPath를 실패로 끝낸다
+    assert not h.get_result_async().done()
+    assert probe.last_state().state == RobotState.STATE_BLOCKED
+    fake.obstacle = None
+    res = probe.result(h, timeout=10.0)
+    assert res.result.success is True
+    assert len(fake.goals) >= 2  # 비킨 뒤 남은 경로를 다시 보냈다
+
+
+def test_dock_fails_honestly_while_pinky_dock_is_missing(harness):
+    _, probe = start(harness)
+    res = probe.result(probe.send(Dock.Goal(dock_id="WORK"), client=probe.dock))
+    assert res.result.success is False
