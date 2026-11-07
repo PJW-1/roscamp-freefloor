@@ -32,9 +32,8 @@
     </plugin>
     <plugin filename="gz-sim-joint-state-publisher-system"
             name="gz::sim::systems::JointStatePublisher">
+      <!-- joint_name을 적지 않으면 모든 관절을 낸다. 캐스터가 빠지면 그 링크에 TF가 없다 -->
       <topic>${gz}/joint_states</topic>
-      <joint_name>l_wheel_joint</joint_name>
-      <joint_name>r_wheel_joint</joint_name>
     </plugin>
     <!-- 시험용 실제 위치. 월드 좌표 = 지도 좌표라 map 틀 그대로다. TF로는 내보내지 않는다 -->
     <plugin filename="gz-sim-odometry-publisher-system"

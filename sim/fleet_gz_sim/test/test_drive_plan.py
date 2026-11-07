@@ -77,10 +77,18 @@ def test_a_zero_crossing_while_switching_between_turning_and_driving_is_not_a_st
     driving = [(t / 20, 0.25, 0.25) for t in range(0, 20)]
     chatter = [(0.25, 0.39), (0.0, -0.007), (0.0, 0.073), (0.25, -0.97), (0.25, -0.42),
                (0.0, 0.039), (0.0, 0.073), (0.25, -0.83)]
-    samples = driving + [(1 + i / 20, v, w) for i, (v, w) in enumerate(chatter)]
+    after = [(1.4 + t / 20, 0.25, 0.25) for t in range(0, 6)]
+    samples = driving + [(1 + i / 20, v, w) for i, (v, w) in enumerate(chatter)] + after
     assert full_stop_after(samples, 1.0) is False
     halted = driving + [(1 + t / 20, 0.0, 0.0) for t in range(0, 4)]  # 0.15 s
-    assert full_stop_after(halted + [(1.2, 0.25, 0.0)], 1.0) is True
+    assert full_stop_after(halted + [(1.2 + t / 20, 0.25, 0.0) for t in range(0, 8)], 1.0) is True
+
+
+def test_a_window_cut_short_by_the_result_is_not_judged():
+    """결과가 연장 뒤 0.5 s 안에 와서 기록이 끝나면 정지 여부를 모른다(Codex 리뷰)."""
+    driving = [(t / 20, 0.25, 0.0) for t in range(0, 25)]  # 1.2 s에서 기록이 끝난다
+    assert full_stop_after(driving, 1.0) is None
+    assert stopped_after([(t, v) for t, v, _ in driving], 1.0) is None
 
 
 def test_turn_speed_from_headings_wraps_around_pi():
@@ -110,6 +118,14 @@ def test_time_to_stop_from_a_moment():
     samples = [(t / 10, 0.2 if t < 13 else 0.0) for t in range(30)]
     assert time_to_stop(samples, 0.0) == pytest.approx(1.3)
     assert time_to_stop([(0.0, 0.2), (1.0, 0.2)], 0.0) is None
+
+
+def test_time_to_stop_needs_the_stop_to_last():
+    """감속 중 한 표본만 낮아졌다가 다시 움직이면 정지가 아니다(Codex 리뷰)."""
+    v = [0.2] * 11 + [0.0] + [0.2] * 8 + [0.0] * 10  # 1.1 s에 한 표본, 2.0 s부터 계속
+    samples = [(i / 10, x) for i, x in enumerate(v)]
+    assert time_to_stop(samples, 0.0) == pytest.approx(2.0)
+    assert time_to_stop(samples[:22], 0.0) is None  # 2.0 s 정지가 0.3 s 이어지는 것을 못 봤다
 
 
 def test_settle_time_counts_from_the_last_entry_into_the_radius():

@@ -62,10 +62,10 @@ def lap_stops(cycle: Sequence[str], start: str, laps: int) -> list[str]:
 def stopped_after(samples: Sequence[tuple[float, float]], t: float, before: float = 0.5,
                   after: float = 0.5, moving: float = 0.05, still: float = 0.01) -> bool | None:
     """t 앞 before초 동안 달리다가(평균 선속도 > moving) t 뒤 after초 안에 still 밑으로
-    떨어졌나. 앞에서 달리지 않고 있었으면 None(판정하지 않음)."""
+    떨어졌나. 앞에서 달리지 않고 있었거나 t + after까지 기록이 없으면 None(판정하지 않음)."""
     pre = [v for s, v in samples if t - before <= s < t]
     post = [v for s, v in samples if t <= s <= t + after]
-    if not pre or sum(pre) / len(pre) <= moving:
+    if not pre or sum(pre) / len(pre) <= moving or samples[-1][0] < t + after:
         return None
     return any(abs(v) < still for v in post)
 
@@ -79,7 +79,7 @@ def full_stop_after(samples: Sequence[tuple[float, float, float]], t: float, bef
     RPP는 모서리에서 선속도 0으로 제자리 회전하고(R12), 회전과 주행을 오갈 때 각속도가 0을
     한 표본 지난다. 취소 뒤 재전송처럼 controller가 속도 0을 내는 정지(안내 2.1)만 센다."""
     pre = [v for s, v, _ in samples if t - before <= s < t]
-    if not pre or sum(pre) / len(pre) <= moving:
+    if not pre or sum(pre) / len(pre) <= moving or samples[-1][0] < t + after:
         return None
     level = [(s, max(abs(v) / still, abs(w) / turn_still)) for s, v, w in samples]
     return still_episodes(level, t, t + after, still=1.0, min_s=min_s) > 0
@@ -128,11 +128,20 @@ def turn_speeds(headings: Sequence[tuple[float, float]],
 
 
 def time_to_stop(samples: Sequence[tuple[float, float]], t0: float,
-                 still: float = 0.01) -> float | None:
-    """t0 뒤 처음으로 속도가 still 밑으로 떨어지기까지(초). 끝까지 안 서면 None."""
+                 still: float = 0.01, hold: float = 0.3) -> float | None:
+    """t0 뒤 속도가 still 밑으로 떨어져 hold초 넘게 이어지기 시작한 때까지(초).
+
+    감속 중 한 표본만 낮아졌다가 다시 움직이는 것은 정지가 아니다. 끝까지 못 봤으면 None."""
+    start = None
     for s, v in samples:
-        if s >= t0 and abs(v) < still:
-            return s - t0
+        if s < t0:
+            continue
+        if abs(v) < still:
+            start = s if start is None else start
+            if s - start >= hold - 1e-9:
+                return start - t0
+        else:
+            start = None
     return None
 
 

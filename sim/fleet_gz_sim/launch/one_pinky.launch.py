@@ -92,8 +92,9 @@ def _start(context):
     server = ExecuteProcess(cmd=["gz", "sim", "-r", "-s", "-v", "2", str(world)],
                             name="gz_server", output="screen")
     actions = [
-        # Gazebo 통신(gz-transport)도 이 컴퓨터 안에서만. 다른 시뮬과 섞이지 않게 칸막이를 나눈다
-        SetEnvironmentVariable("GZ_IP", os.environ.get("GZ_IP", "127.0.0.1")),
+        # Gazebo 통신(gz-transport)도 이 컴퓨터 안에서만. 셸에 남은 GZ_IP(LAN 주소일 수 있다)는
+        # 쓰지 않는다. 다른 시뮬과 섞이지 않게 칸막이를 나눈다
+        SetEnvironmentVariable("GZ_IP", "127.0.0.1"),
         SetEnvironmentVariable("GZ_PARTITION", os.environ.get(
             "GZ_PARTITION", f"fleet_gz_{os.environ['ROS_DOMAIN_ID']}")),
         # 제조사 메시(package://pinky_description/...)를 Gazebo가 찾게 한다
@@ -103,11 +104,12 @@ def _start(context):
         Node(package="robot_state_publisher", executable="robot_state_publisher",
              namespace=ns, output="screen", remappings=TF_REMAPS,
              parameters=[{"robot_description": robot_description, "use_sim_time": True}]),
-        Node(package="ros_gz_sim", executable="create", output="screen",
+        Node(package="ros_gz_sim", executable="create", namespace=ns, output="screen",
              arguments=["-world", "lane_arena", "-name", ns, "-topic", f"/{ns}/robot_description",
                         "-x", value("x"), "-y", value("y"), "-z", "0.01", "-Y", value("yaw")]),
-        Node(package="ros_gz_bridge", executable="parameter_bridge", name=f"{ns}_gz_bridge",
-             output="screen", arguments=bridge_args, remappings=bridge_remaps,
+        # 브리지 토픽 이름은 모두 절대 이름이라 namespace는 노드 이름에만 붙는다
+        Node(package="ros_gz_bridge", executable="parameter_bridge", name="gz_bridge",
+             namespace=ns, output="screen", arguments=bridge_args, remappings=bridge_remaps,
              parameters=[{"use_sim_time": True}]),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(nav / "launch" / "nav2.launch.py")),
