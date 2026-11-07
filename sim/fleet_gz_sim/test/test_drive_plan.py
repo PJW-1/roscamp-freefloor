@@ -141,6 +141,7 @@ def test_a_held_value_counts_up_to_the_next_sample_and_from_before_the_moment():
     (Codex 재리뷰)."""
     assert time_to_stop([(0.0, 0.0), (1.0, 0.2)], 0.0) == pytest.approx(0.0)
     assert time_to_stop([(0.0, 0.2), (0.5, 0.0)], 1.0, end=2.0) == pytest.approx(0.0)
+    assert time_to_stop([(0.0, 0.0), (0.5, 0.2)], 1.0, end=2.0) is None  # 마지막 값은 움직임
 
 
 def test_a_gap_in_a_streamed_record_is_not_seen_as_a_stop():
