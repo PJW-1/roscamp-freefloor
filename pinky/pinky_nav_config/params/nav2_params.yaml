@@ -1,0 +1,245 @@
+# 핑키 한 대의 Nav2 설정. launch/nav2.launch.py가 로봇 namespace(/pinky1 등) 안에 띄운다.
+#
+# 출발점: 제조사 pinky_navigation/params/nav2_params.yaml(pinky_pro 014a09f) 위에
+# 핑키_제어파트_전달사항_2026-11-06의 nav2_overrides 값(0.33 m 통로 Gazebo 연구)을 덮었다.
+# 제조사 값과 다른 줄에는 이유를 적었다. 실제 지도에서 다시 맞춘다.
+#
+# <robot_namespace>는 launch가 "/pinky1"처럼 바꾼다. Jazzy costmap 층은 상대 토픽을
+# costmap 노드 안(/pinky1/local_costmap/scan)으로 풀기 때문에 절대 이름을 쓴다.
+# 노드 이름 키는 launch가 RewrittenYaml(root_key=namespace)로 namespace 아래에 넣는다.
+
+amcl:
+  ros__parameters:
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    base_frame_id: base_footprint
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+    do_beamskip: false
+    global_frame_id: map
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 100.0
+    laser_min_range: -1.0
+    laser_model_type: likelihood_field
+    max_beams: 60
+    max_particles: 2000
+    min_particles: 500
+    odom_frame_id: odom
+    pf_err: 0.05
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    resample_interval: 1
+    robot_model_type: nav2_amcl::DifferentialMotionModel
+    save_pose_rate: 0.5
+    sigma_hit: 0.05  # 전달사항 nav2_overrides(제조사 0.2). 1 cm 지도에 맞춘 값
+    tf_broadcast: true
+    transform_tolerance: 1.0
+    update_min_a: 0.1
+    update_min_d: 0.15
+    z_hit: 0.5
+    z_max: 0.05
+    z_rand: 0.5
+    z_short: 0.05
+    scan_topic: scan
+    map_topic: map_fine  # R15: AMCL만 1 cm 지도를 읽는다(costmap은 5 cm 지도 map)
+    set_initial_pose: true
+    initial_pose: {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0}  # launch 인자로 덮는다
+
+map_server:
+  ros__parameters:
+    topic_name: map
+    frame_id: map
+    yaml_filename: ""  # launch 인자 map
+
+map_server_fine:
+  ros__parameters:
+    topic_name: map_fine
+    frame_id: map
+    yaml_filename: ""  # launch 인자 map_fine
+
+# 계약의 navigate_to_pose(real_only)를 위해 띄운다. pinky_fsm은 이것을 쓰지 않고
+# controller의 follow_path를 바로 부른다. BT는 launch가 bt/plan_once_no_recovery.xml로 준다.
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_footprint
+    odom_topic: odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    action_server_result_timeout: 900.0
+    # navigate_through_poses는 띄우지 않는다(기본 BT에 Spin·BackUp 복구가 있다, R14)
+    navigators: ["navigate_to_pose"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    error_code_names: ["compute_path_error_code", "follow_path_error_code"]
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+    costmap_update_timeout: 0.30
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 1.0  # 전달사항(제조사 0.3)
+    odom_topic: odom
+    # 안내 3절: 버전 2에서 관제가 /{pinky}/speed_limit로 로봇별 속도 제한을 보낸다. 지우지 않는다
+    speed_limit_topic: speed_limit
+    enable_stamped_cmd_vel: false
+    publish_zero_velocity: true
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.05  # 전달사항(제조사 0.5)
+      movement_time_allowance: 10.0
+    general_goal_checker:
+      stateful: true
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.05  # R4: 관제 도착 허용치 0.15 m보다 작게(제조사 0.25)
+      yaw_goal_tolerance: 0.12  # 전달사항(제조사 0.25)
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.25  # 전달사항(제조사 0.2)
+      lookahead_dist: 0.15  # 전달사항(제조사 0.6)
+      min_lookahead_dist: 0.10  # 전달사항(제조사 0.3)
+      max_lookahead_dist: 0.25  # 전달사항(제조사 0.9)
+      lookahead_time: 1.5
+      use_velocity_scaled_lookahead_dist: true
+      rotate_to_heading_angular_vel: 1.0
+      transform_tolerance: 0.2
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.6
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 0.6  # 전달사항(제조사 1.0)
+      use_regulated_linear_velocity_scaling: false
+      use_fixed_curvature_lookahead: false
+      curvature_lookahead_dist: 0.6
+      use_cost_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 0.5
+      regulated_linear_scaling_min_speed: 0.05
+      # R12: 제자리 회전 각도 0.25 유지(제조사 0.35. 0.8은 Gazebo 충돌 경고 8 → 717건).
+      # use_rotate_to_heading과 allow_reversing은 함께 켤 수 없어 후진은 BackUp으로 한다(안내 3절)
+      use_rotate_to_heading: true
+      allow_reversing: false
+      rotate_to_heading_min_angle: 0.25
+      max_angular_accel: 3.2
+      max_robot_pose_search_dist: 1.4875
+      cost_scaling_dist: 0.6
+      cost_scaling_gain: 1.5
+      inflation_cost_scaling_factor: 3.0
+      interpolate_curvature_after_goal: false
+      use_cancel_deceleration: false
+      cancel_deceleration: 3.2
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.025  # 전달사항(제조사 0.05)
+      footprint: "[[0.06, 0.06], [0.06, -0.06], [-0.06, -0.06], [-0.06, 0.06]]"
+      # 제조사는 voxel_layer. 라이다가 2D라 같은 일을 하는 obstacle_layer로 쓴다
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: <robot_namespace>/scan
+          data_type: "LaserScan"
+          clearing: true
+          marking: true
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+          max_obstacle_height: 2.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.15
+      # pinky_fsm이 local_costmap/costmap(OccupancyGrid) 전체를 받아 BLOCKED를 판단한다
+      always_send_full_costmap: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      footprint: "[[0.06, 0.06], [0.06, -0.06], [-0.06, -0.06], [-0.06, 0.06]]"
+      footprint_padding: 0.03
+      resolution: 0.05
+      track_unknown_space: true
+      # 안내 3절: 버전 2 우회 경로 계산을 위해 라이다 장애물 층을 둔다
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+        map_topic: <robot_namespace>/map
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: <robot_namespace>/scan
+          data_type: "LaserScan"
+          clearing: true
+          marking: true
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+          max_obstacle_height: 2.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.15
+      always_send_full_costmap: true
+
+# 안내 3절: 관제가 /{pinky}/compute_path_to_pose, /{pinky}/is_path_valid를 부를 수 있게 띄워 둔다
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    costmap_update_timeout: 1.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.5
+      use_astar: false
+      allow_unknown: true
+
+# 안내 3절: BackUp은 두되 BT 자동 복구로는 쓰지 않는다(R14). 어느 BT도 부르지 않는다
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["backup"]
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.1
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 3.2
+    enable_stamped_cmd_vel: false

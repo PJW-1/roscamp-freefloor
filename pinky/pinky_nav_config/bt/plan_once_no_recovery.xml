@@ -1,0 +1,20 @@
+<!--
+  NavigateToPose용 BT. 목표마다 경로를 한 번 계획하고 FollowPath로 따른다.
+  - 복구(Spin, BackUp, Wait, 지도 지우기)가 없다(R14).
+  - 주기적 재계획이 없다(안내 5절: 핑키가 스스로 경로를 다시 짜지 않는다).
+  바탕: nav2_bt_navigator의 navigate_w_replanning_only_if_goal_is_updated.xml
+  pinky_fsm은 이 BT를 쓰지 않는다(controller의 follow_path를 바로 부른다).
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <PipelineSequence name="PlanOnceThenFollow">
+      <GoalUpdatedController>
+        <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"
+                           error_code_id="{compute_path_error_code}"/>
+      </GoalUpdatedController>
+      <FollowPath path="{path}" controller_id="FollowPath"
+                  goal_checker_id="general_goal_checker"
+                  error_code_id="{follow_path_error_code}"/>
+    </PipelineSequence>
+  </BehaviorTree>
+</root>
