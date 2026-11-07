@@ -1,6 +1,11 @@
 # 이름, 타입, QoS의 유일한 기준. 코드는 `key`로 찾으므로 이름이나 QoS는 여기만 고친다.
 # 팀 합의 전까지 모두 초안이다. QoS depth는 실제 Wi-Fi에서 측정해야 한다.
-version: 0.3-draft
+version: 0.4-draft
+# 0.4 (2026-11-07, 제안): /fleet/heartbeat를 HEARTBEAT 프로필(reliable, depth 1)로 바꿨다.
+# best_effort는 재전송이 없어 관제가 살아 있어도 Wi-Fi에서 3번 연달아 빠지면(1.5 s) 핑키가 선다.
+# 끊김 판단은 그대로 앱 타이머(heartbeat_timeout_s, 벽시계)로 한다. 출처: Confluence
+# 「VDA 5050(v3.0) 선례로 보는 다중 토픽 처리」 7.1절, FMS 개선 지시서 1.5, 핑키 FSM 구현 안내 2.3.
+# MoveTo 결과 reason에 PATH_NOT_CONNECTED를 더했다(안내 2.2, 지시서 7.5).
 # 0.3 (2026-11-06): 관제가 요구하는 heartbeat를 /fms/heartbeat에서 /fleet/heartbeat로 옮겼다.
 # 나머지 이름, 필드, QoS는 그대로다. 0.3에 더하는 것은 모두 관제 요구(팀 합의 전)다.
 
@@ -12,9 +17,11 @@ qos_profiles:
   STATE: {reliability: best_effort, durability: volatile, depth: 5}
   LATCHED: {reliability: reliable, durability: transient_local, depth: 1}
   EVENT: {reliability: reliable, durability: volatile, depth: 50}
+  HEARTBEAT: {reliability: reliable, durability: volatile, depth: 1}
 
 topics:
   # state에 BLOCKED(앞 물체로 섬), LOCALIZING(위치를 못 잡음)을 더했다. 필드는 그대로다.
+  # 상태는 변할 때만이 아니라 주기적으로(권장 10 Hz) 계속 발행한다. 하나를 잃어도 다음 값이 대신한다.
   - {key: robot_state, name: "/{pinky}/state", type: fleet_interfaces/msg/RobotState, qos: STATE}
   - {key: arm_state, name: "/{arm}/state", type: fleet_interfaces/msg/ArmState, qos: STATE}
   - {key: vision_items, name: "/{arm}/vision/items", type: fleet_interfaces/msg/ItemArray, qos: LATCHED, instances: {arm: [arm1, arm2]}}
@@ -22,12 +29,14 @@ topics:
   - {key: assignments, name: "/fleet/assignments", type: fleet_interfaces/msg/AssignmentArray, qos: LATCHED}
   - {key: robots, name: "/fleet/robots", type: fleet_interfaces/msg/RobotStatusArray, qos: LATCHED}
   # 관제 요구(팀 합의 전). 로봇이 이 토픽을 못 들으면 스스로 멈춘다. 0.3 전에는 /fms/heartbeat였다.
-  - {key: heartbeat, name: "/fleet/heartbeat", type: std_msgs/msg/Header, qos: STATE}
+  # 0.4부터 HEARTBEAT 프로필. 빠짐 자체가 정지 조건이라 재전송이 필요하다.
+  - {key: heartbeat, name: "/fleet/heartbeat", type: std_msgs/msg/Header, qos: HEARTBEAT}
   - {key: zones, name: "/fleet/zones", type: fleet_interfaces/msg/ZoneStateArray, qos: LATCHED}
   - {key: events, name: "/central/events", type: fleet_interfaces/msg/FleetEvent, qos: EVENT}
 
 actions:
   # 결과 reason에 HEARTBEAT_LOST(heartbeat가 끊겨 스스로 섬)를 더했다.
+  # 0.4: 결과 reason에 PATH_NOT_CONNECTED(path가 로봇 위치를 지나지 않음)를 더했다(제안).
   # goal에 path(레인 폴리라인, geometry_msgs/Pose[])를 더했다(11-06 지시서 7번). 비면 점 목표다.
   - {key: move_to, name: "/{pinky}/move_to", type: fleet_interfaces/action/MoveTo}
   - {key: dock, name: "/{pinky}/dock", type: fleet_interfaces/action/Dock}

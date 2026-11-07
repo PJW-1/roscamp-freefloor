@@ -7,6 +7,8 @@ string REASON_NAV_ABORTED="NAV_ABORTED"
 string REASON_CANCELED="CANCELED"
 string REASON_TIMEOUT="TIMEOUT"
 string REASON_HEARTBEAT_LOST="HEARTBEAT_LOST"
+# 제안(팀 합의 전): path가 로봇의 지금 위치를 지나지 않아 따라가지 않았다(R20)
+string REASON_PATH_NOT_CONNECTED="PATH_NOT_CONNECTED"
 
 bool success
 string reason
