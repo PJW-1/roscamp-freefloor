@@ -133,6 +133,14 @@ def test_a_command_holds_after_the_last_zero_until_the_record_ends():
     cmd = [(0.0, 0.2), (0.05, 0.2), (0.1, 0.0)]
     assert time_to_stop(cmd, 0.0, end=1.0) == pytest.approx(0.1)
     assert time_to_stop(cmd, 0.0) is None  # 기록이 언제 끝났는지 모르면 이어졌는지 모른다
+    assert time_to_stop([(0.0, 0.2), (0.9, 0.0)], 0.0, end=1.0) is None  # 끝 0.1 s 전에 섰다
+
+
+def test_a_held_value_counts_up_to_the_next_sample_and_from_before_the_moment():
+    """0이 1 s 이어진 뒤 다시 움직여도 그동안은 서 있었다. t0 앞 마지막 값도 t0에 이어진다
+    (Codex 재리뷰)."""
+    assert time_to_stop([(0.0, 0.0), (1.0, 0.2)], 0.0) == pytest.approx(0.0)
+    assert time_to_stop([(0.0, 0.2), (0.5, 0.0)], 1.0, end=2.0) == pytest.approx(0.0)
 
 
 def test_a_gap_in_a_streamed_record_is_not_seen_as_a_stop():

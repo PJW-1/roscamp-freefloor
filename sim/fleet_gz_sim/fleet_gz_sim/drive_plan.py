@@ -138,13 +138,14 @@ def time_to_stop(samples: Sequence[tuple[float, float]], t0: float, still: float
     start = prev = None
     for s, v in samples:
         if s < t0:
+            start, prev = (t0 if abs(v) < still else None), s  # t0에는 앞 마지막 값이 이어진다
             continue
         if start is not None and max_gap is not None and s - prev > max_gap:
-            start = None
+            start = None  # 빈틈: 그동안 서 있었는지 모른다
+        elif start is not None and s - start >= hold - 1e-9:
+            return start - t0  # 낮은 값이 s까지 이어졌다
         if abs(v) < still:
             start = s if start is None else start
-            if s - start >= hold - 1e-9:
-                return start - t0
         else:
             start = None
         prev = s
