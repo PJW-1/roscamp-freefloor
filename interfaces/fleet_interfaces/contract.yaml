@@ -21,6 +21,7 @@ qos_profiles:
 
 topics:
   # state에 BLOCKED(앞 물체로 섬), LOCALIZING(위치를 못 잡음)을 더했다. 필드는 그대로다.
+  # RECOVERING(2026-11-09, 제안): 핑키 FSM이 쥔 구역 안에서 짧게 후진하고 다시 가는 자가 복구 중.
   # 상태는 변할 때만이 아니라 주기적으로(권장 10 Hz) 계속 발행한다. 하나를 잃어도 다음 값이 대신한다.
   - {key: robot_state, name: "/{pinky}/state", type: fleet_interfaces/msg/RobotState, qos: STATE}
   - {key: arm_state, name: "/{arm}/state", type: fleet_interfaces/msg/ArmState, qos: STATE}

@@ -6,6 +6,7 @@ string STATE_DOCKED="DOCKED"
 string STATE_ERROR="ERROR"
 string STATE_BLOCKED="BLOCKED"
 string STATE_LOCALIZING="LOCALIZING"
+string STATE_RECOVERING="RECOVERING"
 
 string robot_id
 geometry_msgs/Pose2D pose
