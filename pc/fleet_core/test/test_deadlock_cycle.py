@@ -306,3 +306,19 @@ def test_a_cycle_coming_and_going_does_not_restart_the_one_being_handled():
     unresolved = drive.events("DEADLOCK_UNRESOLVED")
     assert [e.robot for _, e in unresolved] == ["r3"]
     assert len(drive.events("DEADLOCK_DETECTED")) == 1
+
+
+def test_a_retreat_that_frees_a_zone_but_leaves_the_cycle_is_unresolved():
+    """The retreat gave up a zone (here a stand-in: done, nothing left to wait for), yet every
+    wait edge of the cycle is still there. It goes on to DEADLOCK_UNRESOLVED and, if it lasts,
+    to isolation; before, it stayed handled with nothing more done (Codex review of bee4130)."""
+    drive = standing({"r1": "T1", "r2": "T2"})
+    retreats = []
+    drive.core._retreat = lambda robot, cycle: retreats.append(robot)
+    force_waits(drive, {"r1": "r2", "r2": "r1"})
+    drive.run(PARAMS.deadlock_grace_s + 1.0)
+    assert retreats == ["r1"]
+    assert [e.robot for _, e in drive.events("DEADLOCK_UNRESOLVED")] == ["r1"]
+    drive.run(PARAMS.deadlock_unresolved_s + 0.5)
+    assert [i.robot for _, i in drive.outputs(RobotIsolated)] == ["r1"]
+    assert len(drive.events("DEADLOCK_UNRESOLVED")) == 1

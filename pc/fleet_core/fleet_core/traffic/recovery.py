@@ -191,6 +191,12 @@ class TrafficRecovery:
             self._retreat(choose_retreat(cycle, self._priority), cycle)
         elif self._retreating and now >= self._retreating[2]:
             self._finish_retreat(cycle)
+        elif self._deadlock_acted and not self._retreating and self._unresolved_at is None:
+            # The retreat gave up a zone, yet every wait edge of this cycle is still here.
+            robot = choose_retreat(cycle, self._priority)
+            self._event("ERROR", "DEADLOCK_UNRESOLVED",
+                        f"{robot} of {cycle} gave up a zone but the cycle remains", robot)
+            self._unresolved_at = now
         elif (self._unresolved_at is not None
               and now - self._unresolved_at >= self.params.deadlock_unresolved_s):
             self._unresolved_at = None
