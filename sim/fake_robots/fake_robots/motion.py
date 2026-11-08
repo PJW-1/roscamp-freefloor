@@ -28,9 +28,6 @@ def abort_at_shutdown(handle) -> None:
         pass
 
 
-ON_SEGMENT_M = 0.05  # 이만큼 안이면 그 선분 위로 본다
-
-
 class Motion:
     """목표 하나를 향해 직선으로 가는 점. 거칠 점(via)이 있으면 선분을 차례로 간다."""
 
@@ -50,22 +47,19 @@ class Motion:
         self._skip_passed()
 
     def _skip_passed(self) -> None:
-        """이미 지나 다음 선분 위에 있으면 그 점을 뺀다. FollowPath처럼 가장 가까운 점부터 간다."""
-        while self.via:
-            a = self.via[0]
-            b = self.via[1] if len(self.via) > 1 else self.target
-            length = math.dist(a, b)
-            if length == 0.0:
-                self.via.pop(0)
-                continue
-            ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
-            s = (self.x - a[0]) * ux + (self.y - a[1]) * uy
-            off = abs((self.x - a[0]) * uy - (self.y - a[1]) * ux)
-            if not (1e-6 < s <= length and off <= ON_SEGMENT_M):
-                return
-            passed = self.via.pop(0)
-            # 이미 지난 꼭짓점. 첫 점을 모르면 이 점부터 잰다
-            self.trail = [*self.trail, passed] if self._has_start else [passed]
+        """path 위 가장 가까운 점(모든 선분 중, 같으면 뒤 선분)에서 시작한다. pinky_fsm처럼
+        그 선분 앞의 꼭짓점은 지난 것이다. 첫 점을 모르면 마지막으로 지난 점부터 잰다."""
+        if not self.via:
+            return
+        points = [self.trail[0], *self.via, self.target]
+        gaps = [_segment_gap(self.x, self.y, a, b)
+                for a, b in zip(points, points[1:], strict=False)]
+        nearest = min(gaps)
+        i = max(k for k, gap in enumerate(gaps) if gap <= nearest + 1e-9)
+        if i == 0:
+            return
+        passed, self.via = points[1:i + 1], points[i + 1:-1]
+        self.trail = [*self.trail, *passed] if self._has_start else [passed[-1]]
 
     def clear_target(self) -> None:
         self.target = None
