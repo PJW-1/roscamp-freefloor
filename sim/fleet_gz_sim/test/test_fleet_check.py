@@ -91,14 +91,24 @@ def test_positions_count_as_outside_only_after_the_fleet_publishes_zones():
     c = check()
     c.on_truth("pinky1", 1.0, *W, 0.0, 0.0)
     assert c.summary()["robots"]["pinky1"]["outside_held_samples"] == 0
-    c.on_zones({ZONE_W: "pinky2"})
-    c.on_truth("pinky1", 1.1, *W, 0.0, 0.0)
     c.on_zones({ZONE_W: "pinky1"})
+    c.on_truth("pinky1", 1.1, W[0] + 2.0, W[1] + 2.0, 0.0, 0.0)
     c.on_truth("pinky1", 1.2, *W, 0.0, 0.0)
     c.on_truth("pinky1", 1.3, W[0] + 0.01, W[1], 0.0, 0.0)
     s = c.summary()["robots"]["pinky1"]
     assert s["outside_held_samples"] == 1 and s["zone_samples"] == 3
     assert c.summary()["outside_held_samples"] == 1
+
+
+def test_holding_no_zone_is_counted_apart_from_outside():
+    """A robot that waits in a parking cell may hold nothing; that is not 'outside'."""
+    c = check()
+    c.on_zones({ZONE_W: "pinky2"})
+    c.on_truth("pinky1", 1.0, *W, 0.0, 0.0)
+    s = c.summary()
+    assert s["robots"]["pinky1"]["outside_held_samples"] == 0
+    assert s["robots"]["pinky1"]["no_zone_held_samples"] == 1
+    assert s["no_zone_held_samples"] == 1 and s["zone_samples"] == 1
 
 
 def test_far_from_every_held_zone_is_outside():

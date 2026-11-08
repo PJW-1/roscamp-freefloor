@@ -76,7 +76,8 @@ class FleetCheckNode(Node):
                 f"min distance {summary['min_distance_m']} m {summary['min_distance_pair']}, "
                 f"stops {summary['stops']} ({summary['stops_while_moving']} while MOVING), "
                 f"outside held zones {summary['outside_held_samples']}/"
-                f"{summary['zone_samples']}, sim {summary['sim_span_s']} s, "
+                f"{summary['zone_samples']} (no zone held {summary['no_zone_held_samples']}), "
+                f"sim {summary['sim_span_s']} s, "
                 f"rtf {summary['real_time_factor']}")
         return summary
 

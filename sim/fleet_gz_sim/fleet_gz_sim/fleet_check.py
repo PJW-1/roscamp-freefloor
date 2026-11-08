@@ -7,8 +7,9 @@ reports, and the zone holders the fleet publishes. It keeps:
     after moving faster than MOVING_MPS. Stops while the robot reports MOVING are also counted
     apart (a halt in the middle of a move_to)
   - pose samples outside every zone the fleet holds for that robot (farther than margin_m from
-    the zone floor, fleet_core LaneMap.distance_to_zone). Counted only after the first zone
-    message, so the time before the fleet starts does not count
+    the zone floor, fleet_core LaneMap.distance_to_zone), and apart from those the samples while
+    the robot holds no zone at all. Counted only after the first zone message, so the time
+    before the fleet starts does not count
   - sim and wall time spans and their ratio (real-time factor)
 """
 from __future__ import annotations
@@ -36,6 +37,7 @@ class _Robot:
         self.stops_while_moving = 0
         self.zone_samples = 0
         self.outside = 0
+        self.no_zone = 0
         self.worst_outside_m = 0.0
 
 
@@ -105,15 +107,18 @@ class FleetCheck:
             return
         me.zone_samples += 1
         held = [zone for zone, holder in self.holders.items() if holder == robot]
-        away = min((self.site.distance_to_zone(x, y, zone) for zone in held), default=math.inf)
+        if not held:
+            me.no_zone += 1
+            return
+        away = min(self.site.distance_to_zone(x, y, zone) for zone in held)
         if away > self.margin_m:
             me.outside += 1
-            if math.isfinite(away):
-                me.worst_outside_m = max(me.worst_outside_m, away)
+            me.worst_outside_m = max(me.worst_outside_m, away)
 
     def summary(self) -> dict:
         robots = {name: {"stops": r.stops, "stops_while_moving": r.stops_while_moving,
-                         "outside_held_samples": r.outside, "zone_samples": r.zone_samples,
+                         "outside_held_samples": r.outside, "no_zone_held_samples": r.no_zone,
+                         "zone_samples": r.zone_samples,
                          "worst_outside_m": round(r.worst_outside_m, 3)}
                   for name, r in self.robots.items()}
         sim_span = wall_span = rtf = None
@@ -129,6 +134,7 @@ class FleetCheck:
             "stops": sum(r.stops for r in self.robots.values()),
             "stops_while_moving": sum(r.stops_while_moving for r in self.robots.values()),
             "outside_held_samples": sum(r.outside for r in self.robots.values()),
+            "no_zone_held_samples": sum(r.no_zone for r in self.robots.values()),
             "zone_samples": sum(r.zone_samples for r in self.robots.values()),
             "sim_span_s": None if sim_span is None else round(sim_span, 2),
             "wall_span_s": None if wall_span is None else round(wall_span, 2),

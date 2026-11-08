@@ -1,7 +1,7 @@
 # Gazebo 3대 순환 운행: 주문이 40초마다 하나씩 24분 동안 들어온다(36건).
 # 로봇은 주문을 받을 때마다 대기 칸 -> 작업대(W) -> 출고(O) -> 대기 칸이나 다음 작업대로 간다.
 # 진짜 관제가 길과 잠금을 정하므로, 목적지가 로봇마다 계속 바뀌며 서로 비켜 가는 것을 본다.
-# 팔은 가짜(fake_robots), 도킹은 시뮬 대역(sim_stand_in)이다. 장애물은 obstacles 인자로 따로 준다.
+# 팔은 가짜(fake_robots). 도킹은 기본이 진짜 pinky_fsm(DOCK_UNAVAILABLE)이라 끝까지 돌리려면 sim_dock_stub:=true. 장애물은 obstacles 인자로 따로 준다.
 # Gazebo 시계를 쓰므로 speed_factor는 쓰이지 않는다(fake 세계에서 돌릴 때만 쓰인다).
 seed: 21
 speed_factor: 5.0
