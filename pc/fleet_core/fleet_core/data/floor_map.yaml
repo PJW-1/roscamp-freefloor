@@ -1,0 +1,30 @@
+# 자유바닥 지도(실험, 2026-11-09). 빈 바닥은 Gazebo lane_arena의 지도 이미지에서 읽는다.
+# lane_arena.pgm은 sim/fleet_gz_sim/maps/lane_arena.pgm과 같은 파일이다(시험이 비교한다).
+# 좌표는 lane_map.yaml, Gazebo 월드와 같다. 그래서 같은 주문·같은 시작 자리로 두 방식을 비교한다.
+image: lane_arena.pgm
+resolution: 0.05
+origin: [-0.15, 0.1, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+cell_m: 0.10          # 제안: 잠금 칸 한 변
+robot_radius_m: 0.08  # 추정: fleet_params.yaml과 같은 값. 뒤 트레이는 실측 전이라 아직 미포함
+cell_margin_m: 0.05   # 제안: 몸이 쓰는 칸은 반지름 + 이 여유로 잡는다. 보고 잡음(σ 0.03 m)을 덮는다
+# 스테이션 도크 자세. lane_map.yaml의 도크 지점과 같다(시험이 비교한다).
+docks:
+  WORK: [1.05, 1.55]
+  OUTBOUND: [2.95, 1.55]
+# 주차 위치, 주행 순서대로(lane_map.yaml parking과 같다).
+parking:
+  - {id: P-3, x: 0.35, y: 1.55}
+  - {id: P-4, x: 0.35, y: 1.95}
+  - {id: P-5, x: 0.80, y: 2.05}
+  - {id: P-6, x: 1.20, y: 2.05}
+# 고정 선: 이 선과 방향으로만 다닌다. 들어가기 전에 선 전체의 칸을 한꺼번에 잡는다.
+# 이 경기장에는 양옆이 막힌 좁은 통로가 없어서 도킹 접근과 도크에서 나가는 선만 둔다.
+# 선은 lane_map.yaml의 도크 앞 레인과 같다(Q->W, W->A, QO->O, O->B).
+fixed_lines:
+  work_in: [[0.65, 1.15], [1.05, 1.55]]
+  work_out: [[1.05, 1.55], [1.45, 1.15]]
+  outbound_in: [[3.35, 1.15], [2.95, 1.55]]
+  outbound_out: [[2.95, 1.55], [2.55, 1.15]]

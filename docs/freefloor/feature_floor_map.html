@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>feature_floor_map</title>
+<style>
+:root { --bg: #fafaf7; --ink: #222; --wall: #555; --tight: #ddd; --grid: #eee; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1b1b1b; --ink: #ddd; --wall: #999; --tight: #333; --grid: #262626; }
+}
+body { margin: 0; padding: 12px 16px; background: var(--bg); color: var(--ink);
+       font: 14px system-ui, sans-serif; }
+canvas { max-width: 100%; height: auto; border: 1px solid var(--grid); }
+#bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+#t { font-variant-numeric: tabular-nums; min-width: 7em; }
+input[type=range] { flex: 1; min-width: 160px; }
+</style></head><body>
+<h1 style="font-size:16px;margin:0 0 4px">feature_floor_map</h1>
+<div id="bar"><button id="play">play</button><input id="slider" type="range" min="0" value="0">
+<span id="t"></span><span id="legend"></span></div>
+<canvas id="c"></canvas>
+<script>
+const DATA = {"cols":27,"rows":18,"cell":0.1,"x0":0.05,"y0":0.0,"radius":0.08,"blocked":["c0_0","c0_1","c0_10","c0_11","c0_12","c0_13","c0_14","c0_15","c0_16","c0_17","c0_2","c0_3","c0_4","c0_5","c0_6","c0_7","c0_8","c0_9","c10_0","c10_17","c11_0","c11_17","c12_0","c12_17","c13_0","c13_17","c14_0","c14_17","c15_0","c15_17","c16_0","c16_17","c17_0","c17_17","c18_0","c18_17","c19_0","c19_17","c1_0","c1_17","c20_0","c20_17","c21_0","c21_17","c22_0","c22_17","c23_0","c23_17","c24_0","c24_17","c25_0","c25_17","c26_0","c26_1","c26_10","c26_11","c26_12","c26_13","c26_14","c26_15","c26_16","c26_17","c26_2","c26_3","c26_4","c26_5","c26_6","c26_7","c26_8","c26_9","c2_0","c2_17","c3_0","c3_17","c4_0","c4_17","c5_0","c5_17","c6_0","c6_17","c7_0","c7_17","c8_0","c8_17","c9_0","c9_17"],"walls":[],"lines":{"work_in":[[0.6,0.9],[0.7,1.325]],"work_out":[[0.7,1.325],[1.0,1.5]],"outbound_in":[[2.4,0.9],[2.0,1.325]],"outbound_out":[[2.0,1.325],[1.7,1.15]],"tunnel_east":[[1.0,0.6],[2.0,0.4]],"tunnel_west":[[2.0,0.4],[1.0,0.6]]},"frames":[]};
+const PX = 18, cv = document.getElementById("c"), cx = cv.getContext("2d");
+cv.width = DATA.cols * PX; cv.height = DATA.rows * PX;
+const COLORS = ["#d1495b", "#2e86ab", "#3f8f3f", "#e0a100", "#8e44ad", "#16a085"];
+const robots = [...new Set(DATA.frames.flatMap(f => Object.keys(f.robots || {})))].sort();
+const color = r => COLORS[robots.indexOf(r) % COLORS.length];
+document.getElementById("legend").innerHTML = robots.map(
+  r => `<span style="color:${color(r)}">&#9632; ${r}</span>`).join(" ");
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n);
+const toPx = (x, y) => [(x - DATA.x0) / DATA.cell * PX, cv.height - (y - DATA.y0) / DATA.cell * PX];
+function cellRect(id) {
+  const [i, j] = id.slice(1).split("_").map(Number);
+  return [i * PX, cv.height - (j + 1) * PX];
+}
+function seg(a, b, c, d) { cx.beginPath(); cx.moveTo(a, b); cx.lineTo(c, d); cx.stroke(); }
+function polyline(pts) {
+  cx.beginPath();
+  pts.forEach(([x, y], n) => { const [u, v] = toPx(x, y); n ? cx.lineTo(u, v) : cx.moveTo(u, v); });
+  cx.stroke();
+}
+function draw(k) {
+  cx.fillStyle = css("--bg"); cx.fillRect(0, 0, cv.width, cv.height);
+  cx.strokeStyle = css("--grid");
+  for (let i = 0; i <= DATA.cols; i++) seg(i * PX, 0, i * PX, cv.height);
+  for (let j = 0; j <= DATA.rows; j++) seg(0, j * PX, cv.width, j * PX);
+  for (const id of DATA.blocked) {
+    const [x, y] = cellRect(id);
+    cx.fillStyle = DATA.walls.includes(id) ? css("--wall") : css("--tight");
+    cx.fillRect(x, y, PX, PX);
+  }
+  cx.lineWidth = 2; cx.setLineDash([4, 3]); cx.strokeStyle = "#888";
+  for (const pts of Object.values(DATA.lines)) polyline(pts);
+  cx.setLineDash([]);
+  const f = DATA.frames[k];
+  if (!f) return;
+  document.getElementById("t").textContent = `t = ${f.t.toFixed(1)} s`;
+  for (const [id, r] of Object.entries(f.cells)) {
+    const [x, y] = cellRect(id);
+    cx.globalAlpha = 0.35; cx.fillStyle = color(r); cx.fillRect(x, y, PX, PX); cx.globalAlpha = 1;
+  }
+  for (const [r, pts] of Object.entries(f.paths || {})) {
+    cx.strokeStyle = color(r); cx.lineWidth = 2; polyline(pts);
+  }
+  for (const [r, [x, y]] of Object.entries(f.robots || {})) {
+    const [u, v] = toPx(x, y);
+    cx.fillStyle = color(r); cx.beginPath();
+    cx.arc(u, v, DATA.radius / DATA.cell * PX, 0, 7); cx.fill();
+  }
+}
+const slider = document.getElementById("slider");
+slider.max = Math.max(0, DATA.frames.length - 1);
+slider.oninput = () => draw(+slider.value);
+let timer = null;
+document.getElementById("play").onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; return; }
+  timer = setInterval(() => {
+    if (+slider.value >= +slider.max) { clearInterval(timer); timer = null; return; }
+    slider.value = +slider.value + 1; draw(+slider.value);
+  }, 50);
+};
+draw(0);
+</script></body></html>

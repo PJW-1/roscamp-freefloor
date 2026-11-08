@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>floor_map</title>
+<style>
+:root { --bg: #fafaf7; --ink: #222; --wall: #555; --tight: #ddd; --grid: #eee; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1b1b1b; --ink: #ddd; --wall: #999; --tight: #333; --grid: #262626; }
+}
+body { margin: 0; padding: 12px 16px; background: var(--bg); color: var(--ink);
+       font: 14px system-ui, sans-serif; }
+canvas { max-width: 100%; height: auto; border: 1px solid var(--grid); }
+#bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+#t { font-variant-numeric: tabular-nums; min-width: 7em; }
+input[type=range] { flex: 1; min-width: 160px; }
+</style></head><body>
+<h1 style="font-size:16px;margin:0 0 4px">floor_map</h1>
+<div id="bar"><button id="play">play</button><input id="slider" type="range" min="0" value="0">
+<span id="t"></span><span id="legend"></span></div>
+<canvas id="c"></canvas>
+<script>
+const DATA = {"cols":40,"rows":24,"cell":0.1,"x0":-0.15,"y0":0.1,"radius":0.08,"blocked":["c0_0","c0_1","c0_10","c0_11","c0_12","c0_13","c0_14","c0_15","c0_16","c0_17","c0_18","c0_19","c0_2","c0_20","c0_21","c0_22","c0_23","c0_3","c0_4","c0_5","c0_6","c0_7","c0_8","c0_9","c10_0","c10_1","c10_2","c10_22","c10_23","c11_0","c11_1","c11_2","c11_22","c11_23","c12_0","c12_1","c12_2","c12_22","c12_23","c13_0","c13_1","c13_2","c13_22","c13_23","c14_0","c14_1","c14_2","c14_22","c14_23","c15_0","c15_1","c15_2","c15_22","c15_23","c16_0","c16_1","c16_2","c16_22","c16_23","c17_0","c17_1","c17_2","c17_22","c17_23","c18_0","c18_1","c18_2","c18_22","c18_23","c19_0","c19_1","c19_2","c19_22","c19_23","c1_0","c1_1","c1_10","c1_11","c1_12","c1_13","c1_14","c1_15","c1_16","c1_17","c1_18","c1_19","c1_2","c1_20","c1_21","c1_22","c1_23","c1_3","c1_4","c1_5","c1_6","c1_7","c1_8","c1_9","c20_0","c20_1","c20_2","c20_22","c20_23","c21_0","c21_1","c21_2","c21_22","c21_23","c22_0","c22_1","c22_2","c22_22","c22_23","c23_0","c23_1","c23_2","c23_22","c23_23","c24_0","c24_1","c24_2","c24_22","c24_23","c25_0","c25_1","c25_2","c25_22","c25_23","c26_0","c26_1","c26_19","c26_2","c26_20","c26_21","c26_22","c26_23","c27_0","c27_1","c27_19","c27_2","c27_20","c27_21","c27_22","c27_23","c28_0","c28_1","c28_19","c28_2","c28_20","c28_21","c28_22","c28_23","c29_0","c29_1","c29_19","c29_2","c29_20","c29_21","c29_22","c29_23","c2_0","c2_1","c2_10","c2_11","c2_12","c2_13","c2_14","c2_15","c2_16","c2_17","c2_18","c2_19","c2_2","c2_20","c2_21","c2_22","c2_23","c2_3","c2_4","c2_5","c2_6","c2_7","c2_8","c2_9","c30_0","c30_1","c30_19","c30_2","c30_20","c30_21","c30_22","c30_23","c31_0","c31_1","c31_19","c31_2","c31_20","c31_21","c31_22","c31_23","c32_0","c32_1","c32_19","c32_2","c32_20","c32_21","c32_22","c32_23","c33_0","c33_1","c33_19","c33_2","c33_20","c33_21","c33_22","c33_23","c33_3","c33_4","c34_0","c34_1","c34_19","c34_2","c34_20","c34_21","c34_22","c34_23","c34_3","c34_4","c34_5","c35_0","c35_1","c35_2","c35_22","c35_23","c35_3","c35_4","c35_5","c36_0","c36_1","c36_2","c36_22","c36_23","c36_3","c36_4","c36_5","c37_0","c37_1","c37_10","c37_11","c37_12","c37_13","c37_14","c37_15","c37_16","c37_17","c37_18","c37_19","c37_2","c37_20","c37_21","c37_22","c37_23","c37_3","c37_4","c37_5","c37_6","c37_7","c37_8","c37_9","c38_0","c38_1","c38_10","c38_11","c38_12","c38_13","c38_14","c38_15","c38_16","c38_17","c38_18","c38_19","c38_2","c38_20","c38_21","c38_22","c38_23","c38_3","c38_4","c38_5","c38_6","c38_7","c38_8","c38_9","c39_0","c39_1","c39_10","c39_11","c39_12","c39_13","c39_14","c39_15","c39_16","c39_17","c39_18","c39_19","c39_2","c39_20","c39_21","c39_22","c39_23","c39_3","c39_4","c39_5","c39_6","c39_7","c39_8","c39_9","c3_0","c3_1","c3_2","c3_22","c3_23","c3_3","c3_4","c3_5","c3_6","c3_7","c3_8","c3_9","c4_0","c4_1","c4_2","c4_22","c4_23","c4_3","c4_4","c5_0","c5_1","c5_2","c5_22","c5_23","c5_3","c5_4","c6_0","c6_1","c6_2","c6_22","c6_23","c6_3","c6_4","c7_0","c7_1","c7_2","c7_22","c7_23","c7_3","c7_4","c8_0","c8_1","c8_2","c8_22","c8_23","c9_0","c9_1","c9_2","c9_22","c9_23"],"walls":["c10_1","c10_23","c11_1","c11_23","c12_1","c12_23","c13_1","c13_23","c14_1","c14_23","c15_1","c15_23","c16_1","c16_23","c17_1","c17_23","c18_1","c18_23","c19_1","c19_23","c1_1","c1_10","c1_11","c1_12","c1_13","c1_14","c1_15","c1_16","c1_17","c1_18","c1_19","c1_2","c1_20","c1_21","c1_22","c1_23","c1_3","c1_4","c1_5","c1_6","c1_7","c1_8","c1_9","c20_1","c20_23","c21_1","c21_23","c22_1","c22_23","c23_1","c23_23","c24_1","c24_23","c25_1","c25_23","c26_1","c26_23","c27_1","c27_20","c27_21","c27_22","c27_23","c28_1","c28_20","c28_21","c28_22","c28_23","c29_1","c29_20","c29_21","c29_22","c29_23","c2_1","c2_2","c2_23","c2_3","c2_6","c2_7","c2_8","c30_1","c30_20","c30_21","c30_22","c30_23","c31_1","c31_20","c31_21","c31_22","c31_23","c32_1","c32_20","c32_21","c32_22","c32_23","c33_1","c33_20","c33_21","c33_22","c33_23","c34_1","c34_2","c34_23","c34_3","c34_4","c35_1","c35_2","c35_23","c35_3","c35_4","c36_1","c36_2","c36_23","c36_3","c36_4","c37_1","c37_2","c37_23","c37_3","c37_4","c38_1","c38_10","c38_11","c38_12","c38_13","c38_14","c38_15","c38_16","c38_17","c38_18","c38_19","c38_2","c38_20","c38_21","c38_22","c38_23","c38_3","c38_4","c38_5","c38_6","c38_7","c38_8","c38_9","c3_1","c3_2","c3_23","c3_3","c4_1","c4_2","c4_23","c4_3","c5_1","c5_2","c5_23","c5_3","c6_1","c6_2","c6_23","c6_3","c7_1","c7_23","c8_1","c8_23","c9_1","c9_23"],"lines":{"work_in":[[0.65,1.15],[1.05,1.55]],"work_out":[[1.05,1.55],[1.45,1.15]],"outbound_in":[[3.35,1.15],[2.95,1.55]],"outbound_out":[[2.95,1.55],[2.55,1.15]]},"frames":[]};
+const PX = 18, cv = document.getElementById("c"), cx = cv.getContext("2d");
+cv.width = DATA.cols * PX; cv.height = DATA.rows * PX;
+const COLORS = ["#d1495b", "#2e86ab", "#3f8f3f", "#e0a100", "#8e44ad", "#16a085"];
+const robots = [...new Set(DATA.frames.flatMap(f => Object.keys(f.robots || {})))].sort();
+const color = r => COLORS[robots.indexOf(r) % COLORS.length];
+document.getElementById("legend").innerHTML = robots.map(
+  r => `<span style="color:${color(r)}">&#9632; ${r}</span>`).join(" ");
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n);
+const toPx = (x, y) => [(x - DATA.x0) / DATA.cell * PX, cv.height - (y - DATA.y0) / DATA.cell * PX];
+function cellRect(id) {
+  const [i, j] = id.slice(1).split("_").map(Number);
+  return [i * PX, cv.height - (j + 1) * PX];
+}
+function seg(a, b, c, d) { cx.beginPath(); cx.moveTo(a, b); cx.lineTo(c, d); cx.stroke(); }
+function polyline(pts) {
+  cx.beginPath();
+  pts.forEach(([x, y], n) => { const [u, v] = toPx(x, y); n ? cx.lineTo(u, v) : cx.moveTo(u, v); });
+  cx.stroke();
+}
+function draw(k) {
+  cx.fillStyle = css("--bg"); cx.fillRect(0, 0, cv.width, cv.height);
+  cx.strokeStyle = css("--grid");
+  for (let i = 0; i <= DATA.cols; i++) seg(i * PX, 0, i * PX, cv.height);
+  for (let j = 0; j <= DATA.rows; j++) seg(0, j * PX, cv.width, j * PX);
+  for (const id of DATA.blocked) {
+    const [x, y] = cellRect(id);
+    cx.fillStyle = DATA.walls.includes(id) ? css("--wall") : css("--tight");
+    cx.fillRect(x, y, PX, PX);
+  }
+  cx.lineWidth = 2; cx.setLineDash([4, 3]); cx.strokeStyle = "#888";
+  for (const pts of Object.values(DATA.lines)) polyline(pts);
+  cx.setLineDash([]);
+  const f = DATA.frames[k];
+  if (!f) return;
+  document.getElementById("t").textContent = `t = ${f.t.toFixed(1)} s`;
+  for (const [id, r] of Object.entries(f.cells)) {
+    const [x, y] = cellRect(id);
+    cx.globalAlpha = 0.35; cx.fillStyle = color(r); cx.fillRect(x, y, PX, PX); cx.globalAlpha = 1;
+  }
+  for (const [r, pts] of Object.entries(f.paths || {})) {
+    cx.strokeStyle = color(r); cx.lineWidth = 2; polyline(pts);
+  }
+  for (const [r, [x, y]] of Object.entries(f.robots || {})) {
+    const [u, v] = toPx(x, y);
+    cx.fillStyle = color(r); cx.beginPath();
+    cx.arc(u, v, DATA.radius / DATA.cell * PX, 0, 7); cx.fill();
+  }
+}
+const slider = document.getElementById("slider");
+slider.max = Math.max(0, DATA.frames.length - 1);
+slider.oninput = () => draw(+slider.value);
+let timer = null;
+document.getElementById("play").onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; return; }
+  timer = setInterval(() => {
+    if (+slider.value >= +slider.max) { clearInterval(timer); timer = null; return; }
+    slider.value = +slider.value + 1; draw(+slider.value);
+  }, 50);
+};
+draw(0);
+</script></body></html>
