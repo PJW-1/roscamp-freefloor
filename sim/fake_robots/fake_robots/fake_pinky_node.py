@@ -4,6 +4,7 @@ from __future__ import annotations
 import random
 import threading
 import time
+from dataclasses import fields
 
 import rclpy
 from fleet_core.common.contract import to_ros_qos
@@ -35,10 +36,9 @@ from fake_robots.motion import (
     noisy_pose,
     path_gap,
 )
+from fake_robots.recovery import ObstacleRecovery, RecoveryParams
 
 NAV_ABORT_DELAY_S = 0.2  # 해제 거리(0.2 m)를 지나기 전, 관제가 선을 늘리기 전에 중단한다
-BLOCK_REPORT_S = 1.0  # 물체 앞에서 이만큼 서 있으면 BLOCKED(계약 4절)
-BLOCK_CLEAR_S = 1.0  # 물체가 이만큼 안 보이면 BLOCKED를 끄고 이어 간다
 OFF_COURSE_M = 1.0  # 운영자가 치운 로봇이 가는 곳(지도 모서리 밖)
 FEEDBACK_PERIOD_S = 0.2
 CONTROL_RATE_HZ = 20.0
@@ -85,9 +85,11 @@ class FakePinkyNode(Node):
         self._off_course = (site.origin[0] - OFF_COURSE_M, site.origin[1] - OFF_COURSE_M)
         self._site = site
         self._removed = False
-        self._stopped_at: float | None = None  # 물체 앞에서 선 시각
-        self._clear_at: float | None = None  # 물체가 사라진 시각
-        self._blocked = False
+        # 앞 물체와 자기 복구(제안). 값은 노드 파라미터로 바꾼다(recovery_attempts 0: 복구 없음)
+        self._recovery = ObstacleRecovery(RecoveryParams(**{
+            f.name: self.declare_parameter(f.name, f.default).value
+            for f in fields(RecoveryParams)}))
+        self._others = {}  # 다른 로봇의 진실 자세. 뒤에 있으면 후진하지 않는다
         self._sc = ScenarioClock(self)
         self._lock = threading.RLock()
         self._alive = True
@@ -111,6 +113,11 @@ class FakePinkyNode(Node):
         self.create_subscription(
             Header, contract.name("heartbeat"), self._on_heartbeat,
             to_ros_qos(contract.qos("heartbeat")))
+        for other in scenario.robots:
+            if other != self.robot_id:
+                self.create_subscription(
+                    RobotState, TRUTH_TOPIC.format(robot=other), self._on_other,
+                    to_ros_qos(contract.qos("robot_state")))
         group = ReentrantCallbackGroup()
         self._move_server = self._server(
             MoveTo, contract.name("move_to", pinky=self.robot_id), "move", group)
@@ -143,6 +150,9 @@ class FakePinkyNode(Node):
     def _running(self) -> bool:
         return self._alive and rclpy.ok()
 
+    def _on_other(self, msg: RobotState) -> None:
+        self._others[msg.robot_id] = (msg.pose.x, msg.pose.y)
+
     # -- the heartbeat ------------------------------------------------------------------
 
     def _on_heartbeat(self, _msg) -> None:
@@ -174,6 +184,7 @@ class FakePinkyNode(Node):
             self._rest = (RobotState.STATE_DOCKED if goal.kind == "dock" and success
                           else RobotState.STATE_IDLE)
             self._motion.clear_target()
+            self._recovery.restart()  # 후진과 RECOVERING을 멈춘다(명세 7번)
 
     def _accepted(self, handle, kind: str) -> None:
         goal = _Goal(kind, handle)
@@ -272,7 +283,8 @@ class FakePinkyNode(Node):
                 return
             if self._removed:
                 self._put_back(self._faults.put_back(t))
-            held = self._watch_obstacle(t, goal)
+            moving = goal is not None and not goal.done.is_set() and goal.kind == "move"
+            self._recovery.watch(t, self._faults.obstacle(t), moving, self._motion)
             if dt <= 0 or goal is None or goal.done.is_set() or self._faults.stuck(t):
                 return
             if self._heartbeat_lost():
@@ -282,40 +294,19 @@ class FakePinkyNode(Node):
                 if goal.abort_at is not None and t >= goal.abort_at:
                     self._end(goal, False, MoveTo.Result.REASON_NAV_ABORTED)
                     return
-                if held:
-                    return  # 목표는 그대로 두고 물체가 비키기를 기다린다
-                self._motion.step(dt, self._cfg.speed_mps)
+                # 물체가 있으면 선다. 시도가 남았으면 후진하고 다시 가 보고, 없으면 BLOCKED
+                radius = self._recovery.p.robot_radius_m
+                self._recovery.drive(t, dt, self._motion, self._cfg.speed_mps,
+                                     [(x, y, radius) for x, y in list(self._others.values())],
+                                     self._faults.behind(t))
                 if not self._motion.moving:
+                    self._recovery.succeeded()
                     self._end(goal, True)
             elif t >= goal.end_at:
                 e = self._dock_cfg.error_cm
                 goal.error = (self._rng.gauss(e, 0.1 * e), self._rng.gauss(e, 0.1 * e),
                               self._rng.gauss(0.5, 0.1))
                 self._end(goal, True)
-
-    def _watch_obstacle(self, t: float, goal: _Goal | None) -> bool:
-        """앞 물체(blocked 고장). 서 있어야 하면 True.
-
-        이동 중에 물체가 나타나면 서고, 1초 뒤 BLOCKED로 보고한다. 취소된 뒤에도 물체가
-        있는 동안은 BLOCKED다. 물체가 1초 동안 안 보이면 끄고 남은 목표를 이어 간다.
-        """
-        moving = goal is not None and not goal.done.is_set() and goal.kind == "move"
-        if self._faults.obstacle(t):
-            self._clear_at = None
-            if moving and self._stopped_at is None:
-                self._stopped_at = t
-            if self._stopped_at is not None and t - self._stopped_at >= BLOCK_REPORT_S:
-                self._blocked = True
-            return self._stopped_at is not None
-        if self._stopped_at is None:
-            return False
-        if self._clear_at is None:
-            self._clear_at = t
-        if t - self._clear_at < BLOCK_CLEAR_S:
-            return True
-        self._blocked = False
-        self._stopped_at = self._clear_at = None
-        return False
 
     def _remove(self, goal: _Goal | None) -> None:
         """운영자가 로봇을 코스에서 들어내 전원을 껐다."""
@@ -326,9 +317,7 @@ class FakePinkyNode(Node):
             self._end(goal, False, MoveTo.Result.REASON_NAV_ABORTED)
         self._motion.clear_target()
         self._motion.x, self._motion.y = self._off_course
-        # 앞 물체는 들어낸 자리에 두고 간다
-        self._blocked = False
-        self._stopped_at = self._clear_at = None
+        self._recovery.forget()  # 앞 물체는 들어낸 자리에 두고 간다
 
     def _put_back(self, waypoint) -> None:
         """운영자가 로봇을 이 지점에 다시 놓고 켰다. 바구니는 시나리오가 정한 대로다."""
@@ -361,7 +350,9 @@ class FakePinkyNode(Node):
             self._state_pub.publish(msg)
 
     def _push_report(self, t: float, goal: _Goal | None, busy: bool) -> None:
-        if self._blocked:
+        if busy and goal.kind == "move" and self._recovery.recovering:
+            state = RobotState.STATE_RECOVERING  # 명세 8번: LOCALIZING 다음
+        elif self._recovery.blocked:
             state = RobotState.STATE_BLOCKED
         elif busy:
             state = RobotState.STATE_MOVING if goal.kind == "move" else RobotState.STATE_DOCKING

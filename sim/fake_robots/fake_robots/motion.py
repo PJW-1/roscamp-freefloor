@@ -38,10 +38,12 @@ class Motion:
         self.x, self.y, self.yaw = x, y, yaw
         self.target: tuple[float, float] | None = None
         self.via: list[tuple[float, float]] = []
+        self.trail: list[tuple[float, float]] = [(x, y)]  # 이번 목표에서 지나온 점(시작, 모서리)
 
     def set_target(self, x: float, y: float, via=()) -> None:
         self.target = (x, y)
         self.via = [tuple(p) for p in via]
+        self.trail = [(self.x, self.y)]
         self._skip_passed()
 
     def _skip_passed(self) -> None:
@@ -63,6 +65,47 @@ class Motion:
     def clear_target(self) -> None:
         self.target = None
         self.via = []
+        self.trail = [(self.x, self.y)]
+
+    @property
+    def travelled(self) -> float:
+        """이번 목표에서 path를 따라 지나온 길이. 후진하면 준다."""
+        points = [*self.trail, (self.x, self.y)]
+        return sum(math.dist(a, b) for a, b in zip(points, points[1:], strict=False))
+
+    def way_back(self, distance: float) -> list[tuple[float, float]]:
+        """지금 자리에서 지나온 선을 따라 distance만큼 뒤로 간 꺾은선(목표 시작점까지)."""
+        out = [(self.x, self.y)]
+        x, y = self.x, self.y
+        for corner in reversed(self.trail):
+            gap = math.dist((x, y), corner)
+            if distance <= gap:
+                if gap > 0.0:
+                    out.append((x + (corner[0] - x) / gap * distance,
+                                y + (corner[1] - y) / gap * distance))
+                return out
+            out.append(corner)
+            distance -= gap
+            x, y = corner
+        return out
+
+    def back(self, distance: float) -> None:
+        """지나온 선을 따라 distance만큼 후진한다. 방향은 그대로, 목표 시작점에서 멈춘다.
+
+        되짚은 모서리는 다시 거칠 점이 되어 앞으로 갈 때 같은 선을 탄다.
+        """
+        while distance > 0.0:
+            last = self.trail[-1]
+            gap = math.dist((self.x, self.y), last)
+            if distance < gap:
+                self.x += (last[0] - self.x) / gap * distance
+                self.y += (last[1] - self.y) / gap * distance
+                return
+            self.x, self.y = last
+            distance -= gap
+            if len(self.trail) == 1:
+                return
+            self.via.insert(0, self.trail.pop())
 
     @property
     def moving(self) -> bool:
@@ -75,10 +118,11 @@ class Motion:
         points = [(self.x, self.y), *self.via, self.target]
         return sum(math.dist(a, b) for a, b in zip(points, points[1:], strict=False))
 
-    def step(self, dt: float, speed: float) -> None:
+    def step(self, dt: float, speed: float, limit: float = math.inf) -> None:
+        """dt 동안 speed로 간다. limit보다 멀리는 가지 않는다(물체 앞에 선 자리까지)."""
         if not self.moving:
             return
-        travel = speed * dt
+        travel = min(speed * dt, limit)
         while travel > 0.0:
             aim = self.via[0] if self.via else self.target
             dist = math.dist((self.x, self.y), aim)
@@ -92,7 +136,7 @@ class Motion:
             travel -= dist
             if not self.via:
                 return
-            self.via.pop(0)
+            self.trail.append(self.via.pop(0))
 
 
 def noisy_pose(x: float, y: float, sigma: float, rng: random.Random) -> tuple[float, float]:
@@ -163,6 +207,17 @@ class FaultSchedule:
                    and not any(g.type == "operator_remove" and f.at_s < g.at_s <= t
                                for g in self._own)
                    for f in self._own)
+
+    def behind(self, t: float) -> float | None:
+        """뒤에 물체가 있으면 로봇에서 그 물체까지 path를 따라 잰 거리(가장 가까운 것).
+
+        후진할 때만 본다(자기 복구). 치운 로봇은 따라오지 않는다.
+        """
+        near = [f.distance_m for f in self._own
+                if f.type == "obstacle_behind" and f.at_s <= t < f.at_s + f.duration_s
+                and not any(g.type == "operator_remove" and f.at_s < g.at_s <= t
+                            for g in self._own)]
+        return min(near) if near else None
 
     def stuck(self, t: float) -> bool:
         """그 뒤 다시 투입되기 전까지 멈춘다. 운영자가 고쳐 넣은 것으로 본다."""

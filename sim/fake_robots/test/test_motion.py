@@ -308,3 +308,61 @@ def test_path_gap_is_the_distance_to_the_nearest_segment_of_the_path():
     assert path_gap(1.0, 0.5, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]) == pytest.approx(0.0)
     assert path_gap(2.0, 0.0, [(0.0, 0.0), (1.0, 0.0)]) == pytest.approx(1.0)  # 끝을 지남
     assert path_gap(0.0, 0.3, [(0.0, 0.0)]) == pytest.approx(0.3)  # 점 하나
+
+
+def test_travelled_is_the_length_driven_along_the_path_since_the_goal():
+    m = Motion(0.0, 0.0)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    assert m.travelled == 0.0
+    m.step(1.0, 1.2)
+    assert m.travelled == pytest.approx(1.2)
+    m.set_target(1.0, 2.0)  # 새 목표는 지금 자리에서 다시 잰다
+    assert m.travelled == 0.0
+
+
+def test_backing_up_retraces_the_path_round_a_corner_and_drives_it_again():
+    m = Motion(0.0, 0.0)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    m.step(1.0, 1.2)
+    yaw = m.yaw
+    m.back(0.3)
+    assert (m.x, m.y) == pytest.approx((0.9, 0.0))
+    assert m.travelled == pytest.approx(0.9)
+    assert m.yaw == yaw, "it backs up without turning"
+    assert m.remaining() == pytest.approx(1.1)
+    m.step(1.0, 0.3)
+    assert (m.x, m.y) == pytest.approx((1.0, 0.2))
+
+
+def test_backing_up_never_goes_past_where_the_goal_started():
+    m = Motion(0.5, 0.0)
+    m.set_target(2.0, 0.0)
+    m.step(1.0, 0.2)
+    m.back(1.0)
+    assert (m.x, m.y) == pytest.approx((0.5, 0.0)) and m.travelled == 0.0
+
+
+def test_a_step_can_be_limited_to_a_distance():
+    m = Motion(0.0, 0.0)
+    m.set_target(2.0, 0.0)
+    m.step(1.0, 0.5, limit=0.1)
+    assert m.x == pytest.approx(0.1)
+
+
+def flat(points):
+    return [c for p in points for c in p]
+
+
+def test_the_way_back_is_the_path_behind_the_robot():
+    m = Motion(0.0, 0.0)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    m.step(1.0, 1.2)
+    assert flat(m.way_back(0.3)) == pytest.approx([1.0, 0.2, 1.0, 0.0, 0.9, 0.0])
+    assert flat(m.way_back(0.1)) == pytest.approx([1.0, 0.2, 1.0, 0.1])
+
+
+def test_an_obstacle_behind_is_there_for_its_window_at_its_distance():
+    s = FaultSchedule([Fault(at_s=5, robot="pinky1", type="obstacle_behind", duration_s=10,
+                             distance_m=0.2)], "pinky1")
+    assert [s.behind(t) for t in (4.9, 5.0, 14.9, 15.0)] == [None, 0.2, 0.2, None]
+    assert not s.obstacle(10.0), "it is not ahead"
