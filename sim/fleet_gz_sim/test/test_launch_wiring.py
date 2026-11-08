@@ -1,5 +1,6 @@
-"""gz.launch.py가 지금 환경, 실제 RMW, 작업 폴더를 격리 검사에 넘기는지 본다."""
+"""gz.launch.py: 격리 검사를 먼저 하고, 핑키 3대와 진짜 관제, 가짜 central·팔을 잇는 것을 본다."""
 import importlib.util
+import math
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,9 @@ LAUNCH = Path(__file__).parents[1] / "launch" / "gz.launch.py"
 FAST_DDS = ("ROS_STATIC_PEERS", "RMW_IMPLEMENTATION", "ROS_DISCOVERY_SERVER",
             "FASTRTPS_DEFAULT_PROFILES_FILE", "FASTDDS_DEFAULT_PROFILES_FILE",
             "FASTDDS_ENVIRONMENT_FILE", "FASTDDS_BUILTIN_TRANSPORTS")
+ROBOTS = ["pinky1", "pinky2", "pinky3"]
+STARTS = {"pinky1": (1.20, 2.05, 0.0), "pinky2": (0.80, 2.05, math.atan2(0.10, 0.45)),
+          "pinky3": (0.35, 1.95, math.pi / 2)}  # basic_orders: P-6, P-5, P-4
 
 
 @pytest.fixture
@@ -34,15 +38,14 @@ def test_the_rmw_comes_from_rclpy():
     assert module.get_rmw_implementation_identifier is rclpy.get_rmw_implementation_identifier
 
 
-def run(gz):
-    """ros2 launch처럼 launch description의 동작을 실행한다."""
-    [action] = gz.generate_launch_description().entities
-    return action.execute(launch.LaunchContext())
-
-
-def test_isolated_launch_only_logs(gz):
-    actions = run(gz)
-    assert len(actions) == 1 and type(actions[0]).__name__ == "LogInfo"
+def run(gz, **overrides):
+    """ros2 launch처럼 인자 기본값을 넣고(overrides로 바꾸고) OpaqueFunction을 실행한다."""
+    context = launch.LaunchContext()
+    *args, start = gz.generate_launch_description().entities
+    for action in args:
+        action.visit(context)
+    context.launch_configurations.update(overrides)
+    return start.execute(context)
 
 
 def test_launch_reads_the_current_environment(gz, monkeypatch):
@@ -61,3 +64,178 @@ def test_launch_checks_the_working_directory(gz, tmp_path):
     (tmp_path / "DEFAULT_FASTRTPS_PROFILES.xml").write_text("<dds/>")
     with pytest.raises(RuntimeError, match="DEFAULT_FASTRTPS_PROFILES.xml"):
         run(gz)
+
+
+# -- 배선: launch 동작 대신 만든 인자를 기록해 본다 ------------------------------------------
+
+KINDS = ("Node", "IncludeLaunchDescription", "PythonLaunchDescriptionSource", "ExecuteProcess",
+         "GroupAction", "SetRemap", "RegisterEventHandler", "OnProcessExit")
+
+
+class Made:
+    def __init__(self, kind, args, kwargs):
+        self.kind, self.args, self.kw = kind, args, kwargs
+
+    def flat(self):
+        yield self
+        if self.kind == "GroupAction":
+            for child in self.args[0]:
+                yield from (child.flat() if isinstance(child, Made) else [child])
+
+
+def need(*packages):
+    from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
+    for package in packages:
+        try:
+            get_package_share_directory(package)
+        except PackageNotFoundError:
+            pytest.skip(f"{package} is not installed")
+
+
+@pytest.fixture
+def made(gz, monkeypatch):
+    need("pinky_description", "pinky_nav_config", "pinky_fsm", "fake_robots", "fleet_manager")
+    from fleet_gz_sim import launch_parts
+    for module in (gz, launch_parts):
+        for kind in KINDS:
+            if hasattr(module, kind):
+                monkeypatch.setattr(module, kind, lambda *a, _k=kind, **kw: Made(_k, a, kw))
+    return gz
+
+
+def flat(actions):
+    for a in actions:
+        yield from (a.flat() if isinstance(a, Made) else [a])
+
+
+def nodes(actions, executable=None):
+    return [a for a in flat(actions) if isinstance(a, Made) and a.kind == "Node"
+            and (executable is None or a.kw["executable"] == executable)]
+
+
+def params(node) -> dict:
+    out = {}
+    for p in node.kw.get("parameters", []):
+        out.update(p)
+    return out
+
+
+def includes(actions, launch_file):
+    return [a for a in flat(actions) if isinstance(a, Made) and a.kind == "IncludeLaunchDescription"
+            and str(a.args[0].args[0]).endswith(launch_file)]
+
+
+def launch_args(include) -> dict:
+    return dict(include.kw["launch_arguments"])
+
+
+def test_three_pinkys_start_where_the_scenario_puts_them(made):
+    actions = run(made)
+    spawned = {}
+    for create in nodes(actions, "create"):
+        a = create.kw["arguments"]
+        spawned[a[a.index("-name") + 1]] = tuple(float(a[a.index(k) + 1])
+                                                 for k in ("-x", "-y", "-Y"))
+    assert spawned.keys() == STARTS.keys()
+    for robot, pose in STARTS.items():
+        assert spawned[robot] == pytest.approx(pose)
+    navs = {launch_args(i)["namespace"]: launch_args(i)
+            for i in includes(actions, "nav2.launch.py")}
+    assert navs.keys() == STARTS.keys()
+    for robot, nav in navs.items():  # AMCL 시작 자세가 놓은 자리와 같다
+        assert tuple(float(nav[k]) for k in ("initial_x", "initial_y", "initial_yaw")) == \
+            pytest.approx(spawned[robot])
+
+
+def test_gazebo_time_and_every_pinky_share_one_bridge(made):
+    """/clock을 브리지 여럿이 같이 내면 표본 순서가 섞여 시간이 뒤로 갈 수 있다.
+    브리지를 로봇마다 두면 DDS 참여자도 그만큼 는다(test_ros_processes_fit_...)."""
+    [bridge] = nodes(run(made), "parameter_bridge")
+    topics = [str(x).split("@")[0] for x in bridge.kw["arguments"]]
+    assert topics.count("/clock") == 1
+    for robot in ROBOTS:
+        for name in ("scan", "odom", "tf", "joint_states", "cmd_vel", "truth"):
+            assert topics.count(f"/model/{robot}/{name}") == 1
+    remaps = dict(bridge.kw["remappings"])
+    assert remaps["/model/pinky2/cmd_vel"] == "/pinky2/cmd_vel"
+    assert remaps["/model/pinky3/truth"] == "/pinky3/sim/truth"
+
+
+def test_nav2_runs_composed_unless_asked_not_to(made):
+    """한 대의 Nav2 노드 9개를 프로세스 하나에 담는다(pinky_nav_config use_composition)."""
+    composed = [launch_args(i)["use_composition"] for i in includes(run(made), "nav2.launch.py")]
+    assert composed == ["true"] * 3
+    separate = [launch_args(i)["use_composition"]
+                for i in includes(run(made, nav_composition="false"), "nav2.launch.py")]
+    assert separate == ["false"] * 3
+
+
+NAV2_NODES = 9  # pinky_nav_config: map_server 둘, amcl, 서버 넷, lifecycle manager 둘
+LOCALHOST_PARTICIPANTS = 32  # Fast DDS LOCALHOST 탐색에서 서로 보이는 참여자 수(실측)
+SPARE = 6  # launch 프로세스, RViz, 사람이 띄우는 ros2 명령 몇 개
+
+
+def ros_processes(actions, fleet_actions) -> int:
+    """ROS 프로세스 하나가 DDS 참여자 하나다. Gazebo 서버와 화면은 ROS가 아니다."""
+    count = len(nodes(actions)) + len(nodes(fleet_actions))
+    for nav in includes(actions, "nav2.launch.py"):
+        count += 1 if launch_args(nav)["use_composition"] == "true" else NAV2_NODES
+    return count + len(includes(actions, "pinky_fsm.launch.py"))
+
+
+def test_ros_processes_fit_the_localhost_discovery_limit(made):
+    """3대를 처음 띄웠을 때 참여자가 32개를 넘어 pinky3의 토픽이 보이지 않았다."""
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    fleet = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True)
+    assert ros_processes(run(made), fleet) + SPARE <= LOCALHOST_PARTICIPANTS
+    assert ros_processes(run(made, nav_composition="false"), fleet) > LOCALHOST_PARTICIPANTS
+
+
+def test_pinky_fsm_dock_steps_aside_for_the_sim_stand_in(made):
+    actions = run(made)
+    for robot in ROBOTS:
+        [group] = [a for a in flat(actions) if isinstance(a, Made) and a.kind == "GroupAction"
+                   and any(isinstance(c, Made) and c.kind == "SetRemap"
+                           and c.args == (f"/{robot}/dock", f"/{robot}/dock_fsm")
+                           for c in a.flat())]
+        [fsm] = includes([group], "pinky_fsm.launch.py")
+        assert launch_args(fsm)["namespace"] == robot
+    [stand_in] = nodes(actions, "sim_stand_in")
+    assert params(stand_in)["robots"] == ROBOTS and params(stand_in)["use_sim_time"] is True
+
+
+def test_the_fleet_waits_until_every_pinky_is_ready(made):
+    """주문은 시나리오 시간(Gazebo 시계)으로 나간다. 로봇이 서기 전에 관제가 명령하지 않게 한다."""
+    actions = run(made)
+    [wait] = nodes(actions, "wait_ready")
+    assert params(wait)["robots"] == ROBOTS
+    assert not nodes(actions, "fleet_manager_node")  # 기다린 뒤에 띄운다
+
+
+def test_the_real_fleet_manager_runs_with_fake_central_and_arms_on_gazebo_time(made):
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    actions = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True)
+    [fleet] = nodes(actions, "fleet_manager_node")
+    assert params(fleet)["robots"] == ROBOTS and params(fleet)["use_sim_time"] is True
+    fakes = [n for n in nodes(actions) if n.kw["package"] == "fake_robots"]
+    assert sorted(n.kw["executable"] for n in fakes) == sorted(
+        ["fake_workcell_node", "fake_vision_node", "fake_vision_node", "fake_arm_node",
+         "fake_central_node", "scenario_monitor_node"])  # 가짜 핑키와 sim_clock은 없다
+    for n in fakes:
+        assert params(n)["use_sim_time"] is True and params(n)["scenario_file"] == str(path)
+
+
+def test_scenarios_the_arena_cannot_run_start_nothing(made):
+    from fleet_gz_sim.fleet_setup import ScenarioUnfit
+    with pytest.raises(ScenarioUnfit):
+        run(made, scenario="stuck_robot")
+
+
+def test_gazebo_transport_stays_on_this_computer(made, monkeypatch):
+    monkeypatch.setenv("GZ_IP", "192.168.0.10")
+    monkeypatch.delenv("GZ_PARTITION", raising=False)
+    env ={"".join(s.perform(None) for s in a.name): "".join(s.perform(None) for s in a.value)
+           for a in run(made) if type(a).__name__ == "SetEnvironmentVariable"}
+    assert env["GZ_IP"] == "127.0.0.1" and env["GZ_PARTITION"] == "fleet_gz_44"
