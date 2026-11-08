@@ -229,6 +229,13 @@ def test_an_inventory_equal_to_the_summed_stock_is_accepted():
     assert baseline.build_world(data, "lane_map", seed=1, mode="path").stock == data["inventory"]
 
 
+def test_zero_counts_do_not_make_inventory_and_stock_differ():
+    data = {**baseline.load_scenario("basic_orders"),
+            "inventory": {"A": 6, "B": 6, "C": 6, "D": 6, "E": 0}}
+    world = baseline.build_world(data, "lane_map", seed=1, mode="path")
+    assert world.stock == {"A": 6, "B": 6, "C": 6, "D": 6}
+
+
 def test_an_unknown_fault_type_is_refused():
     data = {**baseline.load_scenario("basic_orders"),
             "faults": [{"at_s": 0, "arm": "arm1", "type": "arm_fail", "count": 3}]}
@@ -341,6 +348,30 @@ def test_a_run_cut_before_every_robot_parks_is_not_finished():
     assert not cut["finished"] and cut["error"] == ""
     assert cut["finish_s"] == full["finish_s"]  # the orders did finish
     assert cut["end_s"] == pytest.approx(full["finish_s"] + 0.5)
+
+
+def no_order_scenario(tmp_path, faults=()):
+    # the fakes' parser wants a shipped order whenever there are faults
+    data = {**baseline.load_scenario("basic_orders"), "orders": [], "faults": list(faults),
+            "expect": {"orders_shipped": 1} if faults else {}}
+    path = tmp_path / "empty.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return str(path)
+
+
+def test_a_scenario_without_orders_finishes_at_zero(tmp_path):
+    result = baseline.run_one("lane_map", no_order_scenario(tmp_path), seed=1, mode="path")
+    assert result["error"] == "" and result["finished"]
+    assert result["finish_s"] == 0.0 and result["orders_total"] == 0
+
+
+def test_a_run_ends_when_every_robot_has_been_taken_off_the_floor(tmp_path):
+    faults = [{"at_s": 1.0, "robot": r, "type": "operator_remove"}
+              for r in ("pinky1", "pinky2", "pinky3")]
+    result = baseline.run_one("lane_map", no_order_scenario(tmp_path, faults), seed=1,
+                              mode="path")
+    assert result["finished"] and result["interventions"] == 3
+    assert result["end_s"] < 10.0
 
 
 def test_a_refused_confirm_clear_leaves_the_robot_on_the_floor():

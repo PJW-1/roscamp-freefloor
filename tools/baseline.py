@@ -36,7 +36,8 @@ Columns (seconds are fake-clock seconds):
                     action was accepted and every robot still on the floor was PARKED; no
                     invariant broke. Only such runs have comparable waits and stops
     finish_s        tick of the last final order report ("6 orders" for the basic scenarios,
-                    7 for reinstate); filled whenever the orders finished, even if the run did not
+                    7 for reinstate); filled whenever the orders finished, even if the run did
+                    not; 0 for a scenario without orders. An empty floor counts as all parked
     end_s           time the run stopped: all parked, or the timeout
     wait_<robot>_s  time that robot held a zone-wait ticket (it was in some zone's queue,
                     ZoneTable.waiting_for), sampled after every tick; wait_total_s is the sum
@@ -263,7 +264,7 @@ def build_world(data, map_name_, seed, mode) -> SimWorld:
     for items in parsed.stock.values():
         for kind, count in items.items():
             stock[kind] = stock.get(kind, 0) + count
-    if parsed.inventory != stock:
+    if {k: v for k, v in parsed.inventory.items() if v} != {k: v for k, v in stock.items() if v}:
         raise ValueError(f"inventory {parsed.inventory} differs from the summed stock {stock}; "
                          "SimWorld's central keeps no separate record")
     return SimWorld(seed=seed, orders=[dict(o) for o in data["orders"]], stock=stock,
@@ -311,9 +312,13 @@ def run_with_world(map_, scenario, seed, mode, timeout_s=None) -> tuple[dict, Si
             meter.observe(world)
             if finish is None and world.all_orders_final():
                 # SimWorld's central takes a report one step after the tick that sent it
-                finish = max(t for t, c in world.commands if isinstance(c, ReportOrderCmd))
+                # (no orders, no report: nothing to wait for, so 0)
+                finish = max((t for t, c in world.commands if isinstance(c, ReportOrderCmd)),
+                             default=0.0)
             on_floor = [n for n, r in world.virtual.items() if not r.removed]
-            if finish is not None and not operator.pending and world.all_parked(on_floor):
+            # all_parked([]) would check every robot, removed ones too
+            parked = not on_floor or world.all_parked(on_floor)
+            if finish is not None and not operator.pending and parked:
                 complete = True
                 break
     except AssertionError as error:
