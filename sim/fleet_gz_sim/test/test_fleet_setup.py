@@ -77,3 +77,18 @@ def test_the_roaming_scenario_has_stock_for_every_order():
     for item in stock:
         wanted = sum(order.items.get(item, 0) for order in scenario.orders)
         assert wanted <= stock[item], item
+
+
+def test_an_obstacle_schedule_is_off_a_share_name_or_a_file(tmp_path):
+    """obstacles 인자: 비면 장애물 없음, 이름은 share의 obstacles 폴더, 아니면 파일."""
+    from fleet_gz_sim.fleet_setup import obstacles_path
+    from fleet_gz_sim.obstacles import ScheduleError
+    (tmp_path / "obstacles").mkdir()
+    (tmp_path / "obstacles" / "roam.yaml").write_text("{}")
+    mine = tmp_path / "mine.yaml"
+    mine.write_text("{}")
+    assert obstacles_path("", tmp_path) == ""
+    assert obstacles_path("roam", tmp_path) == str(tmp_path / "obstacles" / "roam.yaml")
+    assert obstacles_path(str(mine), tmp_path) == str(mine)
+    with pytest.raises(ScheduleError, match="nowhere"):
+        obstacles_path("no_such_schedule", tmp_path)

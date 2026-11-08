@@ -32,6 +32,21 @@ def scenario_path(value: str, *shares: str | Path) -> Path:
     raise ScenarioUnfit(f"scenario {value!r} is nowhere: not a file and not in {where}")
 
 
+def obstacles_path(value: str, share: str | Path) -> str:
+    """gz.launch.py의 obstacles 인자. 비면 장애물 없음, 아니면 파일이나 share/obstacles의 이름."""
+    from fleet_gz_sim.obstacles import ScheduleError
+    if not value:
+        return ""
+    if Path(value).is_file():
+        return value
+    name = value if value.endswith(".yaml") else value + ".yaml"
+    path = Path(share) / "obstacles" / name
+    if not path.is_file():
+        raise ScheduleError(f"obstacle schedule {value!r} is nowhere: not a file and not in "
+                            f"{path.parent}")
+    return str(path)
+
+
 def load(path):
     """(기본 레인 지도, 시나리오). 경기장에서 돌릴 수 없으면 ScenarioUnfit."""
     name = Path(path).name

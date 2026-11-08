@@ -44,13 +44,15 @@ ARGS = {
     "result_dir": ("gz_result", "시나리오 모니터 결과 폴더"),
     "fleet_params_file": ("", "관제 파라미터 파일. 비우면 설치된 fleet_params.yaml"),
     "monitor": ("true", "시나리오 판정. 끝나면 launch를 끝낸다"),
+    "obstacles": ("", "레인에 상자를 놓았다 치우는 일정(fleet_gz_sim/obstacles의 이름이나 파일)."
+                      " 비면 장애물 없음. roam은 300 s마다 4개"),
 }
 ARMS = "arm1 arm2 arm3"
 
 
 def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
-          params_file: str = "") -> list:
-    """진짜 관제와 가짜 작업셀·비전·출고 팔·central·모니터. 모두 Gazebo 시계를 쓴다."""
+          params_file: str = "", obstacles_file: str = "") -> list:
+    """진짜 관제와 가짜 작업셀·비전·출고 팔·central·모니터, 장애물(있으면). 모두 Gazebo 시계."""
     from fake_robots.common import split_fake_arms
     from fleet_core.traffic.lane_map import load_lane_map
     common = {"use_sim_time": True, "scenario_file": scenario_file}
@@ -69,6 +71,12 @@ def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
     actions += [fake("fake_vision_node", f"fake_vision_{arm}", arm_id=arm) for arm in vision_arms]
     actions += [fake("fake_arm_node", f"fake_{arm}", arm_id=arm) for arm in swap_arms]
     actions.append(fake("fake_central_node", "fake_central", params_file=params_file))
+    if obstacles_file:
+        # 로봇 실제 위치(sim/truth)를 보고 비어 있을 때만 놓는다. 일정 시각은 Gazebo 시계
+        actions.append(Node(package="fleet_gz_sim", executable="sim_obstacles",
+                            name="sim_obstacles", output="screen",
+                            parameters=[{"use_sim_time": True, "robots": robots,
+                                         "obstacles_file": obstacles_file}]))
     if monitor:
         node = Node(package="fake_robots", executable="scenario_monitor_node",
                     name="scenario_monitor", output="screen",
@@ -81,7 +89,8 @@ def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
 def _start(context):
     # 노드는 launch의 작업 폴더를 물려받는다. 노드에 cwd를 따로 주면 그 폴더도 봐야 한다.
     require_isolated(os.environ, rmw=get_rmw_implementation_identifier(), workdir=Path.cwd())
-    from fleet_gz_sim.fleet_setup import load, scenario_path, start_poses
+    from fleet_gz_sim.fleet_setup import load, obstacles_path, scenario_path, start_poses
+    from fleet_gz_sim.obstacles import load_schedule
 
     def value(name):
         return LaunchConfiguration(name).perform(context)
@@ -89,6 +98,9 @@ def _start(context):
     scenario_file = str(scenario_path(value("scenario"), launch_parts.share("fleet_gz_sim"),
                                       launch_parts.share("fake_robots")))
     site, scenario = load(scenario_file)
+    obstacles_file = obstacles_path(value("obstacles"), launch_parts.share("fleet_gz_sim"))
+    if obstacles_file:
+        load_schedule(obstacles_file, site)  # 틀린 일정이면 Gazebo를 띄우기 전에 멈춘다
     poses = start_poses(site, scenario)
     robots = list(poses)
     composed = value("nav_composition").lower() in ("true", "1")
@@ -112,7 +124,7 @@ def _start(context):
         if event.returncode != 0:
             return [LogInfo(msg="fleet_gz_sim: 로봇이 IDLE이 되지 않아 끝낸다"), Shutdown()]
         return fleet(scenario_file, robots, value("result_dir"), monitor,
-                     value("fleet_params_file"))
+                     value("fleet_params_file"), obstacles_file)
 
     actions += [wait, RegisterEventHandler(OnProcessExit(target_action=wait, on_exit=after_wait))]
     return actions

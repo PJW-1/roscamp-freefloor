@@ -210,7 +210,8 @@ def test_ros_process_budget_leaves_room_under_the_localhost_limit(made):
     확인해야 한다(README). 잠깐 돌고 끝나는 create와 wait_ready도 넉넉하게 같이 센다."""
     from ament_index_python.packages import get_package_share_directory
     path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
-    fleet = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True)
+    fleet = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True,
+                       obstacles_file="roam.yaml")  # 장애물 노드까지 띄운 가장 많은 경우
     assert ros_processes(run(made), fleet) + SPARE <= LOCALHOST_PARTICIPANTS
     assert ros_processes(run(made, nav_composition="false"), fleet) > LOCALHOST_PARTICIPANTS
 
@@ -262,3 +263,26 @@ def test_gazebo_transport_stays_on_this_computer(made, monkeypatch):
     env ={"".join(s.perform(None) for s in a.name): "".join(s.perform(None) for s in a.value)
            for a in run(made) if type(a).__name__ == "SetEnvironmentVariable"}
     assert env["GZ_IP"] == "127.0.0.1" and env["GZ_PARTITION"] == "fleet_gz_44"
+
+
+def test_obstacles_are_off_unless_a_schedule_is_given(made):
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    assert not nodes(made.fleet(str(path), ROBOTS, result_dir="out", monitor=True),
+                     "sim_obstacles")
+
+
+def test_the_obstacle_node_places_boxes_on_gazebo_time_away_from_every_pinky(made):
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    actions = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True,
+                         obstacles_file="/some/roam.yaml")
+    [node] = nodes(actions, "sim_obstacles")
+    assert params(node) == {"use_sim_time": True, "robots": ROBOTS,
+                            "obstacles_file": "/some/roam.yaml"}
+
+
+def test_an_unknown_obstacle_schedule_stops_the_launch_before_anything_starts(made):
+    from fleet_gz_sim.obstacles import ScheduleError
+    with pytest.raises(ScheduleError, match="no_such_schedule"):
+        run(made, obstacles="no_such_schedule")
