@@ -82,6 +82,18 @@ def test_gazebo_ip_from_the_shell_is_not_used(one, monkeypatch):
     assert environment(run(one))["GZ_IP"] == "127.0.0.1"
 
 
+def test_one_bridge_carries_the_clock_and_the_robot(one, monkeypatch):
+    """gz.launch.py와 같은 조각을 쓴다. 한 대일 때도 브리지 프로세스는 하나다."""
+    need("pinky_description", "pinky_nav_config", "pinky_fsm")
+    from fleet_gz_sim import launch_parts
+    made = []
+    monkeypatch.setattr(launch_parts, "Node", lambda *a, **kw: made.append(kw) or kw)
+    run(one)
+    [bridge] = [kw for kw in made if kw["executable"] == "parameter_bridge"]
+    topics = [a.split("@")[0] for a in bridge["arguments"]]
+    assert topics.count("/clock") == 1 and "/model/pinky1/cmd_vel" in topics
+
+
 def test_joint_states_cover_every_moving_joint():
     """빠진 관절은 TF가 없어 RViz 로봇 모델이 오류가 된다(캐스터 두 개가 빠졌었다)."""
     xacro = pytest.importorskip("xacro")

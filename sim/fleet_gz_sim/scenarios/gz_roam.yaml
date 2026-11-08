@@ -1,0 +1,59 @@
+# Gazebo 3대 순환 운행: 주문이 40초마다 하나씩 24분 동안 들어온다(36건).
+# 로봇은 주문을 받을 때마다 대기 칸 -> 작업대(W) -> 출고(O) -> 대기 칸이나 다음 작업대로 간다.
+# 진짜 관제가 길과 잠금을 정하므로, 목적지가 로봇마다 계속 바뀌며 서로 비켜 가는 것을 본다.
+# 팔은 가짜(fake_robots). 도킹은 기본이 진짜 pinky_fsm(DOCK_UNAVAILABLE)이라 끝까지 돌리려면 sim_dock_stub:=true. 장애물은 obstacles 인자로 따로 준다.
+# Gazebo 시계를 쓰므로 speed_factor는 쓰이지 않는다(fake 세계에서 돌릴 때만 쓰인다).
+seed: 21
+speed_factor: 5.0
+timeout_s: 2400
+stock: {arm1: {A: 40, B: 40}, arm2: {C: 40, D: 40}}
+orders:
+  - {at_s: 0, id: R-001, items: {A: 1, C: 1}}
+  - {at_s: 40, id: R-002, items: {B: 1}}
+  - {at_s: 80, id: R-003, items: {D: 1, A: 1}}
+  - {at_s: 120, id: R-004, items: {C: 1}}
+  - {at_s: 160, id: R-005, items: {B: 1, D: 1}}
+  - {at_s: 200, id: R-006, items: {A: 1}}
+  - {at_s: 240, id: R-007, items: {C: 1, B: 1}}
+  - {at_s: 280, id: R-008, items: {D: 1}}
+  - {at_s: 320, id: R-009, items: {A: 1, C: 1}}
+  - {at_s: 360, id: R-010, items: {B: 1}}
+  - {at_s: 400, id: R-011, items: {D: 1, A: 1}}
+  - {at_s: 440, id: R-012, items: {C: 1}}
+  - {at_s: 480, id: R-013, items: {B: 1, D: 1}}
+  - {at_s: 520, id: R-014, items: {A: 1}}
+  - {at_s: 560, id: R-015, items: {C: 1, B: 1}}
+  - {at_s: 600, id: R-016, items: {D: 1}}
+  - {at_s: 640, id: R-017, items: {A: 1, C: 1}}
+  - {at_s: 680, id: R-018, items: {B: 1}}
+  - {at_s: 720, id: R-019, items: {D: 1, A: 1}}
+  - {at_s: 760, id: R-020, items: {C: 1}}
+  - {at_s: 800, id: R-021, items: {B: 1, D: 1}}
+  - {at_s: 840, id: R-022, items: {A: 1}}
+  - {at_s: 880, id: R-023, items: {C: 1, B: 1}}
+  - {at_s: 920, id: R-024, items: {D: 1}}
+  - {at_s: 960, id: R-025, items: {A: 1, C: 1}}
+  - {at_s: 1000, id: R-026, items: {B: 1}}
+  - {at_s: 1040, id: R-027, items: {D: 1, A: 1}}
+  - {at_s: 1080, id: R-028, items: {C: 1}}
+  - {at_s: 1120, id: R-029, items: {B: 1, D: 1}}
+  - {at_s: 1160, id: R-030, items: {A: 1}}
+  - {at_s: 1200, id: R-031, items: {C: 1, B: 1}}
+  - {at_s: 1240, id: R-032, items: {D: 1}}
+  - {at_s: 1280, id: R-033, items: {A: 1, C: 1}}
+  - {at_s: 1320, id: R-034, items: {B: 1}}
+  - {at_s: 1360, id: R-035, items: {D: 1, A: 1}}
+  - {at_s: 1400, id: R-036, items: {C: 1}}
+robots:
+  pinky1: {start: P-6}
+  pinky2: {start: P-5}
+  pinky3: {start: P-4}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 36
+  orders_partial: 0
+  orders_held: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED]
