@@ -12,6 +12,17 @@
     release_confirm_samples번이 칸에서 release_distance_m보다 멀 때 놓는다.
   - 고정 선(도킹 접근, 도크에서 나감)은 들어가기 전에 선 끝까지 한꺼번에 잡는다.
 m.path는 [출발할 때 가까운 지점, 목적지 지점] 두 개다. 선택과 단계 처리가 그대로 쓴다.
+
+여러 대(P3). 안전은 칸 잠금, 효율은 계획:
+  - 계획은 남이 쥔 칸을 피하고, 남의 예약(경로를 계약 속도로 달릴 때 칸에 머무는 시간,
+    floor_plan_window_s 앞까지)과 겹치는 칸에 벌점을 준다(시간 벌점 A*, 협조 A*의 가벼운 꼴).
+  - 잠금이 늘지 않아 서게 되면 floor_replan_s마다 다시 계획한다(감속하는 동안).
+  - 대기 그래프에 순환이 deadlock_grace_s 이어지면 우선순위가 낮은 로봇이 옆 빈 칸으로 비켜 선다.
+    비켜 설 곳이 없으면 DEADLOCK_UNRESOLVED, 그 뒤 deadlock_unresolved_s 이어지면 격리한다.
+  - 도크 접근선은 한 번에 한 대: 다른 로봇이 그 선으로 가는 중이거나 선 칸을 쥐고 있으면
+    고정 선 칸에 닿지 않는 빈 자리에서 기다리고, 선이 비면 먼저 온 로봇부터 들어간다.
+  - BLOCKED가 blocked_mark_s 이어지면 앞 칸을 막힘(주인 BLOCK_OWNER)으로 표시하고 목표를 거둔다.
+    BLOCKED가 아닌 보고가 release_confirm_samples번 오면 표시를 지우고 다시 계획한다.
 """
 from __future__ import annotations
 
@@ -20,6 +31,7 @@ from dataclasses import dataclass
 
 from fleet_core.common.commands import MoveCmd
 from fleet_core.traffic.controller import TrafficController
+from fleet_core.traffic.deadlock import choose_retreat, find_cycle, wait_graph
 from fleet_core.traffic.floor.cells import CellLocks, disk_cells, swept_cells
 from fleet_core.traffic.floor.floor_map import load_floor_map
 from fleet_core.traffic.floor.planner import FloorPlanner, Route
@@ -43,6 +55,11 @@ from fleet_core.traffic.mission import (
 )
 
 AT_END_M = 1e-6
+BLOCK_OWNER = "#blocked"  # pseudo holder of cells in front of an object
+RESERVE_PENALTY_M = 0.5  # extra cost of a cell another robot plans to be in at that time
+SIDESTEP_REACH_M = 1.2  # how far a robot looks for a free spot to step aside to
+SIDESTEP_HOLD_S = 3.0  # how long it stays aside before planning its leg again
+WAIT_SPOT_M = (0.3, 1.2)  # a robot waiting for an approach line stands this far from its start
 
 
 @dataclass
@@ -58,6 +75,11 @@ class _Leg:
     slowed: bool = False  # the locked part ahead is short (counted once per episode)
     planned_at: float = 0.0
     no_path_warned: bool = False
+    stuck_since: float | None = None  # the lock could not grow since then
+    resume: tuple | None = None  # sidestep leg: (phase, dest, goal waypoint) to go on with
+    resume_at: float | None = None  # sidestep done: plan the real leg again from then
+    waiting: bool = False  # another robot has the approach line: the route ends at a wait spot
+    asked_at: float = 0.0  # when this leg asked for its approach line (first come first served)
 
 
 class FloorController(TrafficController):
@@ -76,6 +98,20 @@ class FloorController(TrafficController):
         self._off_cells: dict[str, int] = {name: 0 for name in robots}
         self._wp_cell: dict = {}
         self.metrics = {"slowdowns": 0, "replans": 0, "sidesteps": 0, "no_path": 0}
+        self._block_since: dict[str, float] = {}  # robot -> first BLOCKED report of this run
+        self._clear_n: dict[str, int] = {}  # robot -> non-BLOCKED reports since its mark
+        self._marks: dict[str, set[str]] = {}  # robot -> cells it marked as blocked
+        self._deadlock_key: tuple = ()
+        # cell offsets whose box comes nearer than the body radius to a cell's box
+        step = self.floor.cell_m
+        n = math.ceil(self._body / step) + 1
+        self._reach = [(di, dj) for di in range(-n, n + 1) for dj in range(-n, n + 1)
+                       if math.hypot(max(0, abs(di) - 1) * step,
+                                     max(0, abs(dj) - 1) * step) < self._body]
+        self._line_ids = {name: self._swept(line.points)
+                          for name, line in self.floor.fixed_lines.items()}
+        self._all_line_ids = set().union(*self._line_ids.values()) if self._line_ids else set()
+        self._deadlock_seen = 0.0
 
     # ---- cells --------------------------------------------------------------------------
 
@@ -84,6 +120,11 @@ class FloorController(TrafficController):
 
     def _body_cells(self, x: float, y: float) -> set[str]:
         return self._ids(disk_cells(self.floor, x, y, self._body))
+
+    def _standing_cells(self, x: float, y: float) -> set[str]:
+        """로봇이 서 있는 동안 쥐는 칸: 몸 칸과 아직 release_distance_m 안이라 놓지 않는 칸."""
+        return self._ids(disk_cells(self.floor, x, y,
+                                    max(self._body, self.params.release_distance_m)))
 
     def _swept(self, points) -> set[str]:
         return self._ids(swept_cells(self.floor, points, self._body))
@@ -148,7 +189,52 @@ class FloorController(TrafficController):
                         m.name)
 
     def _note_block_report(self, m: _Mission) -> None:
-        pass  # P3
+        """BLOCKED가 blocked_mark_s 이어지면 앞 칸을 막힘으로 표시한다. 풀리면 지운다."""
+        now = self._clock()
+        name = m.name
+        if m.robot_state == "BLOCKED":
+            self._clear_n[name] = 0
+            since = self._block_since.setdefault(name, now)
+            if name not in self._marks and now - since >= self.params.blocked_mark_s:
+                self._mark_blocked(m)
+            elif now - since >= self.params.blocked_timeout_s and not m.fault:
+                self._fail(m, "BLOCKED")
+            return
+        self._block_since.pop(name, None)
+        if name in self._marks:
+            self._clear_n[name] = self._clear_n.get(name, 0) + 1
+            if self._clear_n[name] >= self.params.release_confirm_samples:
+                for cell in self._marks.pop(name):
+                    self.zones.release(BLOCK_OWNER, cell)
+                self._event("INFO", "FLOOR_CLEARED", "the object is gone", name)
+                leg = self._legs.get(name)
+                if leg is not None and leg.route is not None:
+                    self._plan(m, leg)
+
+    def _mark_blocked(self, m: _Mission) -> None:
+        leg = self._legs.get(m.name)
+        ahead = set()
+        if leg and leg.route:
+            ahead = self._swept(leg.route.between(leg.s, leg.s + 0.3))
+        ahead -= self._body_cells(m.x, m.y)
+        if m.goal:
+            self._cancel_goal(m)
+        for cell in ahead & self.zones.held_set(m.name):
+            self.zones.release(m.name, cell)
+        free = {c for c in ahead if self.zones.holder(c) is None}
+        self.zones.acquire_all(BLOCK_OWNER, free)
+        self._marks[m.name] = free
+        if leg and leg.route:
+            leg.s_lock = leg.s_sent = leg.s
+        self._event("WARN", "FLOOR_BLOCKED",
+                    f"object ahead, {len(free)} cells marked blocked", m.name)
+
+    def blocked_cells(self) -> list[str]:
+        return self.zones.held_by(BLOCK_OWNER)
+
+    def _held_for_block(self, m: _Mission) -> bool:
+        """막힌 동안과 표시를 지우기 전에는 새 goal을 내지 않는다."""
+        return m.name in self._block_since or m.name in self._marks
 
     def _queue_rests(self, m: _Mission, lane=None) -> bool:
         m.queue_since = None
@@ -165,7 +251,7 @@ class FloorController(TrafficController):
             else:
                 m.stall_from = m.stall_mean = None
                 m.stall_hold = False
-        return frozenset()
+        return self._check_deadlock(now)
 
     def _follow(self, m: _Mission) -> None:
         """경로 위 진행 s를 보고 자세로 넘긴다. 뒤로는 가지 않고 보낸 끝을 넘지 않는다."""
@@ -225,6 +311,7 @@ class FloorController(TrafficController):
         m.settle_idx = None
         m.phase = phase
         m.dest = dest
+        leg.asked_at = self._clock()
         self._legs[m.name] = leg
         self._plan(m, leg)
 
@@ -236,13 +323,18 @@ class FloorController(TrafficController):
         if out_line and math.dist(start, self.floor.fixed_lines[out_line].start) > \
                 self.params.arrival_tolerance_m:
             out_line = None  # no longer on the dock (moved, or replanned on the way)
+        leg.waiting = bool(leg.in_line) and not self._admitted(m, leg)
+        if leg.waiting:
+            self._plan_wait(m, leg, out_line)
+            return
         if math.dist(start, leg.goal_xy) <= self.params.arrival_tolerance_m and not out_line:
             leg.route = Route([leg.goal_xy])
             leg.done = m.goal is None
             return
-        route = self.planner.leg(start, leg.goal_xy, out_line, leg.in_line)
+        route = self._route(m, start, leg.goal_xy, out_line, leg.in_line)
         if route is None:
             self.metrics["no_path"] += 1
+            leg.route = None  # never drive on to the end of an old route (a wait spot)
             if not leg.no_path_warned:
                 leg.no_path_warned = True
                 self._event("WARN", "FLOOR_NO_PATH",
@@ -250,6 +342,115 @@ class FloorController(TrafficController):
             return
         leg.route = route
         leg.s = leg.s_lock = leg.s_sent = 0.0
+        leg.stuck_since = None
+
+    # ---- one robot at a time on an approach line -------------------------------------------
+
+    def _admitted(self, m: _Mission, leg: _Leg) -> bool:
+        """leg가 접근선에 들어가도 되나: 다른 로봇이 그 선으로 가는 중이 아니고 선 칸을 쥐지 않았고
+        먼저 기다리기 시작한 로봇이 없을 때."""
+        line = leg.in_line
+        cells = self._line_ids[line]
+        for name in self._missions:
+            if name == m.name:
+                continue
+            other = self._legs.get(name)
+            if other is not None and other.in_line == line and not other.waiting:
+                return False
+            if not cells.isdisjoint(self.zones.held_set(name)):
+                return False
+        mine = (leg.asked_at, m.name)
+        return not any((other.asked_at, name) < mine for name, other in self._legs.items()
+                       if name != m.name and other.in_line == line and other.waiting)
+
+    def _plan_wait(self, m: _Mission, leg: _Leg, out_line) -> None:
+        """접근선 시작 근처, 고정 선 칸·남의 칸·다른 대기 자리에 닿지 않는 가장 가까운 빈 자리로."""
+        start = (m.x, m.y)
+        line_start = self.floor.fixed_lines[leg.in_line].points[0]
+        banned = set(self._all_line_ids) | set(self.zones.held_by_others(m.name))
+        for name, other in self._legs.items():
+            if name != m.name and other.waiting and other.route is not None:
+                banned |= self._standing_cells(*other.route.points[-1])
+        near, far = WAIT_SPOT_M
+        if not out_line and self._standing_cells(*start).isdisjoint(banned) and \
+                near <= math.dist(start, line_start) <= far:
+            leg.route = Route([start])  # already standing in a good place
+            leg.done = m.goal is None
+            leg.s = leg.s_lock = leg.s_sent = 0.0
+            return
+        spots = sorted((c for c in self.floor.clear
+                        if near <= math.dist(line_start, self.floor.centre(c)) <= far),
+                       key=lambda c: math.dist(line_start, self.floor.centre(c)))
+        for cell in spots:
+            spot = self.floor.centre(cell)
+            if not self._standing_cells(*spot).isdisjoint(banned):
+                continue
+            route = self._route(m, start, spot, out_line)
+            if route is None:
+                continue
+            leg.route = route
+            leg.s = leg.s_lock = leg.s_sent = 0.0
+            leg.stuck_since = None
+            return
+        leg.route = None  # nowhere to wait now: try again after floor_replan_s
+
+    def _route(self, m: _Mission, start, goal, out_line=None, in_line=None, extra=frozenset()):
+        """남이 쥔 칸을 피하고 남의 예약에 벌점을 준 경로. 없으면 피하지 않고 다시 찾는다."""
+        avoid = self._inflate(self._others_cells(m.name)) | extra
+        avoid -= {self.floor.cell_of(*start)}
+        route = self.planner.leg(start, goal, out_line, in_line, frozenset(avoid),
+                                 self._penalty_for(m.name))
+        if route is None and not extra:
+            route = self.planner.leg(start, goal, out_line, in_line)
+        return route
+
+    def _inflate(self, cells) -> set:
+        """칸 (i, j)들 -> 로봇 중심이 그 칸 어디에 있어도 몸이 cells 중 하나에 닿는 칸까지 넓힌 것.
+        계획기는 중심이 지나는 칸만 보므로 남의 칸을 피하려면 몸 반지름만큼 넓혀서 넘긴다."""
+        out = set()
+        for i, j in cells:
+            out.update((i + di, j + dj) for di, dj in self._reach)
+        return out
+
+    def _others_cells(self, robot: str) -> set:
+        """다른 로봇(과 막힘 표시)이 쥔 칸 (i, j)."""
+        return {self.floor.cell_at(c) for c in self.zones.held_by_others(robot)}
+
+    def _reservations(self, exclude: str | None = None) -> dict[str, list]:
+        """칸 -> [(로봇, 들어가는 시각, 나가는 시각)]: 계획한 경로를 계약 속도로 달릴 때."""
+        v = self.params.detour_speed_mps
+        window = self.params.floor_plan_window_s
+        hold = self._body / v
+        table: dict[str, dict[str, list]] = {}
+        for name, leg in self._legs.items():
+            if name == exclude or leg.route is None or not self._missions[name].available:
+                continue
+            route = leg.route
+            end = min(route.length, leg.s + v * window)
+            n = max(1, int((end - leg.s) / (self.floor.cell_m / 2)))
+            for k in range(n + 1):
+                s = leg.s + (end - leg.s) * k / n
+                t = (s - leg.s) / v
+                for cell in self._body_cells(*route.at(s)):
+                    span = table.setdefault(cell, {}).setdefault(name, [t - hold, t + hold])
+                    span[0], span[1] = min(span[0], t - hold), max(span[1], t + hold)
+        return {cell: [(name, a, b) for name, (a, b) in spans.items()]
+                for cell, spans in table.items()}
+
+    def _penalty_for(self, robot: str):
+        """계획기 벌점: 다른 로봇이 그 칸에 있을 시각에 닿으면 RESERVE_PENALTY_M."""
+        table = self._reservations(exclude=robot)
+        v = self.params.detour_speed_mps
+        ids = self.floor.cell_id
+
+        def penalty(cell, s: float) -> float:
+            t = s / v
+            for _, t_in, t_out in table.get(ids(cell), ()):
+                if t_in <= t <= t_out:
+                    return RESERVE_PENALTY_M
+            return 0.0
+
+        return penalty
 
     def _drive(self, m: _Mission) -> None:
         leg = self._legs.get(m.name)
@@ -258,23 +459,180 @@ class FloorController(TrafficController):
         if m.phase == TO_PARK and self._spot_taken(m):
             self._start_park_leg(m)  # someone stopped on the spot first: pick again
             leg = self._legs[m.name]
+        if leg.waiting and self._admitted(m, leg):
+            if m.goal:
+                self._cancel_goal(m)
+            self.zones.cancel_all_requests(m.name)
+            self._plan(m, leg)  # its turn on the approach line
         if leg.route is None:
             if self._clock() - leg.planned_at >= self.params.floor_replan_s:
                 self._plan(m, leg)
             return
         if leg.done and m.goal is None:
+            if leg.waiting:
+                return  # at the wait spot until the line is free
+            if leg.resume is not None:
+                self._after_sidestep(m, leg)
+                return
             del self._legs[m.name]
             m.idx = len(m.path) - 1
             self._arrive(m)
             return
-        if m.block or m.block_cancel is not None:
-            return
         if m.goal is None and self._clock() < m.retry_at:
             return
-        self._extend(m, leg)
+        grew = self._extend(m, leg)
         self._send(m, leg)
+        self._replan_if_stuck(m, leg, grew)
+
+    def _replan_if_stuck(self, m: _Mission, leg: _Leg, grew: bool) -> None:
+        """잠금이 floor_replan_s 동안 못 늘고 앞이 짧으면 남을 피해 다시 계획한다."""
+        now = self._clock()
+        route = leg.route
+        short = leg.s_lock - leg.s < self.params.floor_extend_step_m
+        if grew or not short or leg.s_lock >= route.length - AT_END_M:
+            leg.stuck_since = None
+            return
+        if leg.stuck_since is None:
+            leg.stuck_since = now
+            return
+        if (now - leg.stuck_since < self.params.floor_replan_s
+                or now - leg.planned_at < self.params.floor_replan_s
+                or route.fixed_at(leg.s) is not None):
+            return  # inside a fixed line there is no other way
+        if leg.waiting:
+            if m.goal:
+                self._cancel_goal(m)
+            self.zones.cancel_all_requests(m.name)
+            self._plan(m, leg)  # another wait spot (or the line, if it is free now)
+            self.metrics["replans"] += 1
+            return
+        leg.planned_at = now
+        old_left = route.length - leg.s
+        new = self._route(m, (m.x, m.y), leg.goal_xy, None, leg.in_line,
+                          extra=frozenset(self._others_cells(m.name)))
+        if new is None or new.length > old_left + 3.0:
+            return
+        if m.goal:
+            self._cancel_goal(m)
+        self.zones.cancel_all_requests(m.name)
+        leg.route = new
+        leg.s = leg.s_lock = leg.s_sent = 0.0
+        leg.stuck_since = None
+        self.metrics["replans"] += 1
+
+    # ---- wait cycles ----------------------------------------------------------------------
+
+    def _check_deadlock(self, now: float) -> frozenset[str]:
+        """대기 순환을 찾는다. 아무도 세우지 않는다: 순환에 든 로봇도 다시 계획을 이어 간다.
+
+        deadlock_grace_s 이어지면 choose_retreat가 고른 로봇이 비켜 선다. 비켜 설 곳이 없거나
+        비켜 선 뒤에도 같은 순환이 deadlock_unresolved_s 이어지면 그 로봇을 격리한다.
+        """
+        graph = wait_graph(self.zones)
+        graph.pop(BLOCK_OWNER, None)
+        cycle = find_cycle(graph)
+        if not cycle:
+            # a robot that got a shorter extension stops waiting for a tick: the same cycle
+            # coming back within a second is the same episode
+            if self._deadlock_key and now - self._deadlock_seen > 1.0:
+                self._deadlock_key = ()
+            return frozenset()
+        members, key = set(cycle), set(self._deadlock_key)
+        same = now - self._deadlock_seen <= 1.0 and (
+            members <= key or (members & key and not self._deadlock_acted))
+        self._deadlock_seen = now
+        if same:
+            # robots that take turns getting a shorter lock change the cycle inside the same
+            # group of robots: one episode over all of them
+            self._deadlock_key = tuple(sorted(members | key))
+        else:
+            self._deadlock_key = tuple(sorted(cycle))
+            self._deadlock_since = now
+            self._deadlock_acted = False
+            self._unresolved_at = None
+            self._event("ERROR", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
+            return frozenset()
+        cycle = list(self._deadlock_key)
+        if not self._deadlock_acted and now - self._deadlock_since >= \
+                self.params.deadlock_grace_s:
+            self._deadlock_acted = True
+            # lowest priority first, as choose_retreat; one that cannot step aside (on a fixed
+            # line, docking) passes the turn to the next
+            order = sorted(cycle, key=lambda name: (self._priority(name), name))
+            if not any(self._sidestep(self._missions[name], cycle) for name in order):
+                robot = choose_retreat(cycle, self._priority)
+                self._event("ERROR", "DEADLOCK_UNRESOLVED",
+                            f"{robot} of {cycle} has no free spot to step aside to", robot)
+                self._unresolved_at = now
+        elif (self._deadlock_acted and self._unresolved_at is None
+              and now - self._deadlock_since >= 2 * self.params.deadlock_grace_s + SIDESTEP_HOLD_S
+              and not any(leg.resume for leg in self._legs.values())):
+            robot = choose_retreat(cycle, self._priority)
+            self._event("ERROR", "DEADLOCK_UNRESOLVED",
+                        f"{robot} of {cycle} stepped aside but the cycle remains", robot)
+            self._unresolved_at = now
+        elif (self._unresolved_at is not None
+              and now - self._unresolved_at >= self.params.deadlock_unresolved_s):
+            self._unresolved_at = None
+            self._fail(self._missions[choose_retreat(cycle, self._priority)],
+                       "DEADLOCK_UNRESOLVED")
+        return frozenset()
+
+    def _sidestep(self, m: _Mission, cycle) -> bool:
+        """남의 칸과 남이 가려는 길에서 벗어난 가장 가까운 빈 자리로 비켜 선다."""
+        if not m.available or m.phase not in (TO_WORK, TO_OUTBOUND, TO_PARK):
+            return False
+        leg = self._legs.get(m.name)
+        if leg is None or leg.route is None or leg.route.fixed_at(leg.s) is not None:
+            return False
+        others = self._others_cells(m.name)
+        wanted = set()
+        for name in cycle:
+            other = self._legs.get(name)
+            if name != m.name and other is not None and other.route is not None:
+                ahead = other.route.between(other.s, min(other.route.length, other.s + 1.2))
+                wanted |= swept_cells(self.floor, ahead, self._body)
+        blocked = others | wanted
+        here = (m.x, m.y)
+        avoid_ids = self._inflate(others) | wanted
+        spots = sorted((c for c in self.floor.clear
+                        if 0.25 <= math.dist(here, self.floor.centre(c)) <= SIDESTEP_REACH_M),
+                       key=lambda c: math.dist(here, self.floor.centre(c)))
+        for cell in spots:
+            spot = self.floor.centre(cell)
+            if disk_cells(self.floor, *spot,
+                          max(self._body, self.params.release_distance_m)) & blocked:
+                continue
+            route = self.planner.leg(here, spot, avoid=frozenset(avoid_ids - {self.floor.cell_of(
+                *here)}))
+            if route is None:
+                continue
+            if m.goal:
+                self._cancel_goal(m)
+            self.zones.cancel_all_requests(m.name)
+            goal = m.path[-1]
+            side = _Leg(route, spot, resume=(m.phase, m.dest, goal))
+            self._legs[m.name] = side
+            self.metrics["sidesteps"] += 1
+            self._event("WARN", "FLOOR_SIDESTEP",
+                        f"steps aside to ({spot[0]:.2f}, {spot[1]:.2f}) to break {cycle}",
+                        m.name)
+            return True
+        return False
+
+    def _after_sidestep(self, m: _Mission, leg: _Leg) -> None:
+        now = self._clock()
+        if leg.resume_at is None:
+            leg.resume_at = now + SIDESTEP_HOLD_S
+        if now < leg.resume_at:
+            return
+        phase, dest, goal = leg.resume
+        self._start_leg(m, phase, dest, goal)
 
     def _spot_taken(self, m: _Mission) -> bool:
+        leg = self._legs.get(m.name)
+        if leg is not None and leg.resume is not None:
+            return False  # stepping aside: the spot is not where it goes now
         holder = self.zones.holder(self._zone(m.path[-1]))
         return holder is not None and holder != m.name
 

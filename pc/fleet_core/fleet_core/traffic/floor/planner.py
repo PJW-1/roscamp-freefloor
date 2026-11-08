@@ -17,6 +17,7 @@ from fleet_core.traffic.floor.cells import line_cells, swept_cells
 LINE_COST = 4.0  # 고정 선 칸을 자유 경로가 지날 때의 거리 배수: 도크 앞을 가로지르지 않게
 ARC_RADIUS_M = 0.15  # 꺾임을 둥글리는 원호 반지름(이보다 작게 줄 수 있다)
 ARC_STEP_M = 0.05
+JOIN_M = 0.12  # 이만큼 안에 있으면 들어가는 고정 선 위에 선 것으로 보고 그 자리에서 잇는다
 STRAIGHT = 1e-3  # 이보다 덜 꺾이면 곧은 것으로 친다(rad)
 NEIGHBOURS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
@@ -110,6 +111,12 @@ class FloorPlanner:
         tail = [tuple(goal)]
         if in_line:
             tail = list(lines[in_line].points)
+            rest = None if out_line else _rest_of_line(start, tail)
+            if rest is not None:
+                # already standing on the approach line (it waited there): go on up the line
+                route = Route([tuple(start), *rest])
+                route.fixed = [(0.0, route.length, in_line)]
+                return route
         middle = self.plan(head[-1], tail[0], avoid, penalty, polyline_length(head))
         if middle is None:
             return None
@@ -238,3 +245,19 @@ class FloorPlanner:
         n = max(2, math.ceil(radius * abs(turn) / ARC_STEP_M))
         return [(cx + radius * math.cos(start + side * abs(turn) * k / n),
                  cy + radius * math.sin(start + side * abs(turn) * k / n)) for k in range(n + 1)]
+
+
+def _rest_of_line(point, line):
+    """point가 line 첫 점을 지난 구간에서 JOIN_M 안이면 그 구간 끝부터의 점들, 아니면 None."""
+    px, py = point
+    for k, ((ax, ay), (bx, by)) in enumerate(zip(line, line[1:], strict=False)):
+        dx, dy = bx - ax, by - ay
+        length2 = dx * dx + dy * dy
+        if length2 < 1e-12:
+            continue
+        u = ((px - ax) * dx + (py - ay) * dy) / length2
+        if u <= 0.0 or u >= 1.0:
+            continue
+        if abs((px - ax) * dy - (py - ay) * dx) / math.sqrt(length2) <= JOIN_M:
+            return [tuple(p) for p in line[k + 1:]]
+    return None

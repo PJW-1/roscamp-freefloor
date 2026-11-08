@@ -165,6 +165,9 @@ class CellLocks:
         """held_by와 같지만 정렬하지 않은 집합(복사본이 아니다, 바꾸지 말 것)."""
         return self._held.get(robot, set())
 
+    def held_by_others(self, robot: str) -> list[str]:
+        return [c for c, holder in self._holder.items() if holder != robot]
+
     def waiting_for(self, robot: str) -> str | None:
         waiting = self._waiting.get(robot)
         return waiting[0] if waiting else None

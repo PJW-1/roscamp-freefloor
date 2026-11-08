@@ -124,3 +124,15 @@ def test_route_measures_and_projects():
     assert s >= 1.2
     route.fixed = [(1.0, 2.0, "line")]
     assert route.fixed_at(1.5) == (1.0, 2.0, "line") and route.fixed_at(0.5) is None
+
+
+def test_a_robot_already_on_the_in_line_joins_it_where_it_stands(planner, floor):
+    """A robot that waited on the approach line goes straight up it, not back round to its start
+    (where the next robot in the queue waits)."""
+    line = floor.fixed_lines["work_in"]
+    (x0, y0), (x1, y1) = line.points[0], line.points[-1]
+    start = (x0 + 0.45 * (x1 - x0) + 0.02, y0 + 0.45 * (y1 - y0) - 0.02)  # a little off the line
+    route = planner.leg(start, line.points[-1], in_line="work_in")
+    assert route.points[0] == start
+    assert route.length < 0.6 * line.length() + 0.05
+    assert route.fixed == [(0.0, route.length, "work_in")]
