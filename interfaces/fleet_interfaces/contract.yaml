@@ -1,6 +1,9 @@
 # 이름, 타입, QoS의 유일한 기준. 코드는 `key`로 찾으므로 이름이나 QoS는 여기만 고친다.
 # 팀 합의 전까지 모두 초안이다. QoS depth는 실제 Wi-Fi에서 측정해야 한다.
-version: 0.4-draft
+version: 0.5-draft
+# 0.5 (2026-11-09, 제안): RobotState.state에 RECOVERING(핑키 FSM의 짧은 후진 자가 복구)을 더했다.
+# 관제는 MOVING처럼 보되 막힘 시계와 멈춤 감시를 쉬고, SELF_RECOVERY와 SELF_RECOVERY_END를 낸다.
+# /fleet/robots fault의 RECOVERING(관제가 로봇을 확인하는 중)과 이름만 같다. 핑키 계약 4절.
 # 0.4 (2026-11-07, 제안): /fleet/heartbeat를 HEARTBEAT 프로필(reliable, depth 1)로 바꿨다.
 # best_effort는 재전송이 없어 관제가 살아 있어도 Wi-Fi에서 3번 연달아 빠지면(1.5 s) 핑키가 선다.
 # 끊김 판단은 그대로 앱 타이머(heartbeat_timeout_s, 벽시계)로 한다. 출처: Confluence
