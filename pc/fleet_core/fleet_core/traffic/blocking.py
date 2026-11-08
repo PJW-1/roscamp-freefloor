@@ -4,6 +4,7 @@
   - blocked_mark_s: 달리던 레인을 막힘으로 표시하고(LANE_BLOCKED) 목표를 취소한다.
     몸이 있는 레인의 구역은 쥐고, 들어가지 않은 앞 구역은 취소 결과가 오고 선 것을 본 뒤 놓는다.
   - 풀림: 통신이 정상이고 BLOCKED가 아닌 보고가 연속 release_confirm_samples번.
+    로봇의 자가 복구(RECOVERING, 제안)는 풀린 보고로 치지 않고, 막힌 시간도 더하지 않는다.
     표시했으면 LANE_CLEARED를 내고 같은 목표를 다시 보낸다. 시도로 세지 않는다.
     두절과 복구 확인 중에는 풀지도 놓지도 않고, 연속 횟수는 처음부터 다시 센다.
   - blocked_timeout_s: ERROR(BLOCKED). 시간은 BLOCKED로 보고된 동안만 센다.
@@ -26,6 +27,7 @@ from fleet_core.traffic.mission import (
     LOCALIZING,
     MOVE,
     ON_A_GOAL,
+    SELF_RECOVERING,
     _Block,
     _Goal,
     _Mission,
@@ -52,7 +54,8 @@ class TrafficBlocking:
             return
         if b.marked and m.block_cancel is None:
             b.still_n = 0 if m.robot_state in ON_A_GOAL else b.still_n + 1
-        b.clear_n = 0 if m.robot_state == BLOCKED else b.clear_n + 1
+        # 자가 복구 중은 아직 막혀 있을 수 있다. 연속 수를 처음부터 다시 센다
+        b.clear_n = 0 if m.robot_state in (BLOCKED, SELF_RECOVERING) else b.clear_n + 1
         if b.clear_n >= self.params.release_confirm_samples:
             self._clear_block(m, "")
 

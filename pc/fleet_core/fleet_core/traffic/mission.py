@@ -22,7 +22,10 @@ RECOVERING = "RECOVERING"
 PLACEMENT_CONFLICT = "PLACEMENT_CONFLICT"
 NO_FAULT = "NONE"  # 이상 없을 때 /fleet/robots에 나가는 값
 # 로봇 상태 보고에 오는 값
-ON_A_GOAL = ("MOVING", "DOCKING")
+# 로봇이 스스로 짧게 후진하고 다시 간다(계약 4절, 제안). 위 fault RECOVERING과 값만 같다.
+# 이동 중으로 보되 막힘 시계와 멈춤 감시는 쉰다(blocking.py, controller._watch_stall).
+SELF_RECOVERING = "RECOVERING"
+ON_A_GOAL = ("MOVING", "DOCKING", SELF_RECOVERING)
 BLOCKED = "BLOCKED"  # 경로 앞 물체로 섰다(계약 4절)
 LOCALIZING = "LOCALIZING"  # 위치를 아직 못 잡았다. 자세를 믿지 않는다
 NOT_PLACEABLE = ON_A_GOAL + (BLOCKED, LOCALIZING)  # 이 상태로는 지도에 올리지 않는다
@@ -111,6 +114,7 @@ class _Mission:
     block_rejoin: tuple | None = None  # (레인, 풀린 시각, 합). 곧 같은 레인에서 막히면 이어 센다
     block_cancel: int | None = None  # 막힘 표시 때 취소한 goal. 결과가 오면 None. 풀려도 남는다
     queue_since: float | None = None  # BLOCKED로 줄 서기를 시작한 시각
+    self_recovery_since: float | None = None  # 로봇이 RECOVERING을 보고하기 시작한 시각
     detour_at: object = None  # 우회를 고른 지점. 여기를 떠나면 detour_avoid는 뜻이 없다
     detour_avoid: tuple = ()  # 그 지점에서 포기한 다음 구역들. 되돌아가지 않는다
     lane_ref: tuple | None = None  # off_lane을 센 레인(a, b)
