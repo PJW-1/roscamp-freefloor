@@ -792,11 +792,17 @@ def test_a_nav_abort_recovers_twice_then_ends_nav_aborted(harness, tmp_path):
     """pinky_fsm(core.py nav_result)처럼: FollowPath abort마다 시도를 쓰고, 다 쓰면 NAV_ABORTED."""
     p = start(harness, tmp_path, robots=LONG, faults=[
         {"at_s": 0, "robot": "pinky1", "type": "nav_abort", "count": 1}])
+    truth = watch_truth(p)
     assert wait_until(lambda: p.states, 5.0)
     sent = time.monotonic()
     res = result_of(p.goal("QO")).result
+    took = time.monotonic() - sent
     assert (res.success, res.reason) == (False, MoveTo.Result.REASON_NAV_ABORTED)
     assert RECOVERING in states_since(p, sent)
+    # 중단 세 번(처음, 시도 1, 시도 2), 각 0.2 s. 꼭짓점 곁이라 후진하지 않는다(단위 시험이 본다)
+    assert took >= 3 * 0.2 - 0.1, took
+    # 다시 가도 처음 중단한 자리(0.2 s * 0.2 m/s)를 넘지 못한다
+    assert max(along(truth)) <= 0.04 + 0.02
     assert result_of(p.goal("QO"), 30.0).result.success is True, "one fault, one goal"
 
 
