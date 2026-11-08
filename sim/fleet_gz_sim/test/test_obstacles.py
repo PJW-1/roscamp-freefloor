@@ -72,6 +72,14 @@ def test_lane_may_be_named_against_its_direction():
     ({"obstacles": [entry(at_s=10, duration_s=20), entry(at_s=29, duration_s=5)]}, "overlap"),
     ({"obstacles": [entry(at_s=10, lane=["A", "B"]), entry(at_s=20, lane=["B", "A"])]},
      "overlap"),
+    # YAML .nan and .inf are floats; every comparison with NaN is false, so they slipped through
+    ({"obstacles": [entry(at_s=math.nan)]}, "at_s"),
+    ({"obstacles": [entry(at_s=math.inf)]}, "at_s"),
+    ({"obstacles": [entry(duration_s=math.inf)]}, "duration_s"),
+    ({"obstacles": [entry(duration_s=math.nan)]}, "duration_s"),
+    ({"obstacles": [entry(fraction=math.nan)]}, "fraction"),
+    ({"obstacles": [entry()], "repeat_every_s": math.nan}, "repeat_every_s"),
+    ({"obstacles": [entry()], "size_m": [0.1, 0.1, math.inf]}, "size_m"),
 ])
 def test_bad_schedules_are_refused_with_the_reason(data, words):
     with pytest.raises(obstacles.ScheduleError, match=words):
@@ -152,26 +160,51 @@ def test_occurrences_without_repeat_end():
     assert [o.due_s for o in obstacles.occurrences(two_entry_schedule())] == [10.0, 50.0]
 
 
+PLACED, SKIPPED, UNKNOWN = "placed", "skipped", "unknown"  # obstacles.PLACED, ...
+
+
+def names(occs):
+    return [o.name for o in occs]
+
+
+def test_spawn_outcome_names():
+    assert (obstacles.PLACED, obstacles.SKIPPED, obstacles.UNKNOWN) == (PLACED, SKIPPED, UNKNOWN)
+
+
 def test_planner_places_when_due_and_removes_after_the_duration():
     planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
     assert planner.step(9.9, FAR, 0.35) == obstacles.Step()
     step = planner.step(10.0, FAR, 0.35)
-    assert [o.name for o in step.spawn] == ["obstacle_1"]
+    assert names(step.spawn) == ["obstacle_1"]
+    planner.spawned(step.spawn[0], 10.0, PLACED)
     assert planner.step(29.9, FAR, 0.35) == obstacles.Step()
     step = planner.step(30.0, FAR, 0.35)
-    assert [o.name for o in step.remove] == ["obstacle_1"]
+    assert names(step.remove) == ["obstacle_1"]
+    planner.removed(step.remove[0], 30.0, ok=True)
     assert planner.step(31.0, FAR, 0.35) == obstacles.Step()
+    assert planner.in_gazebo() == []
 
 
 def test_planner_waits_for_a_robot_to_move_away_and_counts_duration_from_placing():
     planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
     on_box = [(1.25, 1.35)]
     step = planner.step(10.0, on_box, 0.35)
-    assert step.spawn == [] and [o.name for o in step.waiting] == ["obstacle_1"]
+    assert step.spawn == [] and names(step.waiting) == ["obstacle_1"]
     assert planner.step(15.0, on_box, 0.35).spawn == []
-    assert [o.name for o in planner.step(16.0, FAR, 0.35).spawn] == ["obstacle_1"]
+    [occ] = planner.step(16.0, FAR, 0.35).spawn
+    planner.spawned(occ, 16.0, PLACED)
     assert planner.step(35.9, FAR, 0.35).remove == []
-    assert [o.name for o in planner.step(36.0, FAR, 0.35).remove] == ["obstacle_1"]
+    assert names(planner.step(36.0, FAR, 0.35).remove) == ["obstacle_1"]
+
+
+def test_hold_time_counts_from_the_actual_spawn_not_from_the_hand_off():
+    """The gz calls run one after another; a spawn can finish seconds after it was handed out."""
+    planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
+    [occ] = planner.step(10.0, FAR, 0.35).spawn
+    assert planner.step(29.0, FAR, 0.35).remove == []  # call still running: nothing to remove
+    planner.spawned(occ, 14.0, PLACED)
+    assert planner.step(33.9, FAR, 0.35).remove == []
+    assert names(planner.step(34.0, FAR, 0.35).remove) == ["obstacle_1"]
 
 
 def test_planner_gives_up_after_the_maximum_delay():
@@ -180,28 +213,107 @@ def test_planner_gives_up_after_the_maximum_delay():
     planner.step(10.0, on_box, 0.35)
     assert planner.step(30.0, on_box, 0.35).give_up == []
     step = planner.step(30.1, on_box, 0.35)
-    assert [o.name for o in step.give_up] == ["obstacle_1"]
+    assert names(step.give_up) == ["obstacle_1"]
     assert planner.step(31.0, FAR, 0.35) == obstacles.Step()
+
+
+def test_an_entry_past_the_maximum_delay_is_given_up_even_if_the_spot_is_free_now():
+    planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
+    planner.step(10.0, [(1.25, 1.35)], 0.35)  # waits
+    step = planner.step(31.0, FAR, 0.35)  # next look comes late, and the spot is free
+    assert step.spawn == [] and names(step.give_up) == ["obstacle_1"]
+
+
+def test_a_spawn_skipped_at_the_last_check_waits_again_under_the_same_delay_limit():
+    """The worker checks the robots again right before the gz call (try_spawn)."""
+    planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
+    [occ] = planner.step(10.0, FAR, 0.35).spawn
+    planner.spawned(occ, 11.0, SKIPPED)
+    assert planner.in_gazebo() == []
+    on_box = [(1.25, 1.35)]
+    assert names(planner.step(12.0, on_box, 0.35).waiting) == ["obstacle_1"]
+    assert names(planner.step(13.0, FAR, 0.35).spawn) == ["obstacle_1"]
+    planner2 = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
+    [occ] = planner2.step(10.0, FAR, 0.35).spawn
+    planner2.spawned(occ, 30.5, SKIPPED)
+    assert names(planner2.step(30.5, FAR, 0.35).give_up) == ["obstacle_1"]
+
+
+def test_a_spawn_without_a_clear_answer_is_removed_in_case_it_landed():
+    """A lost reply does not mean Gazebo did not create the box."""
+    planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
+    [occ] = planner.step(10.0, FAR, 0.35).spawn
+    planner.spawned(occ, 13.0, UNKNOWN)
+    assert names(planner.in_gazebo()) == ["obstacle_1"]
+    assert planner.placed() == []
+    step = planner.step(13.2, FAR, 0.35)
+    assert names(step.remove) == ["obstacle_1"]
+    planner.removed(step.remove[0], 13.5, ok=True)
+    assert planner.in_gazebo() == []
+
+
+def test_a_failed_remove_is_tried_again_and_reported_once_it_runs_out_of_tries():
+    planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
+    [occ] = planner.step(10.0, FAR, 0.35).spawn
+    planner.spawned(occ, 10.0, PLACED)
+    t = 30.0
+    for attempt in range(obstacles.MAX_REMOVE_TRIES):
+        step = planner.step(t, FAR, 0.35)
+        assert names(step.remove) == ["obstacle_1"], attempt
+        planner.removed(step.remove[0], t, ok=False)
+        assert names(planner.in_gazebo()) == ["obstacle_1"]
+        if attempt < obstacles.MAX_REMOVE_TRIES - 1:
+            assert planner.step(t + obstacles.REMOVE_RETRY_S - 0.1, FAR, 0.35).remove == []
+        t += obstacles.REMOVE_RETRY_S
+    step = planner.step(t, FAR, 0.35)
+    assert step.remove == [] and names(step.lost) == ["obstacle_1"]
+    assert planner.step(t + 5.0, FAR, 0.35) == obstacles.Step()  # before obstacle_2 is due
+    assert names(planner.in_gazebo()) == ["obstacle_1"]  # shutdown cleanup still tries it
 
 
 def test_planner_catches_up_several_due_at_once_and_repeats():
     planner = obstacles.Planner(two_entry_schedule(repeat=100), start_s=0.0, max_delay_s=20.0)
+    step = planner.step(25.0, FAR, 0.35)
+    assert names(step.spawn) == ["obstacle_1"]  # due at 10 s, still within the delay limit
     step = planner.step(55.0, FAR, 0.35)
-    # 1번은 10 s에 놓여야 했다. 늦게 본 만큼 치우는 시각도 늦는다(놓은 시각 + 길이)
-    assert [o.name for o in step.spawn] == ["obstacle_1", "obstacle_2"]
-    assert [o.name for o in planner.step(110.0, FAR, 0.35).spawn] == ["obstacle_3"]
+    assert names(step.spawn) == ["obstacle_2"]
+    assert names(planner.step(110.0, FAR, 0.35).spawn) == ["obstacle_3"]
 
 
 def test_planner_skips_what_was_due_before_it_started():
     planner = obstacles.Planner(two_entry_schedule(repeat=100), start_s=120.0, max_delay_s=20.0)
     assert planner.step(120.0, FAR, 0.35).spawn == []
-    assert [o.name for o in planner.step(150.0, FAR, 0.35).spawn] == ["obstacle_4"]
+    assert names(planner.step(150.0, FAR, 0.35).spawn) == ["obstacle_4"]
 
 
-def test_planner_lists_what_is_still_placed():
+def test_planner_lists_what_is_placed_and_what_may_be_in_gazebo():
     planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
-    planner.step(10.0, FAR, 0.35)
-    assert [o.name for o in planner.placed()] == ["obstacle_1"]
+    [occ] = planner.step(10.0, FAR, 0.35).spawn
+    assert planner.placed() == [] and names(planner.in_gazebo()) == ["obstacle_1"]
+    planner.spawned(occ, 10.5, PLACED)
+    assert names(planner.placed()) == ["obstacle_1"]
+    assert names(planner.in_gazebo()) == ["obstacle_1"]
+
+
+# ---- the last check before a spawn, and stale positions ---------------------------------------
+
+def test_try_spawn_checks_the_robots_again_right_before_the_call():
+    occ = obstacles.Occurrence(1, parse().obstacles[0], 10.0)
+    calls = []
+    far, near = [(0.0, 0.0)], [(1.25, 1.35)]
+    assert obstacles.try_spawn(occ, lambda: near, 0.35, lambda: calls.append(1) or True) \
+        == SKIPPED
+    assert calls == []
+    assert obstacles.try_spawn(occ, lambda: far, 0.35, lambda: True) == PLACED
+    assert obstacles.try_spawn(occ, lambda: far, 0.35, lambda: False) == UNKNOWN
+
+
+def test_a_stale_position_counts_as_unknown():
+    truth = {"pinky1": ((0.0, 0.0), 100.0), "pinky2": ((3.0, 3.0), 98.0)}
+    got = obstacles.fresh_positions(truth, ["pinky1", "pinky2", "pinky3"], now=100.5,
+                                    max_age_s=1.0)
+    assert got == [(0.0, 0.0), None, None]
+    assert not obstacles.clear_of_robots((1.0, 1.0), got, 0.35)
 
 
 # ---- gz service 요청 ------------------------------------------------------------------------

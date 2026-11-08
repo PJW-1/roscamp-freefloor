@@ -15,6 +15,12 @@ import yaml
 
 DEFAULT_SIZE_M = (0.12, 0.12, 0.25)  # 라이다 높이(약 0.125 m)보다 높게
 GZ_TIMEOUT_MS = 3000
+REMOVE_RETRY_S = 2.0  # sim seconds between tries of a remove that got no clear answer
+MAX_REMOVE_TRIES = 5
+# try_spawn outcomes
+PLACED = "placed"  # Gazebo answered yes
+SKIPPED = "skipped"  # a robot came close before the call; nothing was sent
+UNKNOWN = "unknown"  # no clear answer: the box may or may not be there
 TOP_KEYS = {"repeat_every_s", "size_m", "obstacles"}
 ENTRY_KEYS = {"at_s", "lane", "fraction", "duration_s"}
 REQUIRED_KEYS = {"at_s", "lane", "duration_s"}
@@ -63,11 +69,12 @@ class Step:
     remove: list = field(default_factory=list)  # 지금 치울 것
     give_up: list = field(default_factory=list)  # 로봇이 비켜 주지 않아 버린 것
     waiting: list = field(default_factory=list)  # 로봇이 가까워 기다리는 것
+    lost: list = field(default_factory=list)  # removes that ran out of tries
 
 
 def _number(raw, what: str) -> float:
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        raise ScheduleError(f"{what} must be a number, got {raw!r}")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
+        raise ScheduleError(f"{what} must be a finite number, got {raw!r}")
     return float(raw)
 
 
@@ -169,8 +176,30 @@ def clear_of_robots(point, robot_xy_list, clearance_m: float) -> bool:
                for xy in robot_xy_list)
 
 
+def fresh_positions(truth: dict, robots, now: float, max_age_s: float) -> list:
+    """Positions in robot order from {robot: ((x, y), received_at)}; None if missing or older
+    than max_age_s, so a robot whose pose stopped arriving never counts as far away."""
+    out = []
+    for robot in robots:
+        entry = truth.get(robot)
+        out.append(entry[0] if entry is not None and now - entry[1] <= max_age_s else None)
+    return out
+
+
+def try_spawn(occ: Occurrence, positions, clearance_m: float, call) -> str:
+    """Check the robots again right before the gz call: the call may wait in the worker queue
+    behind other calls. positions() gives the current positions, call() runs the spawn."""
+    if not clear_of_robots((occ.obstacle.x, occ.obstacle.y), positions(), clearance_m):
+        return SKIPPED
+    return PLACED if call() else UNKNOWN
+
+
 class Planner:
-    """시각마다 놓을 것, 치울 것, 버릴 것을 정한다. start_s 전에 정해졌던 것은 건너뛴다."""
+    """시각마다 놓을 것, 치울 것, 버릴 것을 정한다. start_s 전에 정해졌던 것은 건너뛴다.
+
+    The node runs the gz calls and reports back with spawned() and removed(). The hold time
+    counts from the reported spawn. A spawn without a clear answer is removed in case it
+    landed, and a failed remove is tried again up to MAX_REMOVE_TRIES times."""
 
     def __init__(self, schedule: Schedule, start_s: float, max_delay_s: float):
         self._upcoming = occurrences(schedule)
@@ -178,7 +207,12 @@ class Planner:
         self._start_s = start_s
         self._max_delay_s = max_delay_s
         self._waiting: list[Occurrence] = []
+        self._spawning: dict[int, Occurrence] = {}  # handed out, no answer yet
         self._placed: dict[int, tuple[Occurrence, float]] = {}  # 번호 → (장애물, 치울 시각)
+        self._removing: dict[int, tuple[Occurrence, int]] = {}  # handed out: (it, tries so far)
+        self._retry: dict[int, tuple[Occurrence, float, int]] = {}  # (it, next try at, tries)
+        self._lost: dict[int, Occurrence] = {}
+        self._new_lost: list[Occurrence] = []
 
     def step(self, now_s: float, robot_xy_list, clearance_m: float) -> Step:
         out = Step()
@@ -187,13 +221,13 @@ class Planner:
                 self._waiting.append(self._next)
             self._next = next(self._upcoming, None)
         still = []
-        for occ in self._waiting:
+        for occ in sorted(self._waiting, key=lambda o: o.number):
             point = (occ.obstacle.x, occ.obstacle.y)
-            if clear_of_robots(point, robot_xy_list, clearance_m):
-                out.spawn.append(occ)
-                self._placed[occ.number] = (occ, now_s + occ.obstacle.duration_s)
-            elif now_s - occ.due_s > self._max_delay_s:
+            if now_s - occ.due_s > self._max_delay_s:
                 out.give_up.append(occ)
+            elif clear_of_robots(point, robot_xy_list, clearance_m):
+                out.spawn.append(occ)
+                self._spawning[occ.number] = occ
             else:
                 still.append(occ)
         self._waiting = still
@@ -201,11 +235,46 @@ class Planner:
         for number, (occ, remove_at) in list(self._placed.items()):
             if remove_at <= now_s:
                 out.remove.append(occ)
+                self._removing[number] = (occ, 0)
                 del self._placed[number]
+        for number, (occ, due, tries) in list(self._retry.items()):
+            if due <= now_s:
+                out.remove.append(occ)
+                self._removing[number] = (occ, tries)
+                del self._retry[number]
+        out.lost, self._new_lost = self._new_lost, []
         return out
+
+    def spawned(self, occ: Occurrence, now_s: float, outcome: str) -> None:
+        self._spawning.pop(occ.number, None)
+        if outcome == PLACED:
+            self._placed[occ.number] = (occ, now_s + occ.obstacle.duration_s)
+        elif outcome == SKIPPED:
+            self._waiting.append(occ)
+        else:
+            self._retry[occ.number] = (occ, now_s, 0)
+
+    def removed(self, occ: Occurrence, now_s: float, ok: bool) -> None:
+        _, tries = self._removing.pop(occ.number, (occ, 0))
+        if ok:
+            return
+        tries += 1
+        if tries >= MAX_REMOVE_TRIES:
+            self._lost[occ.number] = occ
+            self._new_lost.append(occ)
+        else:
+            self._retry[occ.number] = (occ, now_s + REMOVE_RETRY_S, tries)
 
     def placed(self) -> list[Occurrence]:
         return [occ for occ, _ in self._placed.values()]
+
+    def in_gazebo(self) -> list[Occurrence]:
+        """Everything that may be in Gazebo now, for the cleanup at shutdown."""
+        found = {**self._spawning, **self._lost}
+        found.update((n, occ) for n, (occ, _) in self._placed.items())
+        found.update((n, occ) for n, (occ, _) in self._removing.items())
+        found.update((n, occ) for n, (occ, _, _) in self._retry.items())
+        return [found[n] for n in sorted(found)]
 
 
 def _g(value: float) -> str:

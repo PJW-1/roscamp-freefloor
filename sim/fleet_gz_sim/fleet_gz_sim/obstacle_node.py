@@ -4,15 +4,20 @@
         -p obstacles_file:=<share>/obstacles/roam.yaml
 
 로봇이 clearance_m 안에 있으면 놓지 않고 기다린다(실제 위치 /<robot>/sim/truth로 본다).
-gz service 호출은 작업 스레드 하나에서 차례로 돌린다. 끝날 때 놓은 상자를 모두 치운다.
+A pose older than TRUTH_MAX_AGE_S counts as unknown, so the box waits.
+gz service 호출은 작업 스레드 하나에서 차례로 돌린다. The worker checks the robots again right
+before each spawn and reports every outcome back to the planner, which retries failed removes
+and removes spawns that got no clear answer. 끝날 때 Gazebo에 있을 수 있는 상자를 모두 치운다.
 놓인 상자는 /sim/obstacle_markers(map 틀)로 RViz에 보인다. 바뀔 때와 1초마다 낸다.
 Gazebo 통신 설정(GZ_IP, GZ_PARTITION)은 launch에서 물려받는다.
 """
 from __future__ import annotations
 
 import math
+import queue
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import rclpy
@@ -28,6 +33,7 @@ from fleet_gz_sim import obstacles
 
 TICK_S = 0.2
 CALL_LIMIT_S = 5.0  # gz service 자체 한도(3 s)에 여유를 둔다
+TRUTH_MAX_AGE_S = 1.0  # wall seconds; truth arrives at about 30 Hz
 SHUTDOWN_TIMEOUT_MS = 1000  # 끝낼 때는 launch가 기다려 주는 동안 다 치우도록 짧게
 MARKER_PERIOD_S = 1.0
 MARKER_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -48,13 +54,14 @@ class ObstacleNode(Node):
             path = f"{get_package_share_directory('fleet_gz_sim')}/obstacles/roam.yaml"
         self.schedule = obstacles.load_schedule(path, load_lane_map(lane_map_path or None))
         self.robots = list(robots)
-        self.truth: dict[str, tuple[float, float]] = {}
+        self.truth: dict[str, tuple[tuple[float, float], float]] = {}  # (x, y), wall time
         for robot in self.robots:
             self.create_subscription(Odometry, f"/{robot}/sim/truth",
                                      lambda msg, r=robot: self._on_truth(r, msg),
                                      qos_profile_sensor_data)
         self.planner: obstacles.Planner | None = None
         self.told_waiting: set[int] = set()
+        self.outcomes: queue.SimpleQueue = queue.SimpleQueue()  # from the worker to _tick
         # Gazebo에 놓인 상자(이름 → 장애물). 작업 스레드에서만 바꾸고, 표시는 잠금으로 읽는다
         self.live: dict[str, obstacles.Occurrence] = {}
         self.live_lock = threading.Lock()
@@ -67,16 +74,28 @@ class ObstacleNode(Node):
 
     def _on_truth(self, robot: str, msg: Odometry):
         p = msg.pose.pose.position
-        self.truth[robot] = (p.x, p.y)
+        self.truth[robot] = ((p.x, p.y), time.monotonic())
+
+    def _positions(self) -> list:
+        return obstacles.fresh_positions(self.truth, self.robots, time.monotonic(),
+                                         TRUTH_MAX_AGE_S)
+
+    def _now(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
 
     def _tick(self):
-        now = self.get_clock().now().nanoseconds * 1e-9
+        now = self._now()
         if now <= 0.0:
             return  # /clock를 아직 못 받았다
         if self.planner is None:
             self.planner = obstacles.Planner(self.schedule, now, self.max_delay_s)
-        step = self.planner.step(now, [self.truth.get(r) for r in self.robots],
-                                 self.clearance_m)
+        while not self.outcomes.empty():
+            kind, occ, at, result = self.outcomes.get()
+            if kind == "spawn":
+                self.planner.spawned(occ, at, result)
+            else:
+                self.planner.removed(occ, at, result)
+        step = self.planner.step(now, self._positions(), self.clearance_m)
         for occ in step.spawn:
             self.worker.submit(self._spawn, occ)
         for occ in step.remove:
@@ -85,6 +104,10 @@ class ObstacleNode(Node):
             self.get_logger().warn(f"{occ.name} on {occ.obstacle.label} given up: a robot "
                                    f"stayed within {self.clearance_m} m for "
                                    f"{self.max_delay_s} s")
+        for occ in step.lost:
+            self.get_logger().error(f"{occ.name} on {occ.obstacle.label} could not be removed "
+                                    f"after {obstacles.MAX_REMOVE_TRIES} tries; it may still "
+                                    f"be in Gazebo")
         for occ in step.waiting:
             if occ.number not in self.told_waiting:
                 self.told_waiting.add(occ.number)
@@ -104,19 +127,28 @@ class ObstacleNode(Node):
 
     def _spawn(self, occ: obstacles.Occurrence):
         one = occ.obstacle
-        if self._call(obstacles.spawn_argv(self.world, occ.name, one, self.schedule.size_m)):
+        argv = obstacles.spawn_argv(self.world, occ.name, one, self.schedule.size_m)
+        outcome = obstacles.try_spawn(occ, self._positions, self.clearance_m,
+                                      lambda: self._call(argv))
+        self.outcomes.put(("spawn", occ, self._now(), outcome))
+        if outcome == obstacles.PLACED:
             with self.live_lock:
                 self.live[occ.name] = occ
             self._publish_markers()
             self.get_logger().info(f"{occ.name} on {one.label} at ({one.x:.2f}, {one.y:.2f}) "
                                    f"placed for {one.duration_s:g} s")
+        elif outcome == obstacles.SKIPPED:
+            self.get_logger().info(f"{occ.name} on {one.label}: a robot came close, waits")
+        else:
+            self.get_logger().warn(f"{occ.name} on {one.label}: no clear answer, removing it "
+                                   f"in case it landed")
 
     def _remove(self, occ: obstacles.Occurrence):
-        if occ.name not in self.live:
-            return  # 놓지 못했다
-        if self._call(obstacles.remove_argv(self.world, occ.name)):
+        ok = self._call(obstacles.remove_argv(self.world, occ.name))
+        self.outcomes.put(("remove", occ, self._now(), ok))
+        if ok:
             with self.live_lock:
-                del self.live[occ.name]
+                self.live.pop(occ.name, None)
             self._publish_markers()
             self.get_logger().info(f"{occ.name} on {occ.obstacle.label} removed")
 
@@ -149,7 +181,9 @@ class ObstacleNode(Node):
     def remove_all(self):
         """작업 스레드를 멈춘 뒤 남은 상자를 치운다(될 수 있는 만큼)."""
         self.worker.shutdown(wait=True, cancel_futures=True)
-        for name in sorted(self.live):  # 작업 스레드가 멈췄으니 잠금 없이 읽는다
+        # 작업 스레드가 멈췄으니 잠금 없이 읽는다. The planner also knows spawns without an answer
+        maybe = {occ.name for occ in self.planner.in_gazebo()} if self.planner else set()
+        for name in sorted(maybe | set(self.live)):
             argv = obstacles.remove_argv(self.world, name, SHUTDOWN_TIMEOUT_MS)
             try:
                 subprocess.run(argv, capture_output=True, timeout=CALL_LIMIT_S)
