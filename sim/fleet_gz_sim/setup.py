@@ -15,6 +15,7 @@ setup(
         ('share/fleet_gz_sim/maps', glob('maps/*.yaml') + glob('maps/*.pgm')),
         ('share/fleet_gz_sim/scenarios', glob('scenarios/*.yaml')),
         ('share/fleet_gz_sim/obstacles', glob('obstacles/*.yaml')),
+        ('share/fleet_gz_sim/rviz', glob('rviz/*.rviz')),
     ],
     install_requires=['setuptools'],
     tests_require=['pytest'],
@@ -24,5 +25,6 @@ setup(
         'sim_stand_in = fleet_gz_sim.stand_in_node:main',
         'wait_ready = fleet_gz_sim.stand_in_node:wait_ready',
         'sim_obstacles = fleet_gz_sim.obstacle_node:main',
+        'fleet_view = fleet_gz_sim.fleet_view_node:main',
     ]},
 )
