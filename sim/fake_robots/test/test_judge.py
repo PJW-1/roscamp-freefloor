@@ -1146,6 +1146,17 @@ def test_a_path_not_connected_failure_is_counted_and_none_is_expected_by_default
     assert (result["value"], result["ok"]) == (2, False)
 
 
+def test_robot_idle_is_counted_and_none_is_expected_by_default():
+    """1.1 지시서 H2: 정상 운행에서 ROBOT_IDLE이 나면 오탐이다. 고장 시나리오는 null로 안 본다."""
+    j = judge()
+    assert check(j, "robot_idle") == {"value": 0, "expected": 0, "ok": True}
+    j.on_event(2.0, "WARN", "pinky1", "ROBOT_IDLE", "TO_PARK at F0 for 10 s")
+    assert check(j, "robot_idle") == {"value": 1, "expected": 0, "ok": False}
+    j = judge(robot_idle=None)
+    j.on_event(2.0, "WARN", "pinky1", "ROBOT_IDLE", "TO_PARK at F0 for 10 s")
+    assert check(j, "robot_idle")["ok"] is True
+
+
 def test_a_scenario_can_expect_path_not_connected_failures():
     j = judge(path_not_connected=1)
     j.on_event(2.0, "WARN", "pinky1", "GOAL_RETRY", "attempt 1 failed: PATH_NOT_CONNECTED")

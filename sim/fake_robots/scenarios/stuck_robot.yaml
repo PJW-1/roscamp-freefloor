@@ -24,6 +24,7 @@ dock: {duration_s: 3.0, error_cm: 1.0}
 faults:
   - {at_s: 66, robot: pinky1, type: stuck}
 expect:
+  robot_idle: null  # 고장 시나리오는 ROBOT_IDLE을 세지 않는다(1.1 지시서 H2)
   all_orders_finished: false
   orders_shipped: 2
   orders_partial: 0

@@ -112,6 +112,7 @@ class ScenarioJudge:
         # 지시서 7.5: 관제가 처리한 이 이유의 실패. 실패 한 번은 GOAL_RETRY나 GOAL_FAILED 하나다.
         # 관제가 버린 결과(이미 바뀐 목표의 결과)는 이벤트가 없어 세지 않는다
         self.path_not_connected = 0
+        self.robot_idle = 0  # 1.1 지시서 H2: 목적지가 있는데 goal도 구역 대기표도 없이 섰다
 
     def _station_zones(self, action: str) -> set[str]:
         return {self.site.zone_of[s.dock] for s in self.site.stations.values()
@@ -146,6 +147,8 @@ class ScenarioJudge:
             self.error_codes.append(code)
         if code in ("GOAL_RETRY", "GOAL_FAILED") and "PATH_NOT_CONNECTED" in detail:
             self.path_not_connected += 1
+        if code == "ROBOT_IDLE":
+            self.robot_idle += 1
         if code == "ROBOT_ISOLATED":
             self._isolated.add(source)
             self._standing_isolated.add(source)
@@ -475,6 +478,7 @@ class ScenarioJudge:
             "unheld_zone_pose": exact(self.unheld_violations, ex.unheld_zone_pose),
             "released_while_off_lane": exact(self.off_lane_releases, ex.released_while_off_lane),
             "path_not_connected": exact(self.path_not_connected, ex.path_not_connected),
+            "robot_idle": exact(self.robot_idle, ex.robot_idle),
             "direct_returns_min": at_least(self.direct_returns, ex.direct_returns_min),
             "parked_while_backlog": exact(self.parked_while_backlog, ex.parked_while_backlog),
             "shipped_before_operator": at_least(self.shipped_before_operator,

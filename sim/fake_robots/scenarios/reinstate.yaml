@@ -25,6 +25,7 @@ faults:
   - {at_s: 40, robot: pinky2, type: operator_remove}
   - {at_s: 160, robot: pinky2, type: operator_reinstate, start: P-3, basket: EMPTY}
 expect:
+  robot_idle: null  # 고장 시나리오는 ROBOT_IDLE을 세지 않는다(1.1 지시서 H2)
   all_orders_finished: true
   orders_shipped: 7
   orders_partial: 0

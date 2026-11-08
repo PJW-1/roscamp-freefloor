@@ -38,6 +38,7 @@ EXPECT_DEFAULTS = {
     "detours_around_isolated_min": 0,  # 격리된 로봇을 피한 DETOUR(치우기 전)
     "released_while_off_lane": 0,  # drift로 레인 밖이라 보고하는 동안 그 로봇이 놓은 구역 수
     "path_not_connected": 0,  # 관제가 처리한 PATH_NOT_CONNECTED 실패 수(지시서 7.5). null이면 안 봄
+    "robot_idle": 0,  # ROBOT_IDLE 이벤트 수(1.1 지시서 H2). 정상이면 0, null이면 안 봄
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
                   "arm", "dock", "faults", "expect", "map"}
@@ -130,6 +131,7 @@ class Expect:
     detours_around_isolated_min: int = 0
     released_while_off_lane: int = 0
     path_not_connected: int = 0
+    robot_idle: int | None = 0
 
 
 @dataclass(frozen=True)

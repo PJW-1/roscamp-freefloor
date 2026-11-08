@@ -25,6 +25,7 @@ faults:
   - {at_s: 0, arm: arm1, type: arm_fail, count: 3}
   - {at_s: 120, robot: pinky2, type: operator_remove}
 expect:
+  robot_idle: null  # 고장 시나리오는 ROBOT_IDLE을 세지 않는다(1.1 지시서 H2)
   all_orders_finished: true
   orders_shipped: 4
   orders_partial: 0

@@ -253,6 +253,13 @@ def test_only_the_drift_scenario_leaves_path_not_connected_unchecked(site):
     assert set(expected.values()) == {0}
 
 
+def test_only_the_fault_scenarios_leave_robot_idle_unchecked(site):
+    """1.1 지시서 H2: 고장 없는 시나리오에서 ROBOT_IDLE은 0이어야 한다(오탐 검사)."""
+    for name, f in shipped().items():
+        sc = load_scenario(f, site_of(f, site))
+        assert sc.expect.robot_idle == (None if sc.faults else 0), name
+
+
 def test_the_feature_block_scenario_expects_a_detour():
     sc = load_scenario(SCENARIOS / "feature_blocked_lane.yaml")
     assert "DETOUR" in sc.expect.events_include
