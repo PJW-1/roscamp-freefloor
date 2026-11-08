@@ -224,38 +224,91 @@ class _Handle:
         pass
 
 
-def _docking_stub(ros, monkeypatch, sim_now):
-    """A stub with duration_s 0, the robot on the WORK dock and Gazebo time given by sim_now."""
+class _WallClock:
+    """A wall clock that moves only when the loop sleeps, with a cap so a broken loop fails
+    instead of hanging."""
+
+    def __init__(self, cap: int = 2000):
+        self.t = 0.0
+        self.sleeps = 0
+        self.cap = cap
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps += 1
+        assert self.sleeps <= self.cap, "the dock loop did not end"
+        self.t += seconds
+
+
+def _docking_stub(ros, monkeypatch, sim_of_wall, duration=0.0):
+    """A stub with the robot on the WORK dock. Gazebo time is sim_of_wall(wall seconds) on a
+    _WallClock the loop drives with its own sleeps; no real time passes."""
+    from types import SimpleNamespace
+
     from ament_index_python.packages import get_package_share_directory
     from fleet_gz_sim import stand_in_node
     scenario = f"{get_package_share_directory('fake_robots')}/scenarios/basic_orders.yaml"
     node = stand_in(ros, dock_stub=True, use_sim_time=True, scenario_file=scenario)
-    node._duration = 0.0
-    monkeypatch.setattr(stand_in_node, "CLOCK_STALL_S", 0.1)
+    node._duration = duration
+    wall = _WallClock()
+    monkeypatch.setattr(stand_in_node, "time",
+                        SimpleNamespace(monotonic=wall.monotonic, sleep=wall.sleep))
     monkeypatch.setattr(stand_in_node, "stub_may_answer", lambda active, now: True)
-    monkeypatch.setattr(node, "_now", sim_now)
+    monkeypatch.setattr(node, "_now", lambda: sim_of_wall(wall.t))
     x, y = node._site.waypoint_pose(node._site.stations["WORK"].dock)[:2]
     node._pose["pinky1"] = (x, y, 0.0)
-    return node
+    return node, wall
+
+
+def _dock(node):
+    handle = _Handle("WORK")
+    result = node._dock("pinky1", handle)
+    return result.success, handle.ended
 
 
 def test_the_dock_loop_fails_a_goal_on_a_clock_that_stopped_before_it(ros, monkeypatch):
     """The _dock loop itself, not only dock_done (Codex review of c98c086)."""
-    node = _docking_stub(ros, monkeypatch, lambda: 12.0)
+    from fleet_gz_sim.stand_in_node import CLOCK_STALL_S
+    node, wall = _docking_stub(ros, monkeypatch, lambda wall_s: 12.0)
     try:
-        handle = _Handle("WORK")
-        assert not node._dock("pinky1", handle).success
-        assert handle.ended == "aborted"
+        assert _dock(node) == (False, "aborted")
+        assert wall.t > CLOCK_STALL_S, "failed by ClockWatch, not before"
     finally:
         node.destroy_node()
 
 
-def test_the_dock_loop_succeeds_once_the_clock_moves(ros, monkeypatch):
-    ticks = iter(12.0 + 0.01 * i for i in range(10_000))
-    node = _docking_stub(ros, monkeypatch, lambda: next(ticks))
+def test_the_dock_loop_succeeds_once_a_stopped_clock_moves_again(ros, monkeypatch):
+    """Gazebo time stands still for 2 wall seconds after the goal, then runs: the loop keeps
+    waiting and ends once duration_s of Gazebo time has passed (Codex review of 35d7ede)."""
+    node, wall = _docking_stub(ros, monkeypatch, lambda wall_s: 12.0 + max(0.0, wall_s - 2.0),
+                               duration=1.0)
     try:
-        handle = _Handle("WORK")
-        assert node._dock("pinky1", handle).success
-        assert handle.ended == "succeeded"
+        assert _dock(node) == (True, "succeeded")
+        assert 3.0 <= wall.t < 3.1
+    finally:
+        node.destroy_node()
+
+
+def test_the_dock_loop_fails_a_goal_when_the_clock_stops_partway(ros, monkeypatch):
+    from fleet_gz_sim.stand_in_node import CLOCK_STALL_S
+    node, wall = _docking_stub(ros, monkeypatch, lambda wall_s: 12.0 + min(wall_s, 0.5),
+                               duration=2.0)
+    try:
+        assert _dock(node) == (False, "aborted")
+        assert wall.t > 0.5 + CLOCK_STALL_S
+    finally:
+        node.destroy_node()
+
+
+def test_a_dock_goal_fails_at_once_without_gazebo_time(ros):
+    """No /clock has come: the real stub_may_answer check refuses before the loop starts."""
+    from ament_index_python.packages import get_package_share_directory
+    scenario = f"{get_package_share_directory('fake_robots')}/scenarios/basic_orders.yaml"
+    node = stand_in(ros, dock_stub=True, use_sim_time=True, scenario_file=scenario)
+    try:
+        assert node._now() == 0.0
+        assert _dock(node) == (False, "aborted")
     finally:
         node.destroy_node()
