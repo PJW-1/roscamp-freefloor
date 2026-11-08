@@ -207,7 +207,7 @@ def test_success_only_counts_within_the_arrival_tolerance():
     fsm = ready()
     [send] = sends(move(fsm, "g1", 1.0))
     cmds = fsm.nav_result(send.seq, "succeeded", 9.0, (0.78, 2.00, 0.2), no_obstacle)
-    assert cmds == [Finish("g1", True, "")]
+    assert cmds == [Finish("g1", True, "")] + [CancelNav()]  # no older FollowPath may run on
     assert fsm.state() == IDLE and fsm.current_goal() == ""
 
 
@@ -449,8 +449,30 @@ def test_blocked_goal_ends_with_timeout_when_the_obstacle_stays():
         fsm.heartbeat(t)
         assert fsm.tick(t, here, STILL, obstacle) == []
     fsm.heartbeat(92.0)
-    assert fsm.tick(92.0, here, STILL, obstacle) == [Finish("g1", False, TIMEOUT)]
+    assert fsm.tick(92.0, here, STILL, obstacle) == [Finish("g1", False, TIMEOUT), CancelNav()]
     assert fsm.state() == BLOCKED and fsm.current_goal() == ""
+
+
+def test_a_goal_waiting_after_an_obstacle_abort_still_cancels_when_it_ends():
+    """The latest FollowPath ended, but an older one may still be on its way: cancel."""
+    fsm = ready()
+    [send] = sends(move(fsm, "g1", 0.0))
+    here = (0.35, 1.70, NORTH)
+    assert fsm.nav_result(send.seq, "aborted", 1.0, here, obstacle) == []
+    assert fsm.cancel("g1", 2.0) == [Finish("g1", False, CANCELED), CancelNav()]
+
+
+def test_an_obstacle_that_cleared_in_time_resends_instead_of_timing_out():
+    """Both the clear time and block_timeout_s pass before one tick: the clear wins."""
+    fsm = ready()
+    [send] = sends(move(fsm, "g1", 0.0))
+    here = (0.35, 1.70, NORTH)
+    fsm.nav_result(send.seq, "aborted", 2.0, here, obstacle)
+    fsm.heartbeat(91.5)
+    assert fsm.tick(91.5, here, STILL, no_obstacle) == []
+    fsm.heartbeat(92.6)
+    cmds = fsm.tick(92.6, here, STILL, no_obstacle)
+    assert kinds(cmds) == ["SendPath"]
 
 
 def test_blocked_goal_times_out_while_nav2_still_holds_it():
