@@ -448,6 +448,29 @@ def test_a_lost_result_of_a_canceled_robot_goal_is_no_rejection():
         assert goals.canceling(key) == (not expected)
 
 
+def test_a_dropped_cancel_of_a_robot_goal_is_told_to_the_core_as_lost():
+    """결과를 잃은 취소를 그만둘 때 코어에 알린다. 코어는 막힘 표시 때 취소한 goal이 끝나야
+    이어 가기 때문이다(1.1 지시서 H2 재현 2)."""
+    key = ("pinky1", 7)
+    goals = GoalTracker()
+    goals.sent(key)
+    goals.accepted(key, SimpleNamespace(cancel_goal_async=lambda: None))
+    goals.cancel(key, 0.0)
+    goals.lost(key)
+    params = SimpleNamespace(cancel_retry_s=1.0, cancel_warn_after=2)
+    events = []
+    node = SimpleNamespace(_goals=goals, core=MagicMock(params=params),
+                           _dispatch=lambda command, now: events.append(command.code))
+    for now in (1.0, 2.0):
+        FleetManagerNode._retry_cancels(node, now)
+    assert events == ["CANCEL_UNCONFIRMED"]
+    node.core.on_goal_lost.assert_not_called()
+    FleetManagerNode._retry_cancels(node, 3.0)
+    node.core.on_goal_lost.assert_called_once_with("pinky1", 7)
+    FleetManagerNode._retry_cancels(node, 4.0)
+    assert node.core.on_goal_lost.call_count == 1
+
+
 def test_the_heartbeat_comes_twice_a_second(graph):
     assert wait_for(lambda: len(graph.beats) >= 5, 20.0), graph.beats
     gaps = [b - a for a, b in zip(graph.beats, graph.beats[1:], strict=False)]

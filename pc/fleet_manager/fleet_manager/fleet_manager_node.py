@@ -177,6 +177,9 @@ class FleetManagerNode(Node):
             detail = (f"goal {goal_id} on {server} has no result {waited:.0f} s after it was "
                       "canceled; the cancel stays open while a result can still come")
             self._dispatch(EventOut("WARN", "CANCEL_UNCONFIRMED", detail, server), now)
+        for robot, goal_id in self._goals.take_dropped():
+            # 결과를 잃은 취소는 로봇 goal뿐이다(_goal_result). 코어가 끝난 것으로 보고 이어 간다
+            self.core.on_goal_lost(robot, goal_id)
 
     def _flush_reports(self, now: float) -> None:
         for report_id, command in self._reports.due(now, self._report_client.service_is_ready(),
@@ -285,7 +288,8 @@ class FleetManagerNode(Node):
         except Exception as exc:
             self.get_logger().error(f"goal {key} lost its result: {exc}")
             if on_rejected == self._robot_rejected and self._goals.canceling(key):
-                # 취소한 로봇 goal은 끝났는지 모른다. 취소를 남겨 CANCEL_UNCONFIRMED로 알린다
+                # 취소한 로봇 goal은 끝났는지 모른다. 취소를 남겨 CANCEL_UNCONFIRMED로 알리고,
+                # 그만둘 때 코어에 on_goal_lost로 알린다(_retry_cancels)
                 self._goals.lost(key)
                 return
             self._goals.finished(key)

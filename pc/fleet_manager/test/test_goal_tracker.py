@@ -77,6 +77,28 @@ def test_a_lost_cancel_is_warned_about_once_and_then_dropped():
     assert not goals.canceling("k") and handle.cancels == 4
 
 
+def test_a_dropped_lost_cancel_is_handed_out_once_so_the_core_can_hear_of_it():
+    """그만둔 취소는 한 번 돌려준다. 노드가 코어에 on_goal_lost로 알린다(1.1 지시서 H2)."""
+    goals, handle = running()
+    goals.cancel("k", 0.0)
+    goals.lost("k")
+    for now in (1.0, 2.0, 3.0):
+        retry(goals, now)
+        assert goals.take_dropped() == []
+    retry(goals, 4.0)
+    assert goals.take_dropped() == ["k"]
+    assert goals.take_dropped() == []
+
+
+def test_a_cancel_ended_by_its_result_is_not_handed_out_as_dropped():
+    goals, handle = running()
+    goals.cancel("k", 0.0)
+    goals.finished("k")
+    for now in (1.0, 2.0, 3.0, 4.0, 5.0):
+        retry(goals, now)
+    assert goals.take_dropped() == []
+
+
 def test_a_goal_not_being_canceled_is_not_kept_as_lost():
     goals, handle = running()
     goals.lost("k")

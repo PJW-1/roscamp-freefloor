@@ -20,6 +20,7 @@ class GoalTracker:
         self._handles: dict = {}
         self._cancels: dict = {}
         self._lost: set = set()  # 결과를 잃은 취소. 경고한 뒤 그만둔다
+        self._dropped: list = []  # 그만둔 잃은 취소. 코어에 알릴 때까지 둔다
 
     def sent(self, key) -> None:
         self._pending.add(key)
@@ -55,6 +56,11 @@ class GoalTracker:
         """취소를 보냈고 결과는 아직이다."""
         return key in self._cancels
 
+    def take_dropped(self) -> list:
+        """결과를 잃고 그만둔 취소의 key. 한 번씩만 돌려준다."""
+        dropped, self._dropped = self._dropped, []
+        return dropped
+
     def retry_cancels(self, now: float, retry_s: float, warn_after: int) -> list:
         """때가 된 취소를 다시 요청한다. warn_after번을 막 채운 key를 한 번씩 돌려준다.
         수락을 기다리는 시간도 센다. goal은 그동안 돌고 있을 수 있다."""
@@ -64,6 +70,7 @@ class GoalTracker:
                 continue
             if cancel.warned and key in self._lost:
                 self.finished(key)  # 잃은 결과는 다시 오지 않는다
+                self._dropped.append(key)
                 continue
             if cancel.tries >= warn_after and not cancel.warned:
                 cancel.warned = True
