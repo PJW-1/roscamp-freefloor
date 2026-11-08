@@ -192,7 +192,7 @@ def test_nav2_runs_composed_unless_asked_not_to(made):
 
 NAV2_NODES = 9  # pinky_nav_config: map_server 둘, amcl, 서버 넷, lifecycle manager 둘
 LOCALHOST_PARTICIPANTS = 32  # Fast DDS LOCALHOST 탐색에서 서로 보이는 참여자 수(실측)
-SPARE = 5  # launch 프로세스, RViz, 사람이 띄우는 ros2 명령 몇 개(6에서 recovery_probe 몫 하나)
+SPARE = 6  # launch 프로세스, RViz, 사람이 띄우는 ros2 명령 몇 개
 
 
 def ros_processes(actions, fleet_actions) -> int:
@@ -264,8 +264,8 @@ def test_fleet_check_records_into_the_result_dir_on_gazebo_time(made):
     path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
     [check] = nodes(made.fleet(str(path), ROBOTS, result_dir="out", monitor=True),
                     "fleet_check")
-    assert params(check) == {"use_sim_time": True, "robots": ROBOTS,
-                             "output": str(Path("out") / "fleet_check.json")}
+    assert params(check).items() >= {"use_sim_time": True, "robots": ROBOTS,
+                                     "output": str(Path("out") / "fleet_check.json")}.items()
     assert not nodes(made.fleet(str(path), ROBOTS, result_dir="out", monitor=True,
                                 check=False), "fleet_check")
 
@@ -367,11 +367,22 @@ def test_rviz_can_follow_one_pinky_or_stay_closed(made):
     assert not nodes(closed, "fleet_view") and not nodes(closed, "rviz2")
 
 
-def test_the_fleet_starts_the_recovery_probe_with_the_result_dir(made):
+def test_the_recovery_probe_shares_the_fleet_check_process(made):
+    """A process of its own would cost a DDS participant (test_ros_process_budget_...)."""
     from ament_index_python.packages import get_package_share_directory
     path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
     fleet = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True)
+    assert nodes(fleet, "recovery_probe") == []
+    [check] = nodes(fleet, "fleet_check")
+    assert params(check).items() >= {"use_sim_time": True, "robots": ROBOTS,
+                                     "recovery_probe": True, "result_dir": "out",
+                                     "settle_s": 2.0}.items()
+
+
+def test_without_fleet_check_the_recovery_probe_runs_on_its_own(made):
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    fleet = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True, check=False)
     [probe] = nodes(fleet, "recovery_probe")
-    assert probe.kw["package"] == "fleet_gz_sim"
     assert params(probe) == {"use_sim_time": True, "robots": ROBOTS, "result_dir": "out",
                              "settle_s": 2.0}

@@ -15,6 +15,7 @@ from fleet_interfaces.msg import RobotState
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 
 from fleet_gz_sim.recovery_probe import COLUMNS, CsvSink, RecoveryProbe
@@ -25,11 +26,14 @@ def _seconds(stamp) -> float:
 
 
 class RecoveryProbeNode(Node):
-    def __init__(self):
-        super().__init__("recovery_probe")
-        robots = list(self.declare_parameter("robots", ["pinky1", "pinky2", "pinky3"]).value)
-        result_dir = self.declare_parameter("result_dir", "").value
-        settle_s = float(self.declare_parameter("settle_s", 2.0).value)
+    def __init__(self, robots=None, result_dir=None, settle_s=None):
+        """Arguments (fleet_check passes its own parameters) win over the node's parameters."""
+        super().__init__("recovery_probe", **({} if robots is None else {
+            "parameter_overrides": [Parameter("use_sim_time", value=True)]}))
+        if robots is None:
+            robots = list(self.declare_parameter("robots", ["pinky1", "pinky2", "pinky3"]).value)
+            result_dir = self.declare_parameter("result_dir", "").value
+            settle_s = float(self.declare_parameter("settle_s", 2.0).value)
         contract_file = self.declare_parameter("contract_file", "").value
         if not contract_file:
             from ament_index_python.packages import get_package_share_directory

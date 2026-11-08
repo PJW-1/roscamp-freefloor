@@ -6,6 +6,7 @@ gz.launch.py starts it with the fleet (fleet_check:=true, the default) and write
 <result_dir>/fleet_check.json. It reads /<robot>/sim/truth (Gazebo true pose), /<robot>/state and
 /fleet/zones, rewrites the file every period_s wall seconds and once more at shutdown, and logs
 a one-line summary every log_every_s.
+With recovery_probe:=true it also hosts the recovery_probe node (parameters result_dir, settle_s).
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from fleet_core.traffic.lane_map import load_lane_map
 from fleet_interfaces.msg import RobotState, ZoneStateArray
 from nav_msgs.msg import Odometry
 from rclpy.clock import Clock, ClockType
-from rclpy.executors import ExternalShutdownException
+from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
@@ -41,6 +42,13 @@ class FleetCheckNode(Node):
             from ament_index_python.packages import get_package_share_directory
             contract_file = get_package_share_directory("fleet_interfaces") + "/contract.yaml"
         contract = load_contract(contract_file)
+        # the recovery probe shares this process: a process of its own is a DDS participant more
+        self.probe = None
+        if self.declare_parameter("recovery_probe", False).value:
+            from fleet_gz_sim.recovery_probe_node import RecoveryProbeNode
+            self.probe = RecoveryProbeNode(
+                robots, self.declare_parameter("result_dir", "").value,
+                float(self.declare_parameter("settle_s", 2.0).value))
         self.check = FleetCheck(load_lane_map(lane_map or None), robots, margin_m=margin)
         for robot in robots:
             self.create_subscription(Odometry, f"/{robot}/sim/truth",
@@ -85,13 +93,20 @@ class FleetCheckNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = FleetCheckNode()
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    if node.probe:
+        executor.add_node(node.probe)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         summary = node.write()
         print(json.dumps(summary), flush=True)
+        if node.probe:
+            node.probe.sink.close()
+            node.probe.destroy_node()
         node.destroy_node()
         rclpy.try_shutdown()
 
