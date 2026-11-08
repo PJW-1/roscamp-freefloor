@@ -59,6 +59,8 @@ class FleetParams:
     lane_goal_mode: str = "point"
     # 해제 보강: 구역의 다른 바닥 선에서도 d 이상(예각 합류). 이 값이 없던 기록은 예전 규칙
     release_clear_of_floor: bool = False
+    # H1: after DEADLOCK_UNRESOLVED, the same wait cycle lasting this long isolates one robot.
+    deadlock_unresolved_s: float = 30.0
 
 
 def load_params(path=None) -> FleetParams:

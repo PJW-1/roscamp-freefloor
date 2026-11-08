@@ -151,14 +151,24 @@ class TrafficRecovery:
         m = self._missions[robot]
         return priority(self.params, m.phase == AT_STATION, m.dispatch is not None)
 
-    def _check_deadlock(self, now: float) -> bool:
-        """대기 순환이 있는 동안 True. 그동안 새 이동과 구역 허가를 멈춘다."""
+    def _check_deadlock(self, now: float) -> frozenset[str]:
+        """The robots of a wait cycle, empty when there is none (work order H1).
+
+        Only these robots get no new moves while the cycle lasts; robots outside it go on, and
+        the zone locks keep them apart. A cycle with other members is a new episode. When the
+        retreat could not break the cycle (DEADLOCK_UNRESOLVED) and the same cycle lasts
+        deadlock_unresolved_s more, the robot choose_retreat picks is isolated (part 5.5).
+        """
         cycle = find_cycle(wait_graph(self.zones))
-        if not cycle:
+        members = frozenset(cycle or ())
+        if members != self._deadlock_cycle:
+            self._deadlock_cycle = members
             self._deadlock_since = None
             self._deadlock_acted = False
             self._retreating = None
-            return False
+            self._unresolved_at = None
+        if not cycle:
+            return members
         if self._deadlock_since is None:
             self._deadlock_since = now
             self._event("ERROR", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
@@ -168,7 +178,13 @@ class TrafficRecovery:
             self._retreat(choose_retreat(cycle, self._priority), cycle)
         elif self._retreating and now >= self._retreating[2]:
             self._finish_retreat(cycle)
-        return True
+        elif (self._unresolved_at is not None
+              and now - self._unresolved_at >= self.params.deadlock_unresolved_s):
+            self._unresolved_at = None
+            # _fail cancels the robot's zone requests, so the cycle is gone by the next tick.
+            self._fail(self._missions[choose_retreat(cycle, self._priority)],
+                       "DEADLOCK_UNRESOLVED")
+        return members
 
     def _retreat(self, robot: str, cycle: list[str]) -> None:
         """아직 들어가지 않은 구역 예약을 내놓는다. 실제 후진은 아직 없다."""
@@ -177,6 +193,7 @@ class TrafficRecovery:
         if not given_up:
             self._event("ERROR", "DEADLOCK_UNRESOLVED",
                         f"{robot} of {cycle} has no unentered zone to give up", robot)
+            self._unresolved_at = self._clock()
             return
         if m.goal:
             self._cancel_goal(m)
@@ -198,3 +215,4 @@ class TrafficRecovery:
         if nothing_released:
             self._event("ERROR", "DEADLOCK_UNRESOLVED",
                         f"{robot} of {cycle} entered {zones} before it stopped", robot)
+            self._unresolved_at = self._clock()

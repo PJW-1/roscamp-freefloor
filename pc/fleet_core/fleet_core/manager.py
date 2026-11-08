@@ -230,13 +230,13 @@ class FleetManager:
         self._pump()
         orchestrator.check_arm_timeouts(now)
         self._pump()
-        halted = traffic.tick_progress(now)
+        stopped = traffic.tick_progress(now)  # robots of a wait cycle stand still (H1)
         self._pump()
-        if traffic.running and not halted and everyone_here:
-            traffic.tick_pick()
+        if traffic.running and everyone_here:
+            traffic.tick_pick(stopped)
             self._pump()
             for robot in traffic.robots:
-                if traffic.available(robot):
+                if traffic.available(robot) and robot not in stopped:
                     self._step_robot(robot)
         out, self._out = self._out, []
         for item in out:

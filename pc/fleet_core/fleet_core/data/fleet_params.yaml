@@ -42,6 +42,7 @@ cancel_warn_after: 5          # 결과 없이 이만큼 주기가 지나면 CANC
 report_retry_s: 2.0           # 추정: 답이 없으면 이만큼 뒤 주문 보고를 다시 보냄
 zone_wait_warn_s: 60.0        # 한 구역을 이만큼 기다리면 경고
 deadlock_grace_s: 5.0         # 교착 두 번째 단계 전 대기
+deadlock_unresolved_s: 30.0   # 제안: DEADLOCK_UNRESOLVED 뒤 같은 순환이 이만큼 이어지면 우선순위가 가장 낮은 로봇을 격리
 score_same_call: -4.0         # 이미 불린 로봇은 다른 로봇이 확실히 가깝지 않으면 호출을 유지
 score_distance_weight: 0.91   # 레인 거리 1 m당
 priority_at_station: 200
