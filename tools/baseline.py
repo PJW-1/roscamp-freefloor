@@ -9,10 +9,20 @@ Runs are driven by SimWorld (pc/fleet_core/test/sim_world.py): the real FleetMan
 robots, a fake central server and fake arms on a 0.1 s fake clock. No ROS graph is started.
 Pose noise is gaussian (like the ROS fake nodes) and seeded, so the same command gives the same
 rows. A scenario file sets the orders, stock, robots, arm and dock times and faults; its own
-seed, speed_factor and expectations are ignored. Supported faults: `blocked`, and the operator
+seed, speed_factor and expectations are ignored. The file is first checked by the fake robots'
+parser (sim/fake_robots/fake_robots/scenario.py), and missing values take its defaults (4 s per
+item, 8 s swap, 3 s dock, 900 s timeout). Supported faults: `blocked`, and the operator
 actions `operator_remove` (confirm_clear on every zone the robot holds, retried each second
-until accepted) and `operator_reinstate` (put the robot back on its start zone with the given
-basket, then reinstate). Other fault types are refused.
+until accepted; the robot leaves the floor only when accepted) and `operator_reinstate`
+(reinstate, retried each second; the robot is put back on its start zone with the given basket
+only when accepted). Other fault types and a non-zero arm fail_rate are refused.
+
+Limits of SimWorld against the ROS fakes: SimWorld has one shelf per item kind, so the per-arm
+stock is summed per kind. Which items can be placed stays the same (the fake workcell also gives
+each item to an arm that has it), but the fake workcell picks with both arms at once while
+SimWorld places one item after another, so fills that use both arms take longer here. SimWorld's
+central keeps no separate `inventory` record, so a scenario whose `inventory` differs from the
+summed stock (stock_shortage) is refused instead of measured differently.
 
 Default plan (map: scenarios). Each metric needs a scenario where it can be non-zero:
     lane_map, two_lane_segments: basic_orders, blocked_lane, reinstate
@@ -22,18 +32,23 @@ basic_orders gives the plain order time, waits, stops and detours; blocked_lane 
 given scenarios run on every given map, except a scenario whose `map:` names another map.
 
 Columns (seconds are fake-clock seconds):
-    finished        every order got a final report before the scenario timeout, no invariant broke
-    finish_s        time of the last final order report ("6 orders" for the basic scenarios,
-                    7 for reinstate); empty if not finished
+    finished        before the scenario timeout every order got a final report, every operator
+                    action was accepted and every robot still on the floor was PARKED; no
+                    invariant broke. Only such runs have comparable waits and stops
+    finish_s        tick of the last final order report ("6 orders" for the basic scenarios,
+                    7 for reinstate); filled whenever the orders finished, even if the run did not
+    end_s           time the run stopped: all parked, or the timeout
     wait_<robot>_s  time that robot held a zone-wait ticket (it was in some zone's queue,
                     ZoneTable.waiting_for), sampled after every tick; wait_total_s is the sum
-    object_still_s  robot-seconds lost to an object: from the step a robot first stands in front
-                    of an object (the fake robot stops with its move goal held) until that robot
-                    moves again, the sum over all robots of the steps they did not move, leaving
-                    out robots that are docked or docking at a station and robots PARKED with
-                    nothing to do. Empty when the scenario has no object
-    object_hits     how many such windows opened (an object that no robot ran into gives 0)
+    object_still_s  robot-seconds lost to objects. Each robot that stands in front of an object
+                    (the fake robot stops with its move goal held) opens its own window, which
+                    closes when that robot moves again. In every step with at least one window
+                    open, each robot that did not move adds one step, once, leaving out robots
+                    docked or docking at a station and robots PARKED with nothing to do.
+                    Empty when the scenario has no object
+    object_hits     how many windows opened (an object that no robot ran into gives 0)
     interventions   accepted operator calls: confirm_clear plus reinstate
+    operator_refused  operator calls the fleet refused (each is retried a second later)
     error_entries   times a robot's fleet state became ERROR; each one waits for an operator
     stops           a robot's true position changed in one 0.1 s step and not in the next, while
                     it was not at the last waypoint of the path the fleet planned for it (so an
@@ -60,8 +75,10 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
 sys.path.insert(0, str(REPO / "pc" / "fleet_core" / "test"))
+sys.path.insert(0, str(REPO / "sim" / "fake_robots"))
 
-from fleet_core.common.commands import SHIPPED  # noqa: E402
+from fake_robots.scenario import parse_scenario  # noqa: E402
+from fleet_core.common.commands import SHIPPED, ReportOrderCmd  # noqa: E402
 from fleet_core.common.params import load_params  # noqa: E402
 from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
 from sim_world import DT, SimWorld  # noqa: E402
@@ -82,8 +99,9 @@ MOVED_M = 1e-9  # a step with more displacement than this is a moving step
 ARRIVED_M = 1e-6  # the fake robot snaps onto its goal, so arrival is exact
 OPERATOR_RETRY_S = 1.0
 COLUMNS = ["map", "scenario", "mode", "seed", "finished", "error", "orders_total",
-           "orders_shipped", "finish_s", "wait_total_s", "object_still_s", "object_hits",
-           "interventions", "error_entries", "stops", "detours"]
+           "orders_shipped", "finish_s", "end_s", "wait_total_s", "object_still_s",
+           "object_hits", "interventions", "operator_refused", "error_entries", "stops",
+           "detours"]
 SUMMARY_COLUMNS = ["map", "scenario", "mode", "metric", "runs", "n", "mean", "min", "max"]
 NOT_METRICS = {"map", "scenario", "mode", "seed", "error"}
 
@@ -101,8 +119,8 @@ class Meter:
         self._last: dict[str, tuple[float, float]] = {}
         self._moving: dict[str, bool] = {}
         self._state: dict[str, str] = {}
-        self._window: str | None = None  # the robot standing in front of an object
-        self._closed: tuple | None = None  # (robot, stopped_at) of the last closed window
+        self._windows: dict[str, float] = {}  # robot in front of an object -> its stopped_at
+        self._closed: set[tuple] = set()  # (robot, stopped_at) of closed windows
 
     def observe(self, world) -> None:
         moved = {}
@@ -132,14 +150,13 @@ class Meter:
         return not path or math.dist((r.x, r.y), world.site.waypoint_pose(path[-1])) <= ARRIVED_M
 
     def _watch_object(self, world, moved) -> None:
-        if self._window is None:
-            for name, r in world.virtual.items():
-                if (not r.removed and r.stopped_at is not None
-                        and (name, r.stopped_at) != self._closed):
-                    self._window = name
-                    self.object_hits += 1
-                    break
-        if self._window is None:
+        for name, r in world.virtual.items():
+            key = (name, r.stopped_at)
+            if (not r.removed and r.stopped_at is not None and name not in self._windows
+                    and key not in self._closed):
+                self._windows[name] = r.stopped_at
+                self.object_hits += 1
+        if not self._windows:
             return
         for name, r in world.virtual.items():
             if r.removed or moved.get(name):
@@ -147,20 +164,25 @@ class Meter:
             at_station = bool(r.docked_at) or r.goal_kind == "dock"
             if not at_station and self._state.get(name) != "PARKED":
                 self.object_still += self.dt
-        r = world.virtual[self._window]
-        if moved.get(self._window) or r.removed:
-            self._closed = (self._window, r.stopped_at)
-            self._window = None
+        for name, stopped_at in list(self._windows.items()):
+            if moved.get(name) or world.virtual[name].removed:
+                self._closed.add((name, stopped_at))
+                del self._windows[name]
 
 
 class Operator:
-    """Plays the scenario's operator actions on the world and counts the accepted calls."""
+    """Plays the scenario's operator actions on the world and counts accepted and refused calls.
+
+    The fake robot changes only when the fleet accepts: SimWorld.confirm_clear would take the
+    robot off the floor even on a refusal, so the core is called directly.
+    """
 
     def __init__(self, world, actions):
         self.world = world
         self.pending = sorted(actions, key=lambda a: a["at_s"])
         self.retry_at = 0.0
         self.accepted = 0
+        self.refused = 0
 
     def act(self) -> None:
         world = self.world
@@ -170,14 +192,20 @@ class Operator:
         robot = action["robot"]
         if action["type"] == "operator_remove":
             zones = list(world.core.zones.held_by(robot))
-            done = world.confirm_clear(robot, zones, "baseline operator") is not None
+            done = world.core.confirm_clear(robot, zones, "baseline operator") is not None
+            if done:
+                world.virtual[robot].removed = True
         else:
-            self._put_back(robot, action["start"], action["basket"])
+            # the fleet puts the robot on its map at the next report, which comes in the next
+            # step, so the robot can still be moved after the answer
             done = world.core.reinstate(robot, action["basket"], "baseline operator")
+            if done:
+                self._put_back(robot, action["start"], action["basket"])
         if done:
             self.accepted += 1
             self.pending.pop(0)
         else:
+            self.refused += 1
             self.retry_at = world.t + OPERATOR_RETRY_S
 
     def _put_back(self, robot, start, basket) -> None:
@@ -227,20 +255,25 @@ def _faults(data) -> tuple[list, list]:
 
 def build_world(data, map_name_, seed, mode) -> SimWorld:
     world_faults, _ = _faults(data)
+    site = load_map(map_name_)
+    parsed = parse_scenario(data, site)  # the fakes' checks and defaults
+    if parsed.arm.fail_rate:
+        raise ValueError("arm fail_rate is not supported by the baseline")
     stock: dict[str, int] = {}
-    for items in (data.get("stock") or {}).values():
+    for items in parsed.stock.values():
         for kind, count in items.items():
             stock[kind] = stock.get(kind, 0) + count
-    arm = data.get("arm") or {}
-    world = SimWorld(seed=seed, orders=[dict(o) for o in data["orders"]], stock=stock,
-                     robots={n: dict(spec) for n, spec in data["robots"].items()},
-                     faults=world_faults, site=load_map(map_name_),
-                     params=replace(load_params(), lane_goal_mode=mode),
-                     arm_s_per_item=arm.get("seconds_per_item", 2.0),
-                     swap_step_s=arm.get("swap_seconds", 4.0) / 2,  # take, then put
-                     dock_s=(data.get("dock") or {}).get("duration_s", 2.0),
-                     gaussian_noise=True)
-    return world
+    if parsed.inventory != stock:
+        raise ValueError(f"inventory {parsed.inventory} differs from the summed stock {stock}; "
+                         "SimWorld's central keeps no separate record")
+    return SimWorld(seed=seed, orders=[dict(o) for o in data["orders"]], stock=stock,
+                    robots={n: dict(spec) for n, spec in data["robots"].items()},
+                    faults=world_faults, site=site,
+                    params=replace(load_params(), lane_goal_mode=mode),
+                    arm_s_per_item=parsed.arm.seconds_per_item,
+                    swap_step_s=parsed.arm.swap_seconds / 2,  # take, then put
+                    dock_s=parsed.dock.duration_s,
+                    gaussian_noise=True)
 
 
 def _blank_row(map_, scenario, mode, seed, robots, total) -> dict:
@@ -252,6 +285,10 @@ def _blank_row(map_, scenario, mode, seed, robots, total) -> dict:
 
 
 def run_one(map_, scenario, seed, mode, timeout_s=None) -> dict:
+    return run_with_world(map_, scenario, seed, mode, timeout_s)[0]
+
+
+def run_with_world(map_, scenario, seed, mode, timeout_s=None) -> tuple[dict, SimWorld | None]:
     data = load_scenario(scenario)
     row = _blank_row(map_name(map_), scenario_name(scenario), mode, seed, data["robots"],
                      len(data["orders"]))
@@ -259,12 +296,13 @@ def run_one(map_, scenario, seed, mode, timeout_s=None) -> dict:
         world = build_world(data, map_, seed, mode)
     except (ValueError, KeyError) as error:
         row["error"] = f"cannot build: {error!r}"
-        return row
+        return row, None
     _, actions = _faults(data)
     meter = Meter(list(world.robots), DT)
     operator = Operator(world, actions)
-    limit = timeout_s or data.get("timeout_s", 900)
+    limit = timeout_s or parse_scenario(data, world.site).timeout_s
     finish = None
+    complete = False
     meter.observe(world)
     try:
         while world.t < limit - 1e-9:
@@ -272,18 +310,22 @@ def run_one(map_, scenario, seed, mode, timeout_s=None) -> dict:
             world.step()
             meter.observe(world)
             if finish is None and world.all_orders_final():
-                finish = world.t
+                # SimWorld's central takes a report one step after the tick that sent it
+                finish = max(t for t, c in world.commands if isinstance(c, ReportOrderCmd))
             on_floor = [n for n, r in world.virtual.items() if not r.removed]
             if finish is not None and not operator.pending and world.all_parked(on_floor):
+                complete = True
                 break
     except AssertionError as error:
         row["error"] = f"invariant at {world.t:.1f} s: {error}"
     row.update(
-        finished=finish is not None and not row["error"],
+        finished=complete and not row["error"],
         orders_shipped=sum(r.status == SHIPPED for r in world.reports),
         finish_s=round(finish, 3) if finish is not None else "",
+        end_s=round(world.t, 3),
         wait_total_s=round(sum(meter.wait.values()), 3),
         interventions=operator.accepted,
+        operator_refused=operator.refused,
         error_entries=meter.error_entries,
         stops=meter.stops,
         detours=sum(e.code == "DETOUR" for e in world.events),
@@ -291,7 +333,7 @@ def run_one(map_, scenario, seed, mode, timeout_s=None) -> dict:
     row.update({f"wait_{r}_s": round(s, 3) for r, s in meter.wait.items()})
     if any(f["type"] == "blocked" for f in data.get("faults") or []):
         row.update(object_still_s=round(meter.object_still, 3), object_hits=meter.object_hits)
-    return row
+    return row, world
 
 
 def _columns(rows) -> list[str]:

@@ -134,6 +134,36 @@ def test_parked_robots_do_not_count_as_standing_because_of_the_object():
     assert meter.object_still == pytest.approx(0.2)
 
 
+def test_a_second_robot_stopped_by_an_object_keeps_its_own_window():
+    world = stub_world("r1", "r2", "r3")
+    meter = baseline.Meter(["r1", "r2", "r3"], DT)
+    world.virtual["r3"].docked_at = "WORK"  # never counted
+    meter.observe(world)
+    world.virtual["r1"].stopped_at = 0.1
+    advance(world, meter)  # r1, r2 still: 0.2
+    world.virtual["r2"].stopped_at = 0.2  # r2 meets an object while r1's window is open
+    advance(world, meter)  # 0.4
+    world.virtual["r2"].stopped_at = None  # r2's object is gone, r2 has not moved yet
+    advance(world, meter)  # 0.6
+    world.virtual["r1"].stopped_at = None
+    advance(world, meter, r1=0.1)  # r1 moves: its window closes, r2 still: 0.7
+    advance(world, meter, r1=0.2)  # r2 still stands because of its object: 0.8
+    advance(world, meter, r1=0.3, r2=0.1)  # r2 moves: its window closes
+    advance(world, meter)  # no window open
+    assert meter.object_hits == 2
+    assert meter.object_still == pytest.approx(0.8)
+
+
+def test_overlapping_windows_count_a_still_robot_once_per_step():
+    world = stub_world("r1", "r2")
+    meter = baseline.Meter(["r1", "r2"], DT)
+    meter.observe(world)
+    world.virtual["r1"].stopped_at = 0.1
+    world.virtual["r2"].stopped_at = 0.1
+    advance(world, meter)
+    assert meter.object_hits == 2 and meter.object_still == pytest.approx(0.2)
+
+
 def test_a_robot_entering_error_is_counted_once_per_entry():
     world = stub_world("r1")
     meter = baseline.Meter(["r1"], DT)
@@ -177,6 +207,26 @@ def test_the_default_plan_only_puts_scenarios_on_maps_that_have_their_start_poin
             data = baseline.load_scenario(name)
             for spec in data["robots"].values():
                 assert spec["start"] in site.zones, (map_name, name)
+
+
+def test_missing_arm_and_dock_times_take_the_scenario_parser_defaults():
+    data = baseline.load_scenario("basic_orders")
+    del data["arm"], data["dock"]
+    world = baseline.build_world(data, "lane_map", seed=1, mode="path")
+    # fake_robots/scenario.py: 4 s per item, 8 s swap, 3 s dock
+    assert (world.arm_s_per_item, world.swap_step_s, world.dock_s) == (4.0, 4.0, 3.0)
+
+
+def test_a_scenario_whose_central_record_differs_from_the_shelves_is_refused():
+    data = {**baseline.load_scenario("basic_orders"), "inventory": {"A": 6, "B": 6, "C": 6}}
+    with pytest.raises(ValueError, match="inventory"):
+        baseline.build_world(data, "lane_map", seed=1, mode="path")
+
+
+def test_an_inventory_equal_to_the_summed_stock_is_accepted():
+    data = {**baseline.load_scenario("basic_orders"),
+            "inventory": {"A": 6, "B": 6, "C": 6, "D": 6}}
+    assert baseline.build_world(data, "lane_map", seed=1, mode="path").stock == data["inventory"]
 
 
 def test_an_unknown_fault_type_is_refused():
@@ -275,6 +325,49 @@ def test_the_reinstate_scenario_counts_both_operator_actions():
     result = baseline.run_one("lane_map", "reinstate", seed=1, mode="path")
     assert result["finished"], result
     assert result["interventions"] == 2
+
+
+def test_finish_time_is_the_tick_of_the_last_final_report():
+    result, world = baseline.run_with_world("lane_map", "basic_orders", seed=1, mode="path")
+    last = max(t for t, c in world.commands if type(c).__name__ == "ReportOrderCmd")
+    assert result["finish_s"] == pytest.approx(last)
+
+
+def test_a_run_cut_before_every_robot_parks_is_not_finished():
+    full = baseline.run_one("lane_map", "basic_orders", seed=1, mode="path")
+    assert full["finished"] and full["end_s"] > full["finish_s"] + 1.0
+    cut = baseline.run_one("lane_map", "basic_orders", seed=1, mode="path",
+                           timeout_s=full["finish_s"] + 0.5)
+    assert not cut["finished"] and cut["error"] == ""
+    assert cut["finish_s"] == full["finish_s"]  # the orders did finish
+    assert cut["end_s"] == pytest.approx(full["finish_s"] + 0.5)
+
+
+def test_a_refused_confirm_clear_leaves_the_robot_on_the_floor():
+    data = baseline.load_scenario("basic_orders")
+    world = baseline.build_world(data, "lane_map", seed=1, mode="path")
+    world.step()
+    world.core.confirm_clear = lambda *args: None
+    operator = baseline.Operator(world, [{"at_s": 0.0, "robot": "pinky1",
+                                          "type": "operator_remove"}])
+    operator.act()
+    assert not world.virtual["pinky1"].removed
+    assert (operator.accepted, operator.refused) == (0, 1)
+    assert operator.pending  # tried again later
+
+
+def test_a_refused_reinstate_does_not_move_the_robot():
+    data = baseline.load_scenario("basic_orders")
+    world = baseline.build_world(data, "lane_map", seed=1, mode="path")
+    world.step()
+    r = world.virtual["pinky1"]
+    before = (r.x, r.y, r.removed)
+    operator = baseline.Operator(world, [{"at_s": 0.0, "robot": "pinky1",
+                                          "type": "operator_reinstate", "start": "P-3",
+                                          "basket": "EMPTY"}])
+    operator.act()  # pinky1 was never removed, so the fleet refuses
+    assert (r.x, r.y, r.removed) == before
+    assert (operator.accepted, operator.refused) == (0, 1)
 
 
 def test_the_command_line_writes_the_runs_and_the_summary(tmp_path, capsys):
