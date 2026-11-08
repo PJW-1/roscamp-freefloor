@@ -14,6 +14,8 @@
   The stand-in refuses the stub unless use_sim_time is true and isolation.py passes.
 - fleet_check(기본 켜짐)가 로봇 사이 최소 거리, 정지 횟수, 쥔 구역 밖 위치 수를
   result_dir/fleet_check.json에 쓴다.
+- recovery_probe가 로봇이 RECOVERING일 때 전후의 AMCL 위치 오차(Gazebo 실제 위치 대비)를
+  result_dir/recovery_probe.csv에 쓴다.
 - ROS 프로세스 수: LOCALHOST 탐색에서는 DDS 참여자 32개 정도만 서로 보인다. 그래서 브리지는
   하나로 모으고, 로봇마다 Nav2를 프로세스 하나로 묶는다(nav_composition). 노드를 더하면
   test_launch_wiring의 프로세스 수 시험이 한도를 알려 준다.
@@ -99,6 +101,10 @@ def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
                             output="screen",
                             parameters=[{"use_sim_time": True, "robots": robots,
                                          "output": str(Path(result_dir) / "fleet_check.json")}]))
+    actions.append(Node(package="fleet_gz_sim", executable="recovery_probe", name="recovery_probe",
+                        output="screen",
+                        parameters=[{"use_sim_time": True, "robots": robots,
+                                     "result_dir": result_dir, "settle_s": 2.0}]))
     if monitor:
         node = Node(package="fake_robots", executable="scenario_monitor_node",
                     name="scenario_monitor", output="screen",
