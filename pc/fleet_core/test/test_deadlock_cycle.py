@@ -287,3 +287,22 @@ def test_a_parked_robot_stopped_in_a_cycle_is_not_overtaken():
     drive.core.tick_pick(frozenset({"r1"}))
     assert not drive.core._missions["r1"].called
     assert not drive.core._missions["r2"].called
+
+
+def test_a_cycle_coming_and_going_does_not_restart_the_one_being_handled():
+    """r3<->r4 is handled; r1<->r2 (sorted first) appears and goes again. r3<->r4 keeps its
+    clock and reaches DEADLOCK_UNRESOLVED one grace after its own detection (Codex c45051d)."""
+    drive = standing({"r1": "T1", "r2": "T2", "r3": "E1", "r4": "F2"})
+    force_waits(drive, {"r3": "r4", "r4": "r3"})
+    drive.run(DT)
+    [(detected_at, first)] = drive.events("DEADLOCK_DETECTED")
+    assert "r3" in first.detail and "r4" in first.detail
+    drive.run(1.0)
+    force_waits(drive, {"r1": "r2", "r2": "r1"})
+    drive.run(1.0)
+    for robot in ("r1", "r2"):
+        drive.core.zones.cancel_all_requests(robot)
+    drive.run(detected_at + PARAMS.deadlock_grace_s + 0.5 - drive.now[0])
+    unresolved = drive.events("DEADLOCK_UNRESOLVED")
+    assert [e.robot for _, e in unresolved] == ["r3"]
+    assert len(drive.events("DEADLOCK_DETECTED")) == 1

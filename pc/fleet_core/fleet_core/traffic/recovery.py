@@ -161,17 +161,20 @@ class TrafficRecovery:
         """The robots on any wait cycle, empty when there is none (work order H1).
 
         Only these robots get no new moves while a cycle lasts; robots outside go on, and the
-        zone locks keep them apart. One cycle is handled at a time (the first find_cycle gives);
-        another cycle's robots stand still until it comes up. A cycle with other wait edges,
-        even among the same robots, is a new episode. When the retreat could not break the
-        cycle (DEADLOCK_UNRESOLVED) and the same cycle lasts deadlock_unresolved_s more, the
-        robot choose_retreat picks is isolated (part 5.5).
+        zone locks keep them apart. One cycle is handled at a time: the one being handled keeps
+        its clock while all its wait edges remain, even if another cycle comes and goes; the
+        other cycle's robots stand still until it comes up. A cycle with other wait edges, even
+        among the same robots, is a new episode. When the retreat could not break the cycle
+        (DEADLOCK_UNRESOLVED) and the same cycle lasts deadlock_unresolved_s more, the robot
+        choose_retreat picks is isolated (part 5.5).
         """
         graph = wait_graph(self.zones)
-        cycle = find_cycle(graph)
-        edges = frozenset(zip(cycle, cycle[1:] + cycle[:1], strict=True)) if cycle else frozenset()
-        if edges != self._deadlock_cycle:
-            self._deadlock_cycle = edges
+        cycle = list(self._deadlock_cycle)
+        if not cycle or not all(holder in graph.get(waiter, ())
+                                for waiter, holder in zip(cycle, cycle[1:] + cycle[:1],
+                                                          strict=True)):
+            cycle = find_cycle(graph) or []
+            self._deadlock_cycle = tuple(cycle)
             self._deadlock_since = None
             self._deadlock_acted = False
             self._retreating = None
