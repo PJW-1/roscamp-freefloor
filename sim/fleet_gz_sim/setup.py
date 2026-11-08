@@ -27,5 +27,6 @@ setup(
         'wait_ready = fleet_gz_sim.stand_in_node:wait_ready',
         'sim_obstacles = fleet_gz_sim.obstacle_node:main',
         'fleet_view = fleet_gz_sim.fleet_view_node:main',
+        'recovery_probe = fleet_gz_sim.recovery_probe_node:main',
     ]},
 )

@@ -14,6 +14,7 @@ STALE_S = 3.0  # 이만큼 자세가 없으면 회색
 
 GRAY = (0.55, 0.55, 0.55, 1.0)
 RED = (1.0, 0.1, 0.1, 1.0)
+AMBER = (1.0, 0.75, 0.0, 1.0)
 LABEL = (0.95, 0.95, 0.95, 1.0)
 ROBOT_COLORS = {
     "pinky1": (0.2, 0.45, 1.0, 1.0),
@@ -86,7 +87,7 @@ def zone_geometry(lane_map, zone_id: str):
 
 
 def robot_label(status, stale: bool) -> tuple[str, tuple]:
-    """'pinky1  MOVING  TO_WORK R-003'과 글 색. 고장이나 BLOCKED면 빨강, 조용하면 회색."""
+    """pinky1  MOVING  TO_WORK R-003 글과 색. 고장, BLOCKED는 빨강, RECOVERING은 호박색."""
     fault = getattr(status, "fault", "") or "NONE"
     state = getattr(status, "fsm_state", "")
     parts = [status.robot_id, state or "?",
@@ -100,6 +101,8 @@ def robot_label(status, stale: bool) -> tuple[str, tuple]:
     text = "  ".join(p for p in parts if p)
     if fault != "NONE" or state == "BLOCKED":
         return text, RED
+    if state == "RECOVERING":
+        return text, AMBER
     return text, GRAY if stale else robot_color(status.robot_id)
 
 

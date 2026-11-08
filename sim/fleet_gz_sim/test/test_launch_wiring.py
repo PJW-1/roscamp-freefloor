@@ -264,8 +264,8 @@ def test_fleet_check_records_into_the_result_dir_on_gazebo_time(made):
     path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
     [check] = nodes(made.fleet(str(path), ROBOTS, result_dir="out", monitor=True),
                     "fleet_check")
-    assert params(check) == {"use_sim_time": True, "robots": ROBOTS,
-                             "output": str(Path("out") / "fleet_check.json")}
+    assert params(check).items() >= {"use_sim_time": True, "robots": ROBOTS,
+                                     "output": str(Path("out") / "fleet_check.json")}.items()
     assert not nodes(made.fleet(str(path), ROBOTS, result_dir="out", monitor=True,
                                 check=False), "fleet_check")
 
@@ -365,3 +365,24 @@ def test_rviz_can_follow_one_pinky_or_stay_closed(made):
     assert rviz.kw["namespace"] == "pinky2"
     closed = run(made, rviz="none")
     assert not nodes(closed, "fleet_view") and not nodes(closed, "rviz2")
+
+
+def test_the_recovery_probe_shares_the_fleet_check_process(made):
+    """A process of its own would cost a DDS participant (test_ros_process_budget_...)."""
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    fleet = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True)
+    assert nodes(fleet, "recovery_probe") == []
+    [check] = nodes(fleet, "fleet_check")
+    assert params(check).items() >= {"use_sim_time": True, "robots": ROBOTS,
+                                     "recovery_probe": True, "result_dir": "out",
+                                     "settle_s": 2.0}.items()
+
+
+def test_without_fleet_check_the_recovery_probe_runs_on_its_own(made):
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    fleet = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True, check=False)
+    [probe] = nodes(fleet, "recovery_probe")
+    assert params(probe) == {"use_sim_time": True, "robots": ROBOTS, "result_dir": "out",
+                             "settle_s": 2.0}

@@ -303,3 +303,10 @@ def test_setup_installs_the_rviz_config_and_the_node():
     setup = (PKG / "setup.py").read_text(encoding="utf-8")
     assert "rviz/*.rviz" in setup
     assert "fleet_view = fleet_gz_sim.fleet_view_node:main" in setup
+
+
+def test_a_recovering_robot_gets_the_amber_label_not_the_fault_red():
+    text, color = fv.robot_label(Status("pinky1", "RECOVERING"), stale=False)
+    assert "RECOVERING" in text
+    assert color == fv.AMBER
+    assert fv.AMBER not in (fv.RED, fv.GRAY, *fv.ROBOT_COLORS.values())
