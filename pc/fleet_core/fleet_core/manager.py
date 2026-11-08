@@ -164,6 +164,13 @@ class FleetManager:
             self.traffic.on_goal_not_sent(robot, goal_id)
             self._pump()
 
+    def on_goal_lost(self, robot, goal_id) -> None:
+        """노드가 취소한 goal의 결과를 잃었다(goal_tracker가 취소를 그만둠)."""
+        self._input("on_goal_lost", robot, goal_id)
+        if not self._robot_refused("goal lost", robot):
+            self.traffic.on_goal_lost(robot, goal_id)
+            self._pump()
+
     def on_dock_result(self, robot, goal_id, success, error_x_cm=0.0, error_y_cm=0.0,
                        error_yaw_deg=0.0) -> None:
         self._input("on_dock_result", robot, goal_id, success, error_x_cm, error_y_cm,

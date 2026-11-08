@@ -282,6 +282,43 @@ def test_a_clear_before_the_cancel_result_sends_again_only_after_the_result():
     assert not pilot.events("GOAL_RETRY")
 
 
+def test_a_lost_cancel_result_reported_by_the_node_lets_the_robot_go_on():
+    """재현 2(1.1 지시서 H2): 표시 때 취소한 goal의 결과가 오지 않으면 풀린 뒤에도 서 있다.
+
+    노드가 그 결과를 잃었다고 알리면(on_goal_lost) 끝난 것으로 보고 같은 목표를 다시 보낸다.
+    로봇은 새 goal로 덮어쓰므로 안전하다. 기다리는 동안은 ROBOT_IDLE도 아니다.
+    """
+    pilot = Pilot()
+    blocked_on_the_way(pilot)
+    goal = first_goal(pilot)
+    pilot.run(MARK_S + 0.2)
+    pilot.state["pinky1"] = "IDLE"  # 물체가 비켰다. 취소 결과는 끝내 오지 않는다
+    pilot.run(0.1 * CONFIRM + 0.3)
+    cleared = pilot.events("LANE_CLEARED")
+    assert len(cleared) == 1
+    pilot.run(120.0)
+    assert not [c for t, c in pilot.sent("MoveCmd") if t >= cleared[0][0]]
+    assert not pilot.events("ROBOT_IDLE")
+    lost_at = pilot.now[0]
+    pilot.core.on_goal_lost("pinky1", goal)
+    pilot.run(0.3)
+    resent = [c for t, c in pilot.sent("MoveCmd") if t >= lost_at]
+    assert resent and resent[0].target_id == "N" and resent[0].goal_id != goal
+    assert pilot.mission().attempts == 0
+    assert not pilot.events("GOAL_RETRY")
+
+
+def test_a_lost_result_of_a_goal_not_being_waited_for_changes_nothing():
+    pilot = Pilot()
+    pilot.run(0.3)
+    goal = pilot.mission().goal
+    pilot.core.on_goal_lost("pinky1", goal.id + 100)
+    pilot.core.on_goal_lost("nobody", goal.id)
+    pilot.tick()
+    assert pilot.mission().goal == goal
+    assert pilot.events("INPUT_REJECTED")
+
+
 def test_a_robot_held_for_a_block_takes_no_new_call():
     """표시 중이거나 취소 결과를 기다리는 로봇은 새 호출을 받지 않는다.
 

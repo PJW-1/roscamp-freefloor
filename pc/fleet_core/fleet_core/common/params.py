@@ -61,6 +61,8 @@ class FleetParams:
     release_clear_of_floor: bool = False
     # H1: after DEADLOCK_UNRESOLVED, the same wait cycle lasting this long isolates one robot.
     deadlock_unresolved_s: float = 30.0
+    # 조용히 서 있는 로봇 감시(1.1 지시서 H2). 0이면 끈다. 이 값이 없던 기록은 감시 없이 재생한다
+    idle_watch_s: float = 0.0
 
 
 def load_params(path=None) -> FleetParams:

@@ -118,6 +118,10 @@ class _Mission:
     off_lane_at: tuple | None = None  # 돌아와야 할 레인(a, b)
     back_on_lane: int = 0  # 그 레인 half_width 안의 연속 보고 수
     back_on_lane_at: float | None = None  # 그 수가 찬 시각. 다시 벗어나면 None
+    last_result: str = ""  # 마지막 이동 goal 결과: SUCCEEDED 또는 실패 이유
+    idle_since: float | None = None  # 조용히 서 있기 시작한 시각(idle_watch.py)
+    idle_spot: tuple | None = None  # 마지막 ROBOT_IDLE의 (지점, 쥔 구역)
+    idle_attempts: int = 0  # 그때의 시도 수. 같은 자리에서 다시 서면 이어 센다
 
     @property
     def live(self) -> bool:

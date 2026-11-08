@@ -51,3 +51,4 @@ input_pose_margin_m: 1.0      # 웨이포인트 범위 밖으로 이보다 먼 �
 off_lane_timeout_s: 20.0      # 레인을 벗어나 선 로봇이 이 안에 못 돌아오면 ERROR(OFF_LANE)
 lane_goal_mode: path          # path: 레인 폴리라인을 보내 FollowPath로 따르게 한다. point: 지점 하나(비교용)
 release_clear_of_floor: true  # 나가는 레인 s > d에 더해 구역의 다른 바닥 선에서도 d 이상이어야 놓는다(예각 합류)
+idle_watch_s: 10.0            # 제안: 주행 단계인데 goal도 구역 대기표도 없이 이만큼 서면 ROBOT_IDLE, 그 지점 goal을 다시 보낸다

@@ -28,6 +28,7 @@ from fleet_core.common.commands import (
 )
 from fleet_core.traffic.blocking import TrafficBlocking
 from fleet_core.traffic.detour import TrafficDetour
+from fleet_core.traffic.idle_watch import TrafficIdleWatch
 from fleet_core.traffic.isolation import TrafficIsolation
 from fleet_core.traffic.lane_path import TrafficPath
 from fleet_core.traffic.mission import (
@@ -68,7 +69,8 @@ from fleet_core.traffic.zones import ZoneLocks
 
 
 class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, TrafficDetour,
-                        TrafficIsolation, TrafficPath, TrafficReleaseFloor, TrafficReinstate):
+                        TrafficIsolation, TrafficPath, TrafficReleaseFloor, TrafficReinstate,
+                        TrafficIdleWatch):
     def __init__(self, site, params, robots, clock, next_goal_id=None):
         if site.shortest_exit_lane() <= params.release_distance_m:
             raise ValueError(
@@ -209,6 +211,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             return
         m.goal = None
         m.not_sent_warned = False
+        m.last_result = "SUCCEEDED" if success else reason
         if success and not m.comm and not self._at_target(m, goal.target_idx):
             m.settle_idx = goal.target_idx
             m.arrival_by = m.retry_at = self._clock() + self.params.arrival_settle_s
@@ -250,6 +253,12 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         if not m.not_sent_warned:
             m.not_sent_warned = True
             self._event("WARN", "GOAL_NOT_SENT", f"no {goal.kind} server, trying again", robot)
+
+    def on_goal_lost(self, robot, goal_id) -> None:
+        """노드가 취소한 goal의 결과를 잃었다. 끝난 것으로 본다. 로봇은 새 goal로 덮어쓴다."""
+        m = self._missions.get(robot)
+        if m:
+            self._cancel_finished(m, goal_id)
 
     def on_dock_result(self, robot, goal_id, success, error_x_cm=0.0, error_y_cm=0.0,
                        error_yaw_deg=0.0) -> None:
@@ -326,6 +335,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
                 m.stall_hold = False
             if m.block:
                 self._watch_block(m, now)
+            self._watch_idle(m, now)
         return self._check_deadlock(now)
 
     def tick_pick(self, stopped: frozenset[str] = frozenset()) -> None:
