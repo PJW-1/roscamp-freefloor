@@ -37,6 +37,7 @@ from fleet_core.traffic.floor.floor_map import load_floor_map
 from fleet_core.traffic.floor.planner import FloorPlanner, Route
 from fleet_core.traffic.mission import (
     AT_STATION,
+    BLOCKED,
     DOCKING,
     ERROR,
     HEARTBEAT_LOST,
@@ -113,6 +114,7 @@ class FloorController(TrafficController):
                           for name, line in self.floor.fixed_lines.items()}
         self._all_line_ids = set().union(*self._line_ids.values()) if self._line_ids else set()
         self._deadlock_seen = 0.0
+        self._unresolved_robot = ""
 
     # ---- cells --------------------------------------------------------------------------
 
@@ -275,8 +277,9 @@ class FloorController(TrafficController):
 
     def _follow(self, m: _Mission) -> None:
         """경로 위 진행 s를 보고 자세로 넘긴다. 뒤로는 가지 않고 보낸 끝을 넘지 않는다."""
-        if m.goal is None and m.robot_state not in ON_A_GOAL:
-            self._active[m.name].clear()  # it stands: nothing old is followed any more
+        if m.goal is None and m.robot_state not in ON_A_GOAL + (BLOCKED,):
+            # it stands: nothing old is followed any more (BLOCKED only pauses the goal)
+            self._active[m.name].clear()
         leg = self._legs.get(m.name)
         if leg is None or leg.route is None:
             return
@@ -386,9 +389,9 @@ class FloorController(TrafficController):
                        and self._in_service(name))
 
     def _in_service(self, name: str) -> bool:
-        """격리되지 않고 관제 중인 로봇(격리·제거된 로봇의 다리는 줄을 잡지 않는다)."""
+        """격리·제거되지 않은 로봇. 격리·제거된 로봇의 다리는 줄을 잡지 않는다."""
         other = self._missions[name]
-        return other.available and other.fault != ERROR
+        return other.live and other.fault != ERROR  # out of contact keeps its turn
 
     def _plan_wait(self, m: _Mission, leg: _Leg, out_line) -> None:
         """접근선 시작 근처, 고정 선 칸·남의 칸·다른 대기 자리에 닿지 않는 가장 가까운 빈 자리로."""
@@ -590,6 +593,7 @@ class FloorController(TrafficController):
                 self._event("ERROR", "DEADLOCK_UNRESOLVED",
                             f"{robot} of {cycle} has no free spot to step aside to", robot)
                 self._unresolved_at = now
+                self._unresolved_robot = robot
         elif (self._deadlock_acted and self._unresolved_at is None
               and now - self._deadlock_since >= 2 * self.params.deadlock_grace_s + SIDESTEP_HOLD_S
               and not any(self._legs[name].resume for name in cycle if name in self._legs)):
@@ -597,11 +601,16 @@ class FloorController(TrafficController):
             self._event("ERROR", "DEADLOCK_UNRESOLVED",
                         f"{robot} of {cycle} stepped aside but the cycle remains", robot)
             self._unresolved_at = now
+            self._unresolved_robot = robot
         elif (self._unresolved_at is not None
               and now - self._unresolved_at >= self.params.deadlock_unresolved_s):
             self._unresolved_at = None
-            self._fail(self._missions[choose_retreat(cycle, self._priority)],
-                       "DEADLOCK_UNRESOLVED")
+            if self._unresolved_robot in cycle:
+                self._fail(self._missions[self._unresolved_robot], "DEADLOCK_UNRESOLVED")
+            else:
+                # the robot found unresolved has left the cycle: judge the cycle as it is now
+                self._deadlock_since = now
+                self._deadlock_acted = False
         return frozenset()
 
     def _sidestep(self, m: _Mission, cycle) -> bool:

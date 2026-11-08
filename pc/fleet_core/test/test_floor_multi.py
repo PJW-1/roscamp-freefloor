@@ -241,7 +241,54 @@ def test_cells_ahead_of_an_object_stay_with_the_robot_until_its_goal_has_ended()
     b.robot_state = "BLOCKED"
     traffic._mark_blocked(b)
     assert sent <= traffic.zones.held_set("b")
+    # BLOCKED is a pause on the goal: until the cancel result the robot may still follow it
+    for _ in range(3):
+        traffic._follow(b)
+        traffic._note_block_report(b)
+    assert sent <= traffic.zones.held_set("b")
     traffic.on_move_result("b", goal.id, False, "CANCELED")
     for _ in range(3):
         traffic._note_block_report(b)
     assert traffic.blocked_cells()
+
+
+def test_a_robot_out_of_contact_keeps_its_turn_on_the_approach_line():
+    traffic = two_robot_floor()
+    a, b = traffic._missions["a"], traffic._missions["b"]
+    traffic._start_leg(a, "TO_WORK", None, "W")
+    traffic._start_leg(b, "TO_WORK", None, "W")
+    for cell in list(traffic.zones.held_set("a")):  # still far from the line
+        traffic.zones.release("a", cell)
+    a.comm = "COMM_LOST"
+    traffic._drive(b)
+    assert traffic._legs["b"].waiting
+
+
+def test_only_the_robot_found_unresolved_is_isolated(monkeypatch):
+    """The episode goes on while the cycle shrinks inside it; the robot isolated at the end is
+    one that was found unable to step aside, not a newcomer to the cycle."""
+    from fleet_core.traffic.floor import controller as floor_controller
+    params = load_params().__class__(**{**load_params().__dict__, "traffic_mode": "freefloor"})
+    now = [0.0]
+    core = FleetManager(load_lane_map(), params, ["a", "b", "c"], lambda: now[0])
+    traffic = core.traffic
+    graph = [{"a": {"b"}, "b": {"c"}, "c": {"a"}}]
+    monkeypatch.setattr(floor_controller, "wait_graph", lambda _z: {k: set(v) for k, v in
+                                                                    graph[0].items()})
+    monkeypatch.setattr(traffic, "_sidestep", lambda m, cycle: False)
+    failed = []
+    found = []
+    monkeypatch.setattr(traffic, "_fail",
+                        lambda m, reason="": failed.append((m.name, list(found))))
+    while now[0] < params.deadlock_grace_s + params.deadlock_unresolved_s * 3:
+        traffic._check_deadlock(now[0])
+        for e in traffic.take_output():
+            if getattr(e, "code", "") == "DEADLOCK_UNRESOLVED":
+                found.append(e.robot)
+                if len(found) == 1:  # the cycle now leaves out the robot just found
+                    rest = sorted({"a", "b", "c"} - {e.robot})
+                    graph[0] = {rest[0]: {rest[1]}, rest[1]: {rest[0]}}
+        now[0] = round(now[0] + 0.1, 1)
+    assert failed
+    for name, found_before in failed:
+        assert name in found_before[1:], (name, found_before)
