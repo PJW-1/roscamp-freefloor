@@ -638,10 +638,20 @@ def test_a_skewed_robot_backs_up_less_to_stay_near_the_lane():
     fsm = ready()
     far = (0.35, 2.15)
     move(fsm, "g1", 0.0, path=(P3, far), target=far, target_id="F")
-    # 0.05 m right of the lane, facing 30 deg left of it: backing up drifts further right
-    skewed = (0.40, 1.95, NORTH + math.radians(30))
+    # 0.01 m right of the lane, facing 30 deg left of it: backing up drifts further right.
+    # The drift stops at backup_lateral_limit_m 0.03, the position error the fleet allows for
+    skewed = (0.36, 1.95, NORTH + math.radians(30))
     [b] = backups(stand(fsm, 1.0, skewed))
-    assert b.distance_m == pytest.approx(0.10, abs=1e-3)  # not min(0.15, 0.40 - 0.23)
+    assert b.distance_m == pytest.approx(0.04, abs=1e-3)  # (0.01 + 0.03) / sin 30 deg
+
+
+def test_a_robot_already_off_the_lane_does_not_back_up_further_off():
+    fsm = ready()
+    far = (0.35, 2.15)
+    move(fsm, "g1", 0.0, path=(P3, far), target=far, target_id="F")
+    skewed = (0.40, 1.95, NORTH + math.radians(30))  # 0.05 m right, beyond the 0.03 limit
+    cmds = stand(fsm, 1.0, skewed)
+    assert kinds(cmds) == ["CancelNav", "ClearCostmap", "SendPath"]  # no BackUp
 
 
 def test_past_a_corner_the_distance_counts_from_the_corner():

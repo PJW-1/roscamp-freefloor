@@ -67,7 +67,8 @@ class FsmParams:
     release_distance_m: float = 0.2
     backup_margin_m: float = 0.03  # 관제가 보는 위치 오차(eps)
     backup_min_m: float = 0.02  # 이보다 짧으면 물러나지 않고 지도만 비운다
-    backup_lateral_limit_m: float = 0.10  # 관제 lane_error_warn_m(0.15)보다 안쪽
+    # 후진은 로봇 방향으로 곧게 가므로 옆으로 밀린다. 관제가 위치 오차로 보는 값(eps)까지만
+    backup_lateral_limit_m: float = 0.03
     backup_speed_mps: float = 0.08
     backup_time_allowance_s: float = 5.0
     backup_result_grace_s: float = 2.0  # time allowance 뒤에도 결과가 없으면 멈추고 이어 간다
