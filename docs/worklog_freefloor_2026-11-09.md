@@ -188,3 +188,116 @@ Codex 검수(6c50a0c..16e8f81), 지적 10건:
    ```
 
 4. 면접 한 문장: "로봇에게는 잠근 칸 끝까지만 경로를 주고 잠금이 늘 때마다 경로를 바꿔 보내서, 로봇은 서지 않고 달리지만 쥐지 않은 칸으로 가라는 명령은 한 번도 받지 않습니다."
+
+## P3. 여러 대: 예약 벌점, 재계획, 대기 순환 → 비켜 서기, 막힘 표시, 도크 접근선 줄
+
+| 곳 | 바꾼 것 |
+|---|---|
+| `controller.py` `_route`, `_inflate` | 남이 쥔 칸을 피해 계획한다. 계획기는 중심이 지나는 칸만 보므로 남의 칸을 몸 반지름만큼 넓혀서(`_reach`: 칸 사각형 사이 거리가 몸 반지름보다 가까운 칸) 넘긴다. 길이 없으면 피하지 않고 다시 찾는다(잠금이 안전을 지킨다) |
+| `_reservations`, `_penalty_for` | 남의 경로를 계약 속도(`detour_speed_mps` 0.2)로 `floor_plan_window_s`(8초) 앞까지 달릴 때 칸마다 머무는 시간. 그 시간에 닿는 칸은 거리 0.5 m 벌점(시간 벌점 A*, 협조 A*의 가벼운 꼴) |
+| `_replan_if_stuck` | 잠금이 `floor_replan_s`(1초) 동안 늘지 않고 앞이 짧으면 남이 쥔 칸을 아예 빼고 다시 계획한다. 고정 선 안에서는 하지 않는다 |
+| `_check_deadlock`, `_sidestep` | 대기 그래프 순환이 `deadlock_grace_s` 이어지면 우선순위가 낮은 로봇부터 남의 칸과 남이 1.2 m 안에 가려는 칸에서 벗어난 가장 가까운 빈 자리로 비켜 선다(고정 선 위·도킹 중이면 다음 로봇). 3초 뒤 원래 다리를 다시 계획한다. 비켜 설 곳이 없거나 비켜 선 뒤에도 순환이 남으면 `DEADLOCK_UNRESOLVED`, 그 뒤 `deadlock_unresolved_s`면 격리 |
+| `_note_block_report`, `_mark_blocked`, `_take_ahead` | BLOCKED가 `blocked_mark_s` 이어지면 goal을 거두고 앞 0.3 m 칸을 막힘(주인 `#blocked`)으로 표시한다. 로봇이 쥐고 있던 앞 칸은 거둔 goal이 끝난 뒤에 표시로 옮긴다. BLOCKED가 아닌 보고가 3번 오면 지우고 다시 계획(`FLOOR_BLOCKED`, `FLOOR_CLEARED`) |
+| `_admitted`, `_plan_wait` | 도크 접근선은 한 번에 한 대. 다른 로봇이 그 선으로 가는 중이거나 선 칸을 쥐고 있으면, 접근선 시작에서 0.3~1.2 m, 어떤 고정 선 칸에도 닿지 않는 빈 자리에서 기다린다(서 있는 동안 쥐는 반경 `release_distance_m`까지 본다). 선이 비면 먼저 기다린 로봇부터 |
+| `planner.py` `_rest_of_line` | 접근선에서 0.12 m 안에 선 로봇은 선 첫 점으로 되돌아가지 않고 그 자리에서 선을 잇는다(그 한 걸음이 clear 칸만 지날 때) |
+| `cells.py` | `held_by_others` |
+| `tools/compare_floor.py`(새) | 같은 시나리오·씨드를 두 방식으로 돌려 baseline 열 + `min_gap_m`, `path_m`, `tick_ms_mean/max`, `slowdowns`, `replans`, `sidesteps`, `deadlocks`, `unresolved`, `isolations`, `violations` |
+
+### 고친 순서와 시험
+
+- 빨강: `test_floor_multi.py`를 P2 제어기에 돌렸다. 시나리오 5개 모두 끝나지 않음(basic_orders 씨드 1·2·3은 900초 제한에서 출고 2·1·1건, order_burst는 1200초에 1건, blocked_lane은 900초에 4건), `FLOOR_BLOCKED` 없음, `_reservations`·`_penalty_for` 없음(`AttributeError`). 실패 8건(실패 줄 `E`를 셌다. 출력을 앞 20줄만 남겨 pytest 요약 줄은 보지 못했다).
+- 첫 구현(예약·재계획·비켜 서기·막힘) 뒤 basic_orders 씨드 1·2·3은 233.8 / 224.1 / 204.5초에 끝났지만 order_burst 씨드 1은 1200초에도 세 대가 모두 `TO_WORK`였다. 찍어 보니:
+  1. 세 대가 한꺼번에 작업대로 가서 접근선 시작(Q) 둘레에 모였다. 한 대는 자유 경로로 접근선 위에 올라서서 Q로 되돌아가야 했고, Q에는 다음 로봇이 서 있었다.
+  2. 2-순환과 3-순환이 tick마다 바뀌어서 매번 새 순환으로 쳐서 유예 시간이 차지 않았다.
+- 고침 1, 같은 무리의 순환 합치기: 1초 안에 겹치는 순환은 한 일화로 본다. 시험 `test_overlapping_cycles_that_take_turns_are_one_episode`, 빨강(비켜 서기 없음) → 초록.
+- 고침 2, 접근선 위에서 잇기: `test_a_robot_already_on_the_in_line_joins_it_where_it_stands`, 빨강 1 failed, 10 passed → 초록 11 passed. 처음 0.05 m로는 order_burst가 그대로 멈췄다(로봇이 선에서 0.09 m 떨어져 있었다). 0.12 m로 넓히자 539.1초에 끝났지만 isolation 1번, 그리고 basic_orders 씨드 3이 900초에 끝나지 않게 됐다(병합 집합이 커져 엉뚱한 로봇을 격리).
+- 고침 3, 도크 접근선 줄: `test_a_second_robot_for_the_same_dock_waits_off_the_lines`, 빨강(`_Leg`에 `waiting` 없음) → 초록. 대기 자리를 몸 칸으로만 보면 서 있는 로봇이 놓지 않는 0.2 m 안 칸이 나가는 선을 막았다 → 서 있는 반경으로 바꿨다.
+- 고침 4, 길이 없을 때 옛 경로를 지운다: 줄을 기다리던 로봇이 차례가 됐는데 길이 없으면 옛 대기 경로 끝에서 도착 처리해 도크 밖에서 `DockCmd`를 냈다(FloorWorld 불변식이 잡음: basic_orders 씨드 1·2). `test_a_waiting_robot_with_no_way_to_the_line_does_not_dock_at_its_wait_spot`, 빨강 1 failed(경로가 남음) → 초록. 이 단위 시험에서는 단계가 `TO_WORK`로 남아 단계 검사는 빨강이 아니었다.
+- 고침 5, 몸 반지름만큼 넓혀 피하기: 막힌 로봇 하나가 남의 서 있는 칸 옆 경로를 끝없이 다시 받았다(중심 칸은 피했지만 몸 칸이 남의 칸에 닿음). `test_a_route_keeps_the_whole_body_off_cells_others_hold`, 처음 두 배치는 고치기 전에도 통과해서 버리고, 실패가 드러나는 배치(남이 (1.8, 0.95), 목표 (1.0, 0.75))로 빨강 → 초록. 이 고침 뒤 다섯 시나리오가 모두 200~300초에 끝났고 비켜 서기가 0번으로 줄었다.
+- 자유바닥 시험 파일 전체: 86 passed(Windows python, 1분 3초). 커밋 7243352.
+- `fleet_core` 전체(WSL, 7243352): **1 failed, 1136 passed**. 실패는 `test_fms_boundary.py::test_traffic_has_no_order_or_basket_field`: 교통 코드는 주문 쪽 이름을 쓰면 안 되는데 지역 변수 이름 `order`(비켜 설 차례)가 걸렸다. `turns`로 바꿨다(632ee27).
+- 이름을 고친 뒤(그리고 아래 검수 고침을 넣은 뒤) `fleet_core` 전체(WSL, 632ee27): **1143 passed**(3분 36초).
+- 다섯 시나리오(Windows python, FloorWorld, 씨드 1): basic_orders 1·2·3은 203.5 / 212.2 / 202.7초, order_burst 291.2초, blocked_lane 219.8초. 모두 끝났고 세 대 모두 PARKED. 비켜 서기 0번, 재계획 1~6번. 칸 불변식 위반 0.
+- 100건 긴 실행(새 시나리오 `tools/scenarios/long_orders_100.yaml`, 7243352): 레인 2168.8초, 자유바닥 2292.5초. 둘 다 100건 출고, 위반·격리·미해결 0. 자세한 비교는 P6.
+
+Codex 검수(5c2c788..7243352), 지적 6건:
+
+1. [확정, 고침 632ee27] BLOCKED로 goal을 거둔 바로 뒤, 로봇이 쥔 앞 칸을 놓고 막힘 표시로 넘겼다. 취소 결과가 오기 전에는 로봇이 옛 경로를 계속 따를 수 있으므로 위험하다. 이제 그 칸은 로봇 것으로 두고(`_ahead`), goal이 끝난 뒤 `_take_ahead`가 표시로 옮긴다. 빨강 → 초록.
+2. [확정, 고침] 격리·제거된 로봇의 다리가 접근선 줄을 계속 잡았다(`_fail`이 다리를 지우지 않음). 줄 판단은 격리되지 않은 로봇의 다리만 본다(`_in_service`). 빨강 → 초록.
+3. [확정, 고침] 합친 순환 집합에서 비켜 설 로봇·격리할 로봇을 골라, 지금 순환에 없는 로봇을 고를 수 있었다. 이제 일화 시간만 합치고 고르는 것은 지금 순환에서만. 시험은 처음엔 고치기 전에도 통과해서(합친 집합을 넘겨받으니 그 안에 있음), "지금 그래프의 순환과 같아야 한다"로 고친 뒤 빨강 → 초록.
+4. [확정, 고침] 다른 로봇의 비켜 서기 다리가 남아 있으면 `DEADLOCK_UNRESOLVED`가 끝없이 미뤄졌다. 지금 순환의 로봇만 본다. 빨강 → 초록.
+5. [확정, 일부 고침] (가) A*가 벌점에 넘기는 시각이 거리 대신 누적 비용(앞선 벌점·고정 선 배수 포함)이었다. 거리를 따로 센다. 빨강(벌점 100에서 시각 102 m 상당) → 초록. (나) 시선 지름길이 예약 벌점을 보지 않아, 벌점으로 돌아간 길을 다시 곧게 펼 수 있다. 고치지 않았다: 효율 문제이고 안전은 칸 잠금이 지킨다. (다) `>= 0.0` 검사는 늘 참이라 지웠다.
+6. [추측 → 확인, 고침] 접근선에 잇는 한 걸음이 clear를 검사하지 않았다. 벽 가까운 칸에서 잇는 시험이 빨강이었다 → 그 걸음이 clear 칸만 지날 때만 잇는다.
+
+- 고친 뒤 자유바닥 시험 104 passed, `fleet_core` 전체 1143 passed(632ee27).
+
+짧은 재검수(7243352..632ee27), 지적 4건:
+
+1. [확정, 고침 8006456] `_follow`가 BLOCKED를 "서 있음"으로 보고 옛 goal 경로 보호(`_active`)를 지웠다. 그래서 `_take_ahead`가 취소 결과 전에 칸을 옮길 수 있었다. BLOCKED는 goal을 멈춘 것일 뿐이라 결과가 올 때까지 지키게 했다. 빨강(같은 시험에 `_follow`를 끼워 넣음) → 초록.
+2. [확정, 고침] 통신이 끊긴 로봇은 `available`이 거짓이라 줄을 내놓았고, 복구 전후로 두 대가 같은 선에 들어가도 되는 상태가 됐다(칸 잠금이 충돌은 막는다). 통신 두절은 차례를 지키고, 격리·제거만 내놓는다(`live`). 빨강 → 초록.
+3. [확정, 고침] 미해결로 찾은 로봇과 격리하는 로봇이 다를 수 있었다(그 사이 순환이 줄어듦). 찾은 로봇을 기억하고 그 로봇이 아직 순환에 있을 때만 격리한다. 없으면 지금 순환을 처음부터 다시 판단한다. 빨강(`('b', ['a'])`) → 초록.
+4. [추측, 고치지 않음] 시간 벌점이 있는 A*는 같은 칸에 다른 시각에 닿는 경로를 하나로 합쳐서 최적이 아닐 수 있다. 맞는 지적이지만 벌점은 효율용이고, 시각까지 상태로 두면 탐색이 커진다.
+
+- 고친 뒤 자유바닥 시험 106 passed, `fleet_core` 전체 **1145 passed**(WSL, 8006456, 3분 37초). 세 시나리오(basic_orders 1, order_burst 1, blocked_lane 1)는 전과 같은 시각에 끝났다(203.5 / 291.2 / 219.8초).
+
+두 번째 짧은 재검수(632ee27..8006456), 지적 3건. 모두 고치지 않았다:
+
+1. [확정, 정책대로] 통신이 끊긴 로봇은 돌아오지 않아도 접근선 차례를 계속 쥔다. 레인판도 통신 두절 로봇의 구역을 격리·운영자 처리 때까지 쥐고 있다. 같은 규칙으로 두었다(통신 두절 로봇이 언제 돌아와 어디로 갈지 모른다).
+2. [확정, 정책대로] 취소 결과가 끝내 오지 않고 BLOCKED가 이어지면 옛 경로 칸을 쥔 채 `blocked_timeout_s` 뒤 격리된다. 격리된 로봇은 원래 `confirm_clear`까지 모든 칸을 쥔다(레인판과 같다). 결과 분실이 감지되면 `on_goal_lost`가 푼다.
+3. [추측, 고치지 않음] 순환이 만료 때마다 바뀌어 찾은 로봇이 매번 빠지면 격리가 계속 미뤄질 수 있다. 실행에서 본 적은 없다. 남은 위험으로 적는다.
+
+### 공부 노트 (P3)
+
+1. 핵심 개념
+   - 안전과 효율을 나눈다: 겹치지 않음은 칸 잠금(한꺼번에 잡기)이 지키고, 계획(벌점, 피하기, 재계획, 비켜 서기, 줄)은 덜 기다리게 할 뿐이다. 계획이 틀려도 부딪히지 않는다.
+   - 형상 공간(configuration space): 로봇을 점으로 계획하려면 장애물을 로봇 반지름만큼 넓혀야 한다. 남이 쥔 칸도 장애물이라 같은 방법으로 넓혔다(`_inflate`). 이것을 빼먹은 것이 마지막까지 남은 교착의 원인이었다.
+   - 예약 표(reservation table): 남의 경로를 시간 축에 펼쳐서 "그 칸에 그 시각에 누가 있나"를 본다. 협조 A*는 이것을 금지로 쓰고, 여기서는 벌점으로 쓴다.
+   - 대기 그래프와 교착: 기다리는 로봇 → 쥔 로봇 화살표에 순환이 생기면 교착이다. 아무도 자기 칸을 놓지 않으니 누군가 물러나야 한다.
+   - 줄 세우기(admission control): 좁은 곳(도크 접근선)은 들어갈 수 있는 수를 1로 묶고, 나머지는 그 밖 빈 자리에서 기다리게 한다. 칸을 다투게 두는 것보다 단순하고 교착이 없다.
+2. 바뀐 파일·함수: `controller.py` `_route`, `_inflate`, `_reservations`, `_penalty_for`, `_replan_if_stuck`, `_check_deadlock`, `_sidestep`, `_after_sidestep`, `_admitted`, `_in_service`, `_plan_wait`, `_mark_blocked`, `_take_ahead`, `_note_block_report`, `_follow`; `planner.py` `astar`(거리 따로), `_rest_of_line`; `cells.py` `held_by_others`; `tools/compare_floor.py` `run`, `main`.
+3. 핵심 코드
+
+   ```python
+   n = math.ceil(self._body / step) + 1                      # 몸 반지름이 닿을 수 있는 칸 수
+   self._reach = [(di, dj) for di in range(-n, n + 1) for dj in range(-n, n + 1)
+                  if math.hypot(max(0, abs(di) - 1) * step,  # 두 칸 사각형 사이 x 거리
+                                max(0, abs(dj) - 1) * step)  # y 거리
+                  < self._body]                              # 몸 반지름보다 가까우면 막는다
+   ...
+   avoid = self._inflate(self._others_cells(m.name)) | extra # 남의 칸을 넓혀서 피한다
+   ```
+
+   ```python
+   def _admitted(self, m, leg):
+       for name in self._missions:                           # 다른 로봇마다
+           if 접근선 칸을 쥐고 있으면: return False             # 선 위나 도크에 있다
+           if 같은 선으로 가는 중(대기 아님)이고 격리 안 됐으면: return False
+       return 나보다 먼저 기다린 로봇이 없으면 True           # 먼저 온 순서
+   ```
+
+   ```python
+   members, key = set(cycle), set(self._deadlock_key)
+   same = now - self._deadlock_seen <= 1.0 and (            # 1초 안에 다시 보였고
+       members <= key or (members & key and not self._deadlock_acted))  # 같은 무리면
+   ...                                                       # 같은 일화: 유예 시간을 이어 센다
+   turns = sorted(cycle, key=lambda name: (self._priority(name), name))  # 지금 순환만
+   if not any(self._sidestep(self._missions[name], cycle) for name in turns):
+       DEADLOCK_UNRESOLVED, 찾은 로봇을 기억                  # 나중에 그 로봇만 격리
+   ```
+
+   ```python
+   if m.goal is None and m.robot_state not in ON_A_GOAL + (BLOCKED,):
+       self._active[m.name].clear()                          # 정말 섰을 때만 옛 경로 보호를 푼다
+   ...
+   def _take_ahead(self, m):                                 # 막힘 표시는 goal이 다 끝난 뒤에
+       if m.goal is not None or self._active[m.name]: return
+       로봇이 쥔 앞 칸을 놓고 #blocked로 잡는다
+   ```
+
+4. 면접 한 문장: "칸 잠금으로 충돌은 막았지만 처음엔 세 대가 도크 앞에서 서로를 기다렸습니다. 원인은 남의 칸을 중심으로만 피하고 몸 반지름만큼 넓히지 않은 것과 도크 접근선을 여러 대가 다툰 것이었고, 형상 공간 팽창과 접근선 줄 세우기로 비켜 서기 없이 끝나게 했습니다."
+
+### P3에서 하지 않은 것
+
+- 시선 지름길은 예약 벌점을 보지 않는다(위 5-나). 시간 벌점 A*는 시각을 상태로 두지 않는다(재검수 4).
+- 조용히 선 로봇 감시(`_watch_idle`)는 자유바닥에서 돌지 않는다(P4 몫).
+- ROS 노드(`fleet_manager`) 시험은 P3 변경이 `fleet_core`뿐이라 다시 돌리지 않았다. 노드 판정기는 레인 기준이라 자유바닥은 머리 없는 실행으로만 확인했다.
