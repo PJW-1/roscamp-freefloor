@@ -24,6 +24,8 @@ from fleet_core.traffic.floor.cells import CellLocks, disk_cells, swept_cells
 from fleet_core.traffic.floor.floor_map import load_floor_map
 from fleet_core.traffic.floor.planner import FloorPlanner, Route
 from fleet_core.traffic.mission import (
+    AT_STATION,
+    DOCKING,
     ERROR,
     HEARTBEAT_LOST,
     IDLE,
@@ -139,7 +141,7 @@ class FloorController(TrafficController):
             self._off_cells[m.name] = 0
             return
         self._off_cells[m.name] += 1
-        if self._off_cells[m.name] == self.params.release_confirm_samples and m.goal:
+        if self._off_cells[m.name] >= self.params.release_confirm_samples and m.goal:
             self._cancel_goal(m)
             self._event("WARN", "FLOOR_OFF_CELLS",
                         f"reported at ({m.x:.2f}, {m.y:.2f}) on cells held by others, stopped",
@@ -229,11 +231,16 @@ class FloorController(TrafficController):
     def _plan(self, m: _Mission, leg: _Leg) -> None:
         leg.planned_at = self._clock()
         start = (m.x, m.y)
-        if math.dist(start, leg.goal_xy) <= self.params.arrival_tolerance_m and not leg.out_line:
+        leg.done = False
+        out_line = leg.out_line
+        if out_line and math.dist(start, self.floor.fixed_lines[out_line].start) > \
+                self.params.arrival_tolerance_m:
+            out_line = None  # no longer on the dock (moved, or replanned on the way)
+        if math.dist(start, leg.goal_xy) <= self.params.arrival_tolerance_m and not out_line:
             leg.route = Route([leg.goal_xy])
             leg.done = m.goal is None
             return
-        route = self.planner.leg(start, leg.goal_xy, leg.out_line, leg.in_line)
+        route = self.planner.leg(start, leg.goal_xy, out_line, leg.in_line)
         if route is None:
             self.metrics["no_path"] += 1
             if not leg.no_path_warned:
@@ -401,6 +408,21 @@ class FloorController(TrafficController):
             self._event("ERROR", "RECOVERY_CONFLICT",
                         f"{m.name} stands on cells held by {in_the_way}", m.name)
             return
+        m.path = [self.site.nearest_waypoint(m.x, m.y), *m.path[-1:]]
+        m.idx = 0
+        m.settle_idx = None
         leg = self._legs.get(m.name)
         if leg is not None and m.phase in (TO_PARK, TO_WORK, TO_OUTBOUND):
             self._plan(m, leg)  # from where it stands now, same goal
+            return
+        here = self._dock_here(m)
+        if m.phase == AT_STATION or (m.phase == DOCKING and here == m.dest):
+            return  # still on its dock, as the lane recovery keeps it
+        if m.dispatch:
+            self._start_dispatch_leg(m)
+            return
+        m.path = [m.path[0]]
+        near = math.dist((m.x, m.y), self.site.waypoint_pose(m.path[0]))
+        m.phase = PARKED if (m.path[0] in self.site.parking
+                             and near <= self.params.arrival_tolerance_m) else IDLE
+        m.dest = None

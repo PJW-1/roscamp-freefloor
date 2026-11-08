@@ -218,3 +218,48 @@ def test_rounded_corners_do_not_cut_into_fixed_lines():
             rounded = planner.plan(a, b)
             new = (line_cells(floor, rounded) - line_cells(floor, straight)) & planner.line_cells
             assert not new, (a, b, sorted(new))
+
+
+# ---- Codex review of the P2 fixes -------------------------------------------------------
+
+
+def test_a_recovered_robot_that_was_moved_replans_instead_of_arriving():
+    core, now = bare_floor()
+    report(core, "a", 1.05, 1.55)  # on the WORK dock
+    traffic = core.traffic
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "B")
+    leg = traffic._legs["a"]
+    assert leg.out_line == "work_out"
+    leg.done = True  # its last goal succeeded while the link was down
+    report(core, "a", 2.0, 0.9)  # carried away meanwhile
+    traffic._finish_recovery(m)
+    leg = traffic._legs["a"]
+    assert not leg.done
+    assert leg.route.points[0] == (2.0, 0.9)
+    assert not any(name == "work_out" for _, _, name in leg.route.fixed)
+
+
+def test_a_robot_docking_when_the_link_went_is_not_docked_away_from_the_dock():
+    core, now = bare_floor()
+    report(core, "a", 2.0, 0.9)
+    traffic = core.traffic
+    m = traffic._missions["a"]
+    m.phase, m.dest = "DOCKING", "WORK"
+    traffic._finish_recovery(m)
+    assert m.phase != "DOCKING"
+
+
+def test_a_robot_on_cells_of_another_is_stopped_after_the_confirm_count():
+    core, now = bare_floor(("a", "b"))
+    report(core, "a", 1.0, 1.15)
+    report(core, "b", 1.0, 1.60)
+    traffic = core.traffic
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")
+    traffic.step("a")
+    traffic.take_output()
+    core._out.clear()
+    report(core, "a", 1.0, 1.42, state="MOVING", times=4)  # into b's body cells
+    out = list(core._out)  # the manager passes the core output on at once
+    assert any(type(c).__name__ == "CancelCmd" for c in out)
+    assert "FLOOR_OFF_CELLS" in [c.code for c in out if type(c).__name__ == "EventOut"]
