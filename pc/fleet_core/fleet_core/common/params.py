@@ -71,6 +71,9 @@ class FleetParams:
     # than this is taken as BLOCKED. The pinky FSM's two attempts take about 35 s at most.
     # Records from before RECOVERING never report it, so the value does not change their replay
     self_recovery_limit_s: float = 45.0
+    # Free-floor experiment (P0): which traffic layer runs. lanes is the lane control as it was;
+    # freefloor is fleet_core/traffic/floor. Records from before this value replay with lanes
+    traffic_mode: str = "lanes"
 
 
 def load_params(path=None) -> FleetParams:

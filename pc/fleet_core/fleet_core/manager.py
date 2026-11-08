@@ -38,7 +38,6 @@ from fleet_core.common.validate import (
 )
 from fleet_core.orders.orchestrator import FILL, FILLING, SWAP, SWAPPING, OrderOrchestrator
 from fleet_core.orders.validate import orders_problem, reinstate_problem
-from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.mission import (
     AT_STATION,
     DOCKING,
@@ -47,6 +46,7 @@ from fleet_core.traffic.mission import (
     TO_OUTBOUND,
     TO_WORK,
 )
+from fleet_core.traffic.modes import LANES, build_traffic
 
 
 def _recordable(value):
@@ -66,7 +66,8 @@ def _recorded_orders(orders):
 
 
 class FleetManager:
-    def __init__(self, site, params, robots, clock):
+    def __init__(self, site, params, robots, clock, floor=None):
+        """floor는 traffic_mode가 freefloor일 때 쓰는 바닥 지도다(실험)."""
         self.site = site
         self.params = params
         self._clock = clock
@@ -74,7 +75,8 @@ class FleetManager:
         self._write = None
         self._fed = False
         self._goal_seq = 0
-        self.traffic = TrafficController(site, params, robots, self._frozen, self._next_goal_id)
+        self.traffic = build_traffic(site, params, robots, self._frozen, self._next_goal_id,
+                                     floor)
         self.orchestrator = OrderOrchestrator(site.stations, params, robots, self._frozen,
                                              self._next_goal_id)
         self._work = next(s.id for s in site.stations.values() if s.action == FILL)
@@ -99,6 +101,8 @@ class FleetManager:
 
         재생은 첫 줄에서 시작하므로 첫 입력보다 먼저 불러야 한다.
         """
+        if self.params.traffic_mode != LANES:
+            raise ValueError(f"replay knows only lane traffic, not {self.params.traffic_mode}")
         if self._fed:
             raise RuntimeError("a record has to start before the first input")
         if not self.site.source_text:

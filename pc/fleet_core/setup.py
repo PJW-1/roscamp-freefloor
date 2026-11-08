@@ -4,7 +4,7 @@ setup(
     name='fleet_core',
     version='0.1.0',
     packages=['fleet_core', 'fleet_core.common', 'fleet_core.orders',
-              'fleet_core.traffic'],
+              'fleet_core.traffic', 'fleet_core.traffic.floor'],
     package_data={'fleet_core': ['data/*.yaml']},
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/fleet_core']),

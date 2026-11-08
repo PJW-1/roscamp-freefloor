@@ -55,3 +55,4 @@ idle_watch_s: 10.0            # 제안: 주행 단계인데 goal도 구역 대�
 dispatch_retry_wait_s: 2.0    # 제안: 출고 호출이 실패하면 이만큼 뒤 다시 보낸다
 dispatch_retry_limit: 3       # 제안: 출고 호출 실패가 이 수를 넘으면 ERROR(DISPATCH_FAILED)
 self_recovery_limit_s: 45.0   # 제안: 로봇이 RECOVERING(자가 복구)을 이만큼 넘게 이어 보내면 BLOCKED로 본다. 핑키 FSM의 두 번 시도는 길어야 약 35 s
+traffic_mode: lanes           # 실험: lanes(레인 관제) 또는 freefloor(자유바닥, traffic/floor). 기본은 lanes
