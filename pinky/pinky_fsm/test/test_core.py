@@ -229,7 +229,7 @@ def test_repeated_far_successes_give_up_with_nav_aborted():
     for i in range(3):
         seq = sends(fsm.nav_result(seq, "succeeded", 2.0 + i, far, no_obstacle))[0].seq
     assert fsm.nav_result(seq, "succeeded", 6.0, far, no_obstacle) == [
-        Finish("g1", False, NAV_ABORTED)]
+        Finish("g1", False, NAV_ABORTED), CancelNav()]
 
 
 # ---- 실패 (R8) ----------------------------------------------------------------------------
@@ -239,8 +239,20 @@ def test_nav_abort_without_an_obstacle_fails_with_nav_aborted():
     fsm = ready()
     [send] = sends(move(fsm, "g1", 1.0))
     cmds = fsm.nav_result(send.seq, "aborted", 4.0, (0.35, 1.70, NORTH), no_obstacle)
-    assert cmds == [Finish("g1", False, NAV_ABORTED)]
+    assert cmds == [Finish("g1", False, NAV_ABORTED), CancelNav()]
     assert fsm.state() == IDLE
+
+
+def test_an_abort_while_the_pose_is_lost_also_cancels_older_follow_paths():
+    """Ending a goal on a FollowPath result always cancels: a replaced FollowPath whose
+    acceptance is still on its way must not start driving afterwards."""
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    fsm.heartbeat(0.5)
+    fsm.tick(0.5, (0.35, 1.70, NORTH), DRIVING, no_obstacle)
+    [second] = sends(move(fsm, "g2", 0.6, pose=(0.35, 1.70, NORTH)))
+    cmds = fsm.nav_result(second.seq, "aborted", 0.7, None, no_obstacle)
+    assert cmds == [Finish("g2", False, NAV_ABORTED), CancelNav()]
 
 
 def test_rejected_nav_goal_fails_with_nav_aborted():
@@ -425,9 +437,9 @@ def test_blocked_stays_after_cancel_while_the_obstacle_remains():
 
 
 def test_blocked_goal_ends_with_timeout_when_the_obstacle_stays():
-    """A goal that cannot go on must end with a failure or TIMEOUT. block_timeout_s (90 s) is
-    longer than the fleet manager's blocked_timeout_s (60 s), so it only matters when the
-    fleet manager is gone."""
+    """A goal that cannot go on must end with a failure or TIMEOUT. The fleet manager cancels a
+    blocked goal after blocked_mark_s (5 s), so block_timeout_s (90 s) only matters when the
+    fleet manager does not."""
     fsm = ready()
     [send] = sends(move(fsm, "g1", 0.0))
     here = (0.35, 1.70, NORTH)
@@ -439,6 +451,19 @@ def test_blocked_goal_ends_with_timeout_when_the_obstacle_stays():
     fsm.heartbeat(92.0)
     assert fsm.tick(92.0, here, STILL, obstacle) == [Finish("g1", False, TIMEOUT)]
     assert fsm.state() == BLOCKED and fsm.current_goal() == ""
+
+
+def test_blocked_goal_times_out_while_nav2_still_holds_it():
+    """BLOCKED for block_timeout_s also ends a goal Nav2 never gave up on, and stops Nav2."""
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    here = (0.35, 1.70, NORTH)
+    for t in (1.0, 2.0, 60.0, 91.9):
+        fsm.heartbeat(t)
+        assert fsm.tick(t, here, STILL, obstacle) == []
+    assert fsm.state() == BLOCKED
+    fsm.heartbeat(92.0)
+    assert fsm.tick(92.0, here, STILL, obstacle) == [Finish("g1", False, TIMEOUT), CancelNav()]
 
 
 def test_block_timeout_counts_again_after_the_obstacle_clears():

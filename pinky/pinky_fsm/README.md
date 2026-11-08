@@ -33,7 +33,7 @@
 | 경로 끝 0.15 m 안 | 0.5 s마다 남은 경로를 다시 보낸다 | R13 |
 | Nav2 실패, 앞에 물체 없음 | `NAV_ABORTED` | R8 |
 | FollowPath 거절(서버 없음 포함) | 남은 FollowPath를 모두 취소해 세우고 `NAV_ABORTED`. 교체 때 앞 것을 취소하지 않으므로 앞 것이 아직 달릴 수 있다 | 안내 2.1 |
-| 이동 중 1 s 서 있고 경로 앞 0.5 m 안에 물체 | `BLOCKED`. Nav2가 물체 때문에 멈춰도 바로 끝내지 않고, 물체가 1 s 안 보이면 끄고 남은 경로를 다시 보낸다. Nav2가 멈춘 뒤 `block_timeout_s`(90 s, 제안. 관제 `blocked_timeout_s` 60 s보다 길어 관제와 끊겼을 때만 쓰인다) 안에 비키지 않으면 `TIMEOUT`. 취소된 뒤에도 물체가 있으면 `BLOCKED` | 계약 4절, R9 |
+| 이동 중 1 s 서 있고 경로 앞 0.5 m 안에 물체 | `BLOCKED`. Nav2가 물체 때문에 멈춰도 바로 끝내지 않고, 물체가 1 s 안 보이면 끄고 남은 경로를 다시 보낸다. 막힌 채 `block_timeout_s`(90 s, 제안)가 지나면 `TIMEOUT`(Nav2가 goal을 쥐고 있으면 세운다). 관제가 막힘 5 s(`blocked_mark_s`)에 goal을 먼저 취소하므로 관제가 취소하지 못했을 때의 마지막 안전장치다. 취소된 뒤에도 물체가 있으면 `BLOCKED` | 계약 4절, R9 |
 | 목표 실행 중 heartbeat·목표 수락이 1.5 s 없음 | 끊긴 지 1.5 s에 FollowPath를 취소해 정지 명령을 내고(제동 거리는 별도) `HEARTBEAT_LOST`로 끝낸다. 벽시계로 잰다 | R10, 계약 3절 5번 |
 | 위치를 모름 | `LOCALIZING`. 이때 온 목표는 `NAV_ABORTED`. 실행 중에 위치를 잃으면 FollowPath를 취소해 세우고 `NAV_ABORTED` | 계약 3절 6번 |
 | `dock` | **pinky_dock이 아직 없어** 이동을 멈추고 실패(`success=false`)를 돌려준다. 도킹을 했다고 꾸미지 않는다 | — |
