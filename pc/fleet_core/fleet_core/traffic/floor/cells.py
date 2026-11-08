@@ -1,7 +1,8 @@
 """몸이 쓰는 칸과 칸 잠금.
 
-몸이 쓰는 칸 = 원(반지름 + 여유)이 닿는 칸. 경로를 따라 쓸고 지나가는 칸은 그 원을 경로 위
-촘촘한 점마다 놓은 합이다. 점 간격이 칸 반 이하라 점 사이 원도 덮인다(sweep에 칸 반만큼 더 잡는다).
+몸이 쓰는 칸 = 원(반지름 + 여유)이 닿는 칸. 경로를 따라 쓸고 지나가는 칸은 구간마다 칸 사각형에서
+구간까지 거리가 반지름(+ 칸의 1/8) 이하인 칸이다. 처음에는 칸 1/4 간격 점마다 원을 놓았는데
+(그 합과 같거나 더 넓다) tick이 20 ms를 넘어 한 번에 재도록 바꿨다.
 
 CellLocks는 칸 이름 -> 주인 딕셔너리다. 늘릴 칸은 한꺼번에(acquire_all) 잡을 수 있을 때만 잡는다.
 읽기 API는 ZoneLocks와 같아서 deadlock.wait_graph, 배차 화면, 측정 도구가 그대로 쓴다.
@@ -9,6 +10,7 @@ CellLocks는 칸 이름 -> 주인 딕셔너리다. 늘릴 칸은 한꺼번에(ac
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 
 
 def disk_cells(floor, x: float, y: float, radius: float) -> set:
@@ -79,13 +81,66 @@ def line_cells(floor, points) -> set:
 
 
 def swept_cells(floor, points, radius: float) -> set:
-    """꺾은선을 따라 원이 쓸고 지나가는 칸. 점 사이도 덮도록 간격의 반만큼 더 잡는다."""
-    step = floor.cell_m / 4
+    """꺾은선을 따라 원이 쓸고 지나가는 칸. 칸 1/4 간격 점마다 반지름 + 칸 1/8 원을 놓던 것과
+    같거나 넓다(구간까지 거리가 반지름 + 칸 1/8 이하인 칸)."""
+    if len(points) == 1:
+        return disk_cells(floor, *points[0], radius)
+    reach = radius + floor.cell_m / 8
     cells = set()
-    reach = radius if len(points) == 1 else radius + step / 2
-    for x, y in sample_line(points, step):
-        cells |= disk_cells(floor, x, y, reach)
+    for a, b in zip(points, points[1:], strict=False):
+        cells |= _segment_sweep(floor, tuple(a), tuple(b), reach)
     return cells
+
+
+@lru_cache(maxsize=65536)  # a route's inner segments are swept again every tick
+def _segment_sweep(floor, a, b, reach: float) -> frozenset:
+    i0, j0 = floor.cell_of(min(a[0], b[0]) - reach, min(a[1], b[1]) - reach)
+    i1, j1 = floor.cell_of(max(a[0], b[0]) + reach, max(a[1], b[1]) + reach)
+    m = floor.cell_m
+    ox, oy = floor.origin
+    found = set()
+    for i in range(i0 - 1, i1 + 2):
+        for j in range(j0 - 1, j1 + 2):
+            cell = (i, j)
+            if not floor.inside(cell):
+                continue
+            x0, y0 = ox + i * m, oy + j * m
+            if _box_segment_distance(x0, y0, x0 + m, y0 + m, a, b) <= reach:
+                found.add(cell)
+    return frozenset(found)
+
+
+def _box_segment_distance(x0, y0, x1, y1, a, b) -> float:
+    """축 정렬 사각형과 선분 a-b 사이 거리(겹치면 0)."""
+    (ax, ay), (bx, by) = a, b
+    # Liang-Barsky clip: does the segment enter the box?
+    t0, t1 = 0.0, 1.0
+    dx, dy = bx - ax, by - ay
+    for p, q in ((-dx, ax - x0), (dx, x1 - ax), (-dy, ay - y0), (dy, y1 - ay)):
+        if p == 0:
+            if q < 0:
+                break
+        else:
+            t = q / p
+            if p < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+            if t0 > t1:
+                break
+    else:
+        return 0.0
+
+    def point_box(px, py):
+        return math.hypot(max(x0 - px, 0.0, px - x1), max(y0 - py, 0.0, py - y1))
+
+    def point_segment(px, py):
+        length2 = dx * dx + dy * dy
+        u = 0.0 if length2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length2))
+        return math.hypot(ax + u * dx - px, ay + u * dy - py)
+
+    return min(point_box(ax, ay), point_box(bx, by), point_segment(x0, y0), point_segment(x1, y0),
+               point_segment(x0, y1), point_segment(x1, y1))
 
 
 class CellLocks:

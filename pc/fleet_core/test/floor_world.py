@@ -151,11 +151,15 @@ class FloorWorld(SimWorld):
                 # one else may hold the cells it stands on
                 taken = {c for c in body if zones.holder(c) not in (None, r.name)}
                 assert not taken, f"{r.name} unplaced on cells others hold at {self.t}: {taken}"
+                assert not r.goal_kind, f"{r.name} unplaced but on a {r.goal_kind} goal"
                 continue
             held = zones.held_set(r.name)
             outside = body - held
             if outside and r.name not in self._moved:
-                self.placement_outside.add(r.name)  # counted apart; it has not driven yet
+                # counted apart (it has not driven yet), but never on a cell another one holds
+                taken = {c for c in outside if zones.holder(c) is not None}
+                assert not taken, f"{r.name} stands on cells others hold at {self.t}: {taken}"
+                self.placement_outside.add(r.name)
                 continue
             if outside:
                 self.cell_violations += 1

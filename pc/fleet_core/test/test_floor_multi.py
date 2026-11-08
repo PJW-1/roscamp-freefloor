@@ -58,6 +58,7 @@ def two_robot_floor():
     for _ in range(3):
         core.on_robot_state("a", 1.0, 1.15, 0.0, "IDLE")
         core.on_robot_state("b", 2.6, 0.8, 0.0, "IDLE")
+    traffic._plan_budget = 99  # these tests plan several legs outside a tick
     return traffic
 
 
@@ -312,3 +313,19 @@ def test_a_robot_told_to_wait_where_it_stands_stops_its_old_goal():
     assert leg.waiting and leg.route.length == 0.0
     assert b.goal is None
     assert any(isinstance(c, CancelCmd) for c in traffic.take_output())
+
+
+def test_one_route_is_planned_per_tick():
+    """A plan can take ~10 ms on this floor; planning every robot in one tick went over 20 ms.
+    The second robot gets its route on the next tick."""
+    traffic = two_robot_floor()
+    a, b = traffic._missions["a"], traffic._missions["b"]
+    clock = traffic._clock
+    traffic.tick_progress(clock())
+    traffic._start_leg(a, "TO_PARK", None, "B")
+    traffic._start_leg(b, "TO_PARK", None, "P-3")
+    assert traffic._legs["a"].route is not None
+    assert traffic._legs["b"].route is None
+    traffic.tick_progress(clock())
+    traffic._drive(b)
+    assert traffic._legs["b"].route is not None

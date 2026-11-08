@@ -60,6 +60,7 @@ BLOCK_OWNER = "#blocked"  # pseudo holder of cells in front of an object
 RESERVE_PENALTY_M = 0.5  # extra cost of a cell another robot plans to be in at that time
 SIDESTEP_REACH_M = 1.2  # how far a robot looks for a free spot to step aside to
 SIDESTEP_HOLD_S = 3.0  # how long it stays aside before planning its leg again
+PLANS_PER_TICK = 1  # one plan can take ~10 ms: the other robots plan on the next ticks
 WAIT_SPOT_M = (0.3, 1.2)  # a robot waiting for an approach line stands this far from its start
 
 
@@ -115,6 +116,7 @@ class FloorController(TrafficController):
         self._all_line_ids = set().union(*self._line_ids.values()) if self._line_ids else set()
         self._deadlock_seen = 0.0
         self._unresolved_robot = ""
+        self._plan_budget = PLANS_PER_TICK
 
     # ---- cells --------------------------------------------------------------------------
 
@@ -265,6 +267,7 @@ class FloorController(TrafficController):
     # ---- tick ---------------------------------------------------------------------------
 
     def tick_progress(self, now: float) -> frozenset[str]:
+        self._plan_budget = PLANS_PER_TICK
         for m in self._missions.values():
             if m.available:
                 self._follow(m)
@@ -339,9 +342,14 @@ class FloorController(TrafficController):
         self._plan(m, leg)
 
     def _plan(self, m: _Mission, leg: _Leg) -> None:
+        leg.done = False
+        if self._plan_budget <= 0:
+            leg.route = None  # planned on the next tick
+            leg.planned_at = self._clock() - self.params.floor_replan_s
+            return
+        self._plan_budget -= 1
         leg.planned_at = self._clock()
         start = (m.x, m.y)
-        leg.done = False
         out_line = leg.out_line
         if out_line and math.dist(start, self.floor.fixed_lines[out_line].start) > \
                 self.params.arrival_tolerance_m:
@@ -538,6 +546,9 @@ class FloorController(TrafficController):
             self._plan(m, leg)  # another wait spot (or the line, if it is free now)
             self.metrics["replans"] += 1
             return
+        if self._plan_budget <= 0:
+            return  # try on the next tick
+        self._plan_budget -= 1
         leg.planned_at = now
         old_left = route.length - leg.s
         new = self._route(m, (m.x, m.y), leg.goal_xy, None, leg.in_line,

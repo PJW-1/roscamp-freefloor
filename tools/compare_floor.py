@@ -14,6 +14,7 @@ invariants instead of lane checks. Extra columns, filled for both modes:
     path_m          true distance driven by all robots
     tick_ms_mean    FleetManager.tick wall time (ms), mean and max over the run. Wall time on
     tick_ms_max     this machine, so only the two modes run back to back compare
+    tick_ms_p99     99th percentile of the same (single slow ticks are often the OS or the GC)
     slowdowns       freefloor: times the locked part ahead of a driving robot got short (the
                     real robot slows down there; the fake one does not), lanes: empty
     replans         freefloor: routes replaced because the lock could not grow
@@ -47,8 +48,8 @@ from floor_world import FloorWorld  # noqa: E402
 
 FLOORS = {"lane_map": "floor_map", "feature_map": "feature_floor_map"}
 MODES = ("lanes", "freefloor")
-EXTRA = ["min_gap_m", "path_m", "tick_ms_mean", "tick_ms_max", "slowdowns", "replans",
-         "sidesteps", "deadlocks", "unresolved", "isolations", "violations",
+EXTRA = ["min_gap_m", "path_m", "tick_ms_mean", "tick_ms_max", "tick_ms_p99", "slowdowns",
+         "replans", "sidesteps", "deadlocks", "unresolved", "isolations", "violations",
          "placement_outside"]
 
 
@@ -145,6 +146,7 @@ def run(map_, scenario, seed, traffic_mode, timeout_s=None, frame_every=0):
         path_m=round(driven, 3),
         tick_ms_mean=round(1000 * sum(ticks) / len(ticks), 3) if ticks else "",
         tick_ms_max=round(1000 * max(ticks), 3) if ticks else "",
+        tick_ms_p99=round(1000 * sorted(ticks)[int(0.99 * (len(ticks) - 1))], 3) if ticks else "",
         slowdowns=metrics["slowdowns"] if metrics else "",
         replans=metrics["replans"] if metrics else "",
         sidesteps=metrics["sidesteps"] if metrics else "",

@@ -122,6 +122,7 @@ def bare_floor(robots=("a",)):
     core = FleetManager(load_lane_map(), replace(load_params(), traffic_mode="freefloor"),
                         list(robots), lambda: now[0])
     core.on_order_board("RUN", [])
+    core.traffic._plan_budget = 99  # these tests plan several legs outside a tick
     return core, now
 
 

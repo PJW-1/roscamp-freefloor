@@ -150,3 +150,31 @@ def test_a_generator_of_cells_is_taken_whole():
     assert table.held_by("a") == ["c1_1", "c1_2"]
     assert table.force_acquire("b", (c for c in ["c2_1"]))
     assert table.held_by("b") == ["c2_1"]
+
+
+def _sampled(floor, points, radius):
+    """the first sweep: a disk of radius + step/2 at points a quarter cell apart"""
+    from fleet_core.traffic.floor.cells import sample_line
+    step = floor.cell_m / 4
+    cells = set()
+    for x, y in sample_line(points, step):
+        cells |= disk_cells(floor, x, y, radius + step / 2)
+    return cells
+
+
+def test_the_sweep_is_exact_and_no_smaller_than_the_sampled_one(floor):
+    """Each segment is swept in one pass (box to segment distance) instead of a disk every
+    2.5 cm: the same cells or more, and none farther than the reach from the line."""
+    import random
+
+    from fleet_core.traffic.floor.cells import sample_line
+    rng = random.Random(7)
+    reach_extra = floor.cell_m / 8
+    for _ in range(40):
+        points = [(rng.uniform(0.3, 1.7), rng.uniform(0.3, 1.1)) for _ in range(rng.randint(2, 4))]
+        got = swept_cells(floor, points, 0.13)
+        assert _sampled(floor, points, 0.13) <= got
+        fine = set()
+        for x, y in sample_line(points, 0.002):
+            fine |= disk_cells(floor, x, y, 0.13 + reach_extra + 0.002)
+        assert got <= fine
