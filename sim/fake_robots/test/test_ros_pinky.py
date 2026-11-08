@@ -618,6 +618,7 @@ def test_a_persistent_obstacle_gives_two_recovering_attempts_then_blocked(harnes
         RobotState.STATE_MOVING, RECOVERING, RobotState.STATE_BLOCKED]
     d = along(truth)
     assert back_ups(d) == 2
+    assert max(d) > 0.4, "too near the start: it would back up less than 0.15 m"
     assert max(d) - min(d[d.index(max(d)):]) == pytest.approx(0.15, abs=0.02)
     span = [w for w, s in p.states if s.state == RECOVERING]
     # 후진 0.15 m(0.08 m/s), 되돌아가기(0.2 m/s), 1 s 서기를 두 번
@@ -663,7 +664,7 @@ def test_no_back_up_into_a_robot_behind(harness, tmp_path):
     p.goal("QO")
     x, y = stood(p, truth)
     assert p.states[-1][1].state == RobotState.STATE_MOVING, "too late: already recovering"
-    assert max(along(truth)) > 0.3, "too near the start: it would not back up anyway"
+    assert max(along(truth)) > 0.4, "too near the start: it would back up less than 0.15 m"
     (x0, y0), (x1, y1) = SITE.waypoint_pose("P-6"), SITE.waypoint_pose("QO")
     n = math.dist((x0, y0), (x1, y1))
     bx, by = x - 0.25 * (x1 - x0) / n, y - 0.25 * (y1 - y0) / n  # 후진 끝에서 0.10 m
@@ -684,7 +685,7 @@ def test_no_back_up_into_an_obstacle_behind(harness, tmp_path):
     p.goal("QO")
     assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 10.0)
     assert RECOVERING in states_since(p)
-    assert max(along(truth)) > 0.3, "too near the start: it would not back up anyway"
+    assert max(along(truth)) > 0.4, "too near the start: it would back up less than 0.15 m"
     assert back_ups(along(truth)) == 0
 
 
@@ -704,7 +705,7 @@ def test_after_the_obstacle_goes_it_resumes_says_moving_and_arrives(harness, tmp
 def test_attempts_reset_after_the_robot_gets_three_tenths_of_a_metre_on(harness, tmp_path):
     """두 시도를 쓴 뒤 0.3 m 넘게 가면 다음 물체에서 다시 RECOVERING부터 한다(명세 6번)."""
     p = start(harness, tmp_path, robots=LONG, faults=[
-        {"at_s": 2.0, "robot": "pinky1", "type": "blocked", "duration_s": 6.0},
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 5.0},
         {"at_s": 13.0, "robot": "pinky1", "type": "blocked", "duration_s": 2.0}])
     truth = watch_truth(p)
     assert wait_until(lambda: p.states, 5.0)

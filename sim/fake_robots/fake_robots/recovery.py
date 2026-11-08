@@ -2,9 +2,10 @@
 
 자기 복구는 제안이다(2026-11-09 공유 명세 '로봇 쪽'). pinky_fsm과 같은 순서로 움직인다.
   - 물체 앞에 block_report_s 서 있으면 시도를 하나 쓰고 RECOVERING이다.
-  - 후진 거리 d = min(backup_max_m, s - robot_radius_m - backup_margin_m), s는 이번 목표에서
-    지나온 path 길이다. d < backup_min_m이면 후진하지 않는다. 뒤에 다른 로봇이나 물체가 있으면
-    그 자리에서 후진을 멈춘다. 그다음 남은 path를 다시 간다(물체가 있으면 선 자리까지).
+  - 후진 거리 d = min(backup_max_m, s_ref - robot_radius_m - backup_margin_m), s_ref는 마지막으로
+    지난 path 꼭짓점(첫 점 포함)부터 온 거리다. d < backup_min_m이면 후진하지 않는다.
+    뒤에 다른 로봇이나 물체가 있으면 그 자리에서 후진을 멈춘다.
+    그다음 남은 path를 다시 간다(물체가 있으면 선 자리까지).
   - 시도를 다 쓰고 또 서면 BLOCKED(계약 4절: 목표를 쥐고 물체가 사라지면 이어 간다).
   - 시도를 시작한 자리에서 recovery_pass_m 더 가면 RECOVERING이 끝난다(MOVING). 시도 수는 남는다.
   - 처음 센 시도의 자리에서 recovery_reset_m 멀어지거나 목표가 성공하면 시도 수가 0이 된다.
@@ -18,6 +19,13 @@ from dataclasses import dataclass
 
 from fake_robots.motion import path_gap
 
+# 관제는 꼭짓점을 release_distance_m 지나면 뒤 구역을 놓는다(fleet_params, lane_map.conflict_pairs).
+# 그 꼭짓점에 다음 로봇이 설 수 있으므로 후진한 중심도 꼭짓점에서 0.2 + 0.03 m 앞에 둔다.
+RELEASE_DISTANCE_M = 0.2
+ROBOT_RADIUS_M = 0.08
+BACKUP_CLEARANCE_M = 0.03
+BACKUP_MARGIN_M = RELEASE_DISTANCE_M - ROBOT_RADIUS_M + BACKUP_CLEARANCE_M  # 0.15
+
 
 @dataclass(frozen=True)
 class RecoveryParams:
@@ -25,17 +33,17 @@ class RecoveryParams:
     block_clear_s: float = 1.0  # 물체가 이만큼 안 보이면 사라진 것이다
     recovery_attempts: int = 2
     backup_max_m: float = 0.15
-    robot_radius_m: float = 0.08
-    backup_margin_m: float = 0.03
+    robot_radius_m: float = ROBOT_RADIUS_M
+    backup_margin_m: float = BACKUP_MARGIN_M
     backup_min_m: float = 0.02
     backup_speed_mps: float = 0.08
     backup_timeout_s: float = 5.0
     recovery_pass_m: float = 0.05  # 시도를 시작한 자리에서 이만큼 더 가면 RECOVERING 끝
     recovery_reset_m: float = 0.3  # 처음 센 시도의 자리에서 이만큼 멀어지면 시도 수 0
 
-    def backup_distance(self, s: float) -> float:
-        """path를 s만큼 왔을 때의 후진 거리. 0이면 후진하지 않는다."""
-        d = min(self.backup_max_m, s - self.robot_radius_m - self.backup_margin_m)
+    def backup_distance(self, s_ref: float) -> float:
+        """마지막 꼭짓점에서 s_ref만큼 왔을 때의 후진 거리. 0이면 후진하지 않는다."""
+        d = min(self.backup_max_m, s_ref - self.robot_radius_m - self.backup_margin_m)
         return d if d >= self.backup_min_m - 1e-9 else 0.0
 
 
@@ -43,7 +51,7 @@ class RecoveryParams:
 class _BackUp:
     left: float
     until: float
-    fixed: list  # 후진을 시작할 때 뒤에 있던 물체 (x, y, 반지름)
+    fixed: dict  # 뒤 물체: 처음 보인 거리 -> (x, y, 반지름)
 
 
 class ObstacleRecovery:
@@ -114,20 +122,20 @@ class ObstacleRecovery:
             self._first_at = (motion.x, motion.y)
         self._attempt_s = motion.travelled
         self._stood_at = t  # 후진하지 않으면 여기서 다시 센다
-        d = self.p.backup_distance(motion.travelled)
+        d = self.p.backup_distance(motion.since_vertex)
         if d <= 0.0:
             return
-        self._backup = _BackUp(d, t + self.p.backup_timeout_s, [])
+        self._backup = _BackUp(d, t + self.p.backup_timeout_s, {})
         self._stood_at = None
 
     def _back_step(self, t: float, dt: float, motion, others, wall_behind_m) -> None:
         b = self._backup
-        if wall_behind_m is not None and not b.fixed:
+        if wall_behind_m is not None and wall_behind_m not in b.fixed:
             # 뒤 물체는 처음 보인 때 그 자리에 놓인다(로봇에서 path를 따라 wall_behind_m 뒤)
             x, y = motion.way_back(wall_behind_m)[-1]
-            b.fixed.append((x, y, 0.0))
+            b.fixed[wall_behind_m] = (x, y, 0.0)
         if (t >= b.until or b.left <= 1e-9
-                or self._something_behind(motion, b.left, [*others, *b.fixed])):
+                or self._something_behind(motion, b.left, [*others, *b.fixed.values()])):
             self._backup = None  # 그 자리에서 멈춘다. 시도는 이어 간다
             return
         step = min(self.p.backup_speed_mps * dt, b.left)

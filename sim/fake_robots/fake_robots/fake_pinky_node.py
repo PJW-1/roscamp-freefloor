@@ -205,7 +205,8 @@ class FakePinkyNode(Node):
                 else:
                     # path: 첫 점은 로봇 자리라 건너뛰고, 끝 점은 target_pose다
                     self._motion.set_target(*noisy_pose(pose.x, pose.y, self._cfg.stop_error_m,
-                                                        self._rng), via=path[1:-1])
+                                                        self._rng), via=path[1:-1],
+                                            start=path[0] if path else None)
                     if self._faults.take_nav_abort(t, goal.target_id):
                         eta = self._motion.remaining() / self._cfg.speed_mps
                         goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단

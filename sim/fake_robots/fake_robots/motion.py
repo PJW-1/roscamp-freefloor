@@ -39,11 +39,14 @@ class Motion:
         self.target: tuple[float, float] | None = None
         self.via: list[tuple[float, float]] = []
         self.trail: list[tuple[float, float]] = [(x, y)]  # 이번 목표에서 지나온 점(시작, 모서리)
+        self._has_start = False
 
-    def set_target(self, x: float, y: float, via=()) -> None:
+    def set_target(self, x: float, y: float, via=(), start=None) -> None:
+        """start: path 첫 점(path 모드). 없으면 로봇 자리가 첫 점이다. 둘 다 지나온 꼭짓점이다."""
         self.target = (x, y)
         self.via = [tuple(p) for p in via]
-        self.trail = [(self.x, self.y)]
+        self._has_start = start is not None
+        self.trail = [tuple(start) if self._has_start else (self.x, self.y)]
         self._skip_passed()
 
     def _skip_passed(self) -> None:
@@ -60,7 +63,9 @@ class Motion:
             off = abs((self.x - a[0]) * uy - (self.y - a[1]) * ux)
             if not (1e-6 < s <= length and off <= ON_SEGMENT_M):
                 return
-            self.via.pop(0)
+            passed = self.via.pop(0)
+            # 이미 지난 꼭짓점. 첫 점을 모르면 이 점부터 잰다
+            self.trail = [*self.trail, passed] if self._has_start else [passed]
 
     def clear_target(self) -> None:
         self.target = None
@@ -72,6 +77,11 @@ class Motion:
         """이번 목표에서 path를 따라 지나온 길이. 후진하면 준다."""
         points = [*self.trail, (self.x, self.y)]
         return sum(math.dist(a, b) for a, b in zip(points, points[1:], strict=False))
+
+    @property
+    def since_vertex(self) -> float:
+        """마지막으로 지난 path 꼭짓점(첫 점 포함)부터 온 거리."""
+        return math.dist(self.trail[-1], (self.x, self.y))
 
     def way_back(self, distance: float) -> list[tuple[float, float]]:
         """지금 자리에서 지나온 선을 따라 distance만큼 뒤로 간 꺾은선(목표 시작점까지)."""

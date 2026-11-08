@@ -366,3 +366,26 @@ def test_an_obstacle_behind_is_there_for_its_window_at_its_distance():
                              distance_m=0.2)], "pinky1")
     assert [s.behind(t) for t in (4.9, 5.0, 14.9, 15.0)] == [None, 0.2, 0.2, None]
     assert not s.obstacle(10.0), "it is not ahead"
+
+
+def test_the_distance_from_the_last_vertex_passed():
+    m = Motion(0.0, 0.0)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    assert m.since_vertex == 0.0
+    m.step(1.0, 0.6)
+    assert m.since_vertex == pytest.approx(0.6)  # path 첫 점(로봇 자리)부터
+    m.step(1.0, 0.6)
+    assert m.since_vertex == pytest.approx(0.2)  # 모서리 (1, 0)부터
+    m.back(0.3)
+    assert m.since_vertex == pytest.approx(0.9)
+
+
+def test_a_path_that_starts_behind_the_robot_counts_from_its_first_point():
+    """path 모드: 첫 점과 이미 지난 꼭짓점도 지나온 꼭짓점이다."""
+    m = Motion(0.3, 0.0)
+    m.set_target(2.0, 0.0, start=(0.0, 0.0))
+    assert m.since_vertex == pytest.approx(0.3)
+    m = Motion(1.0, 0.2)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)], start=(0.0, 0.0))  # 모서리는 이미 지났다
+    assert m.since_vertex == pytest.approx(0.2)
+    assert m.travelled == pytest.approx(1.2)

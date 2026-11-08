@@ -61,11 +61,13 @@ def reversals(xs, eps=1e-6):
 
 
 def test_the_back_up_distance_rule():
+    """d = min(0.15, s_ref - 0.08 - 0.15). s_ref는 마지막으로 지난 path 꼭짓점부터 온 거리."""
     p = RecoveryParams()
+    assert p.backup_margin_m == pytest.approx(0.2 - 0.08 + 0.03)  # release_distance_m에서
     assert p.backup_distance(1.0) == pytest.approx(0.15)  # backup_max_m
-    assert p.backup_distance(0.2) == pytest.approx(0.09)  # s - 0.08 - 0.03
-    assert p.backup_distance(0.13) == pytest.approx(0.02)  # backup_min_m는 아직 후진한다
-    assert p.backup_distance(0.125) == 0.0  # 0.015 < 0.02: 후진 안 함
+    assert p.backup_distance(0.3) == pytest.approx(0.07)  # s_ref - 0.08 - 0.15
+    assert p.backup_distance(0.25) == pytest.approx(0.02)  # backup_min_m는 아직 후진한다
+    assert p.backup_distance(0.245) == 0.0  # 0.015 < 0.02: 후진 안 함
     assert p.backup_distance(0.0) == 0.0
 
 
@@ -93,7 +95,7 @@ def test_the_attempts_take_their_time_before_blocked():
 
 def test_near_the_path_start_there_is_no_back_up():
     r = Run()
-    r.drive_to(0.1)  # d = 0.1 - 0.11 < 0.02
+    r.drive_to(0.24)  # d = 0.24 - 0.23 < 0.02
     r.run(5.0, ahead=True)
     assert r.states == ["MOVING", "RECOVERING", "BLOCKED"]
     assert min(r.xs[r.xs.index(max(r.xs)):]) == pytest.approx(max(r.xs)), "it backed up"
@@ -257,3 +259,36 @@ def test_a_robot_just_ahead_does_not_stop_the_back_up():
     r.drive_to(1.0)
     r.run(3.5, ahead=True, others=[(1.1, 0.0, 0.08)])  # 몸은 이미 닿아 있다. 멀어지는 건 된다
     assert min(r.xs) == pytest.approx(0.85, abs=1e-6)
+
+
+def test_the_back_up_is_measured_from_the_last_vertex_passed():
+    """꼭짓점 뒤 0.2 m는 다른 로봇이 설 수 있다(구역 해제). 중심은 꼭짓점에서 0.23 m 앞에 둔다."""
+    m = Motion(0.0, 0.0)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)])
+    rec = ObstacleRecovery()
+    t = 0.0
+    while m.travelled < 1.27 - 1e-9:  # 모서리 (1, 0)을 지나 0.27 m
+        t += DT
+        rec.watch(t, False, True, m)
+        rec.drive(t, DT, m, SPEED)
+    lowest = m.y
+    for _ in range(80):
+        t += DT
+        rec.watch(t, True, True, m)
+        rec.drive(t, DT, m, SPEED)
+        lowest = min(lowest, m.y)
+    assert rec.used >= 1
+    assert lowest == pytest.approx(0.27 - 0.04, abs=1e-6), "d = 0.27 - 0.23"
+    assert m.x == pytest.approx(1.0)
+
+
+def test_a_closer_obstacle_behind_during_the_back_up_stops_it():
+    """먼저 본 먼 뒤 물체가 나중에 나타난 가까운 물체를 가리지 않는다(검토 지적)."""
+    r = Run()
+    r.drive_to(1.0)
+    r.run(1.2, ahead=True, wall_behind_m=0.5)  # 후진을 막지 않는 물체
+    assert r.rec.backing_up
+    r.run(0.3, ahead=True, wall_behind_m=0.5)
+    backed = r.motion.x
+    r.run(1.0, ahead=True, wall_behind_m=0.1)
+    assert min(r.xs) == pytest.approx(backed, abs=1e-6), "it kept backing up"
