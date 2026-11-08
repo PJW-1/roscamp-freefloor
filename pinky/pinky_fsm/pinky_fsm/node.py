@@ -76,7 +76,7 @@ class PinkyFsmNode(Node):
         declare("pose_timeout_s", 1.0)
         for name in ("arrival_tolerance_m", "connect_tolerance_m", "refresh_within_m",
                      "refresh_every_s", "heartbeat_timeout_s", "stopped_speed_mps",
-                     "stopped_turn_rps", "block_report_s", "block_clear_s",
+                     "stopped_turn_rps", "block_report_s", "block_clear_s", "block_timeout_s",
                      "block_lookahead_m", "path_step_m"):
             declare(name, float(getattr(d, name)))
         get = self.get_parameter
@@ -90,7 +90,7 @@ class PinkyFsmNode(Node):
             name: float(get(name).value) for name in (
                 "arrival_tolerance_m", "connect_tolerance_m", "refresh_within_m",
                 "refresh_every_s", "heartbeat_timeout_s", "stopped_speed_mps",
-                "stopped_turn_rps", "block_report_s", "block_clear_s",
+                "stopped_turn_rps", "block_report_s", "block_clear_s", "block_timeout_s",
                 "block_lookahead_m", "path_step_m")}))
         contract = load_contract(get("contract_file").value or default_contract_path())
 

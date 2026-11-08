@@ -28,7 +28,8 @@ topics:
   - {key: order_board, name: "/central/orders", type: fleet_interfaces/msg/OrderBoard, qos: LATCHED}
   - {key: assignments, name: "/fleet/assignments", type: fleet_interfaces/msg/AssignmentArray, qos: LATCHED}
   - {key: robots, name: "/fleet/robots", type: fleet_interfaces/msg/RobotStatusArray, qos: LATCHED}
-  # 관제 요구(팀 합의 전). 로봇이 이 토픽을 못 들으면 스스로 멈춘다. 0.3 전에는 /fms/heartbeat였다.
+  # 관제 요구(팀 합의 전). 로봇이 이 토픽을 못 들으면 끊긴 지 1.5 s에 정지 명령을 낸다(제동 거리는
+  # 별도). 0.3 전에는 /fms/heartbeat였다.
   # 0.4부터 HEARTBEAT 프로필. 빠짐 자체가 정지 조건이라 재전송이 필요하다.
   - {key: heartbeat, name: "/fleet/heartbeat", type: std_msgs/msg/Header, qos: HEARTBEAT}
   - {key: zones, name: "/fleet/zones", type: fleet_interfaces/msg/ZoneStateArray, qos: LATCHED}
