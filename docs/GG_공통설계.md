@@ -112,10 +112,11 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `GOAL_NOT_SENT` | WARN | traffic | 액션 서버가 없어 이동이나 도킹 목표를 보내지 못했다. 시도 횟수에 넣지 않고 다시 보낸다. 목표가 서버에 닿을 때까지 한 번만 낸다 |
 | `HEARTBEAT_LOST` | WARN | traffic | 로봇이 heartbeat를 못 받아 스스로 이동을 끝냈다(결과 reason). 시도로 세지 않고 `move_retry_wait_s` 뒤 같은 목표를 다시 보낸다(11-06, 4번) |
 | `LANE_BLOCKED` | WARN | traffic | `BLOCKED` 보고가 `blocked_mark_s` 동안 이어져 달리던 레인을 막힘으로 표시하고 목표를 취소했다. detail에 레인(11-06, 4번) |
-| `LANE_CLEARED` | INFO | traffic | 표시한 레인이 풀렸다(`BLOCKED`가 아닌 보고가 이어짐, 또는 `confirm_clear`). 같은 목표를 다시 보낸다 |
+| `LANE_CLEARED` | INFO | traffic | 표시한 레인이 풀렸다(`BLOCKED`도 `RECOVERING`도 아닌 보고가 이어짐, 또는 `confirm_clear`). 같은 목표를 다시 보낸다 |
 | `DETOUR` | INFO | traffic | 다음 구역을 청할 때 더 싼 길로 바꿨다(11-06, 5번). detail에 피한 것(구역과 보유자와 서 있는 시간, 또는 막힌 레인)과 새 경로 |
 | `BLOCKED_TOO_LONG` | ERROR | traffic | `BLOCKED`로 보고된 시간이 `blocked_timeout_s`에 닿았다. `fault_reason=BLOCKED`, 구역은 쥔다 |
 | `SELF_RECOVERY` / `SELF_RECOVERY_END` | INFO | traffic | 로봇이 `RECOVERING`(자가 복구)을 보고하기 시작했다 / 끝났다. 끝은 detail에 걸린 시간과 다음 상태(11-09, 제안) |
+| `SELF_RECOVERY_TOO_LONG` | WARN | traffic | `RECOVERING`이 `self_recovery_limit_s`(45 s)를 넘었다. 그 뒤 보고는 `BLOCKED`로 본다(11-09, 제안) |
 | `COMM_LOST` | WARN | traffic | 보고가 `comm_timeout_s` 동안 없다. 지도에 오른 로봇이 `LOCALIZING`만 보내는 것도 같다(detail에 적는다) |
 | `COMM_RESTORED` | INFO | traffic | 보고가 돌아왔다. 위치를 확인하고 이어 간다 |
 | `ZONE_WAIT_LONG` | WARN | traffic | 구역 하나를 `zone_wait_warn_s` 넘게 기다린다 |
@@ -256,7 +257,7 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `/fleet/confirm_clear` ConfirmClear 서비스: central(관리자) → FMS. 응답의 `string reason`은 11-06에 더한 관제 요구(팀 합의 전, 0.3-draft)다. 거부하면 이유, 받아들이면 빈 값. `accepted`, `released_zones`는 그대로다
 - `/fleet/reinstate` Reinstate 서비스(robot_id, basket, note → accepted, reason): central(관리자) → FMS. 11-06에 더한 관제 요구(팀 합의 전, 0.3-draft)다. `confirm_clear`로 치운 로봇을 다시 넣는다. basket은 `BASKET_EMPTY`("EMPTY") 또는 `BASKET_NONE`("NONE"), 관리자가 본 트레이 상태다. 거부하면 `reason`에 이유, 받아들이면 빈 값. 거부 이유: 모르는 로봇, `OUT_OF_SERVICE`가 아닌 로봇, 쥔 구역이 남은 로봇, 틀린 basket(`INPUT_REJECTED`). 받아들이면 `ROBOT_REINSTATED`. 다른 로봇은 멈추지 않는다(배치 충돌 때 그 구역 주인만 예외). 배치는 시작 때와 같은 규칙(placed=false, 다음 위치 보고부터 시도하고 이동·도킹 중이면 기다림)이고, 배치 충돌로 세운 구역 주인은 우회 판단에서 무한 대기로 본다(5절)
 - `/{pinky}/state` 토픽, `/{pinky}/move_to`·`/{pinky}/dock` 액션: FMS ↔ 핑키. `move_to`는 잠금을 쥔 데까지의 짧은 목표이고, goal의 `path`(geometry_msgs/Pose[])에 레인 폴리라인을 싣는다(5절, 11-06 지시서 7번). 11-06 지시서 4번에서 `state`에 `BLOCKED`, `LOCALIZING`을, `MoveTo` 결과에 `REASON_HEARTBEAT_LOST`를 더했다. 4번은 상수만 더해 필드가 그대로이고, `path`는 7번에서 더한 goal 필드다. 핑키가 지킬 동작은 `docs/핑키_계약.md`에 관제가 요구하는 것으로 적었다
-  - `path` 요구(핑키 계약 3절 7번): `path`가 있으면 Nav2 FollowPath로 그 선을 따르고, 선 밖으로 돌아가거나 Spin·BackUp 같은 복구를 쓰지 않는다. 가장 가까운 점부터 따른다. 끝 근처 재전송과 도착 판정은 핑키가 한다. 목표가 없으면 움직이지 않는다. `path`가 비면 `target_pose`로 간다(`lane_goal_mode: point`)
+  - `path` 요구(핑키 계약 3절 7번): `path`가 있으면 Nav2 FollowPath로 그 선을 따르고, 선 밖으로 돌아가거나 Nav2 행동 트리의 Spin·BackUp 같은 복구를 쓰지 않는다. FSM이 하는 짧은 후진 복구만 허용한다(쥔 구역 안, 최대 2번, `RECOVERING`으로 알림. 핑키 계약 3절 7번과 4절, 제안). 가장 가까운 점부터 따른다. 끝 근처 재전송과 도착 판정은 핑키가 한다. 목표가 없으면 움직이지 않는다. `path`가 비면 `target_pose`로 간다(`lane_goal_mode: point`)
   - `BLOCKED` 요구(핑키 계약 4절): `move_to` 실행 중, 1초 넘게 0.02 m/s 미만으로 서 있고, 그 이유가 경로 위 0.5 m 안의 물체일 때. 서고 2초 안에 보고하고, 막힌 동안 목표를 스스로 끝내지 않으며, 취소 뒤에도 물체가 있으면 계속 보고하고, 물체가 1초 안 보이면 끈다. 물체가 아닌 이유로 서면 `NAV_ABORTED`. 관제 처리는 5절 "레인 막힘"
 - `/workcell/fill_basket` FillBasket 액션(items → placed, missing, success, reason): FMS → workcell. 팔 2대 배분과 조율은 workcell 내부 책임
 - `/arm3/swap_basket` SwapBasket 액션(take_full, put_empty → took_full, put_empty_done): FMS → arm3
@@ -272,7 +273,7 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
   - 할 일이 없는 로봇은 heartbeat가 없어도 아무것도 하지 않고 상태 보고를 계속한다. 멈춘 뒤 온 새 목표는 받는다.
   - 시간은 벽시계로 잰다. 프로세스를 감시하는 값이기 때문이다.
   - 통신 두절도 같다. FMS가 살아 있어도 heartbeat를 못 받으면 멈춘다.
-  - **FMS 쪽 약속:** 시작한 뒤 `heartbeat_timeout_s + heartbeat_period_s`(2 s) 동안 heartbeat를 내지 않고 상태 보고도 받지 않는다. 이전 FMS의 목표로 달리던 로봇은 보통 그 사이에 멈춘다. 늦게 수락된 목표나 감속 중인 로봇은 아직 움직일 수 있으므로 침묵만 믿지 않는다. 그 뒤 로봇의 `move_to`, `dock` 서버를 찾았고, 전원이 위치를 보고했고, `MOVING`, `DOCKING`, `BLOCKED`, `LOCALIZING`이 아니어야 지도에 올리고 움직이기 시작한다. heartbeat도 전원이 지도에 오른 뒤에야 낸다. 그때까지 이 FMS가 보낸 목표가 없으니 필요가 없고, 늦게 수락된 이전 목표가 새 heartbeat를 자기 것으로 알고 계속 달리는 일을 막는다.
+  - **FMS 쪽 약속:** 시작한 뒤 `heartbeat_timeout_s + heartbeat_period_s`(2 s) 동안 heartbeat를 내지 않고 상태 보고도 받지 않는다. 이전 FMS의 목표로 달리던 로봇은 보통 그 사이에 멈춘다. 늦게 수락된 목표나 감속 중인 로봇은 아직 움직일 수 있으므로 침묵만 믿지 않는다. 그 뒤 로봇의 `move_to`, `dock` 서버를 찾았고, 전원이 위치를 보고했고, `MOVING`, `DOCKING`, `RECOVERING`, `BLOCKED`, `LOCALIZING`이 아니어야 지도에 올리고 움직이기 시작한다. heartbeat도 전원이 지도에 오른 뒤에야 낸다. 그때까지 이 FMS가 보낸 목표가 없으니 필요가 없고, 늦게 수락된 이전 목표가 새 heartbeat를 자기 것으로 알고 계속 달리는 일을 막는다.
   - **이 계약이 보장하지 않는 것:** 마지막 heartbeat 뒤 도착한 목표는 수락 시각부터 다시 `heartbeat_timeout_s`를 센다. 이전 FMS의 목표가 로봇이 지도에 오른 뒤에 도착하면 그 로봇은 `heartbeat_timeout_s`까지 움직이고, FMS는 그 사이 옛 위치를 믿는다. 0.4부터 heartbeat는 reliable(depth 1)이라 잃은 것을 다시 보내지만, 끊김 판단은 앱 타이머(벽시계)라 링크가 1.5 s 넘게 끊기면 FMS가 살아 있어도 멈춘다. DDS `deadline`·`liveliness`는 쓰지 않는다. `/{pinky}/state`는 best_effort 그대로이고 주기적으로 계속 와야 한다. 멈춘 로봇의 감속 거리는 timeout에 들어 있지 않다.
 
 run_mode는 FMS가 OrderBoard로 받는다. 삭제된 것: TaskBoard, StationCount, BoxArray, ArmTransfer, ReportDone, `/{arm}/load`, `/{arm}/unload`, `/central/tasks`, `/central/report_done`.
@@ -358,7 +359,7 @@ heartbeat 정지(11-06, 4번): 이동 결과의 reason이 `HEARTBEAT_LOST`면 �
 
 도착 판정: 이동의 성공 결과가 와도 마지막 보고 위치가 목표 지점에서 `arrival_tolerance_m`보다 멀면 바로 도착으로 치지 않는다. 위치 보고는 결과보다 늦게 올 수 있으므로 `arrival_settle_s` 동안 새 목표를 내지 않고 기다린다. 그 안에 허용치 안의 위치가 보고되면 도착이고, 기한이 지나도 보고된 위치가 멀면 실패한 시도(`NOT_AT_TARGET`)로 친다. 처리는 실패한 이동과 같다. 로봇의 통신 상태가 `COMM_LOST`나 `RECOVERING`이면 위치가 오래된 것이고 복구가 위치를 다시 판단하므로 보지 않는다. 도킹 결과는 위치를 보지 않는다. 정지 오차가 이 값을 자주 넘는 로봇은 재시도를 다 써서 ERROR가 될 수 있으므로, 이 값은 실측한 정지 오차, ε, τ와 함께 정한다. 성공 뒤에 위치 보고가 하나도 오지 않았으면 기한이 지나도 판정하지 않고 기다린다. 그 위치는 성공 전의 것이라 아무것도 말해 주지 않기 때문이다. 보고가 끊긴 로봇은 `COMM_LOST`가 먼저 나고 복구가 위치를 판단한다. 기다리는 동안 새 이동 목표는 내지 않는다(2026-11-06 검토에서 추가). 정지 오차를 넣은 압박 시험은 작업 기록(11-05) 7번에 있고 이 판정을 넣기 전 결과다. 판정을 넣은 뒤의 `basic_orders` 결과는 `docs/worklog_2026-11-06.md`의 압박 시험 표에 있다.
 
-이벤트 코드(traffic, 뜻은 0절): `ROBOT_ISOLATED`, `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_STALLED`, `GOAL_NOT_SENT`, `HEARTBEAT_LOST`, `LANE_BLOCKED`, `LANE_CLEARED`, `DETOUR`, `BLOCKED_TOO_LONG`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ROBOT_REINSTATED`(`FleetManager`가 낸다), `ZONES_STILL_HELD`, `LANE_ERROR`, `BACK_ON_LANE`, `OFF_LANE`, `SELF_RECOVERY`, `SELF_RECOVERY_END`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
+이벤트 코드(traffic, 뜻은 0절): `ROBOT_ISOLATED`, `DOCKED`, `GOAL_RETRY`, `GOAL_FAILED`, `GOAL_STALLED`, `GOAL_NOT_SENT`, `HEARTBEAT_LOST`, `LANE_BLOCKED`, `LANE_CLEARED`, `DETOUR`, `BLOCKED_TOO_LONG`, `COMM_LOST`, `COMM_RESTORED`, `ZONE_WAIT_LONG`, `ZONES_CLEARED`, `CLEAR_REFUSED`, `INPUT_REJECTED`(confirm_clear의 모르는 이름), `ROBOT_REINSTATED`(`FleetManager`가 낸다), `ZONES_STILL_HELD`, `LANE_ERROR`, `BACK_ON_LANE`, `OFF_LANE`, `SELF_RECOVERY`, `SELF_RECOVERY_END`, `SELF_RECOVERY_TOO_LONG`, `DEADLOCK_*`, `PLACEMENT_CONFLICT`, `RECOVERY_CONFLICT`, `ROBOT_NOT_REPORTING`.
 
 `TrafficController` 공개 API:
 ```python
