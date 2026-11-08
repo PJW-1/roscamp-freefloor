@@ -26,6 +26,8 @@ ros2 launch pinky_nav_config nav2.launch.py namespace:=pinky1 \
     initial_x:=0.35 initial_y:=1.55 initial_yaw:=1.5708
 ```
 
+`use_composition:=true`를 주면 노드 아홉을 컨테이너(`component_container_isolated`) 한 프로세스에 올린다. 한 PC에 Gazebo 핑키 여럿을 띄우면 LOCALHOST discovery가 볼 수 있는 프로세스 수(약 32)를 넘기 때문이다. 이름, 파라미터, TF remap은 같고 기본값(false)은 노드마다 프로세스다.
+
 실물 지도는 아직 없다(SLAM 뒤에 넣는다). Gazebo 지도와 한 번에 띄우는 방법은 `sim/fleet_gz_sim/README.md`.
 
 ## 시험
@@ -33,5 +35,7 @@ ros2 launch pinky_nav_config nav2.launch.py namespace:=pinky1 \
 ```bash
 cd pinky/pinky_nav_config && python3 -m pytest -q test   # 설정 값 검사, ROS 필요 없음
 ```
+
+`test/test_nav2_launch.py`(launch 구성 검사)는 ROS 2와 설치된 이 패키지가 있어야 돌고, 없으면 건너뛴다. `colcon test`로 돌린다.
 
 `params/`의 시작값은 0.33 m 통로 Gazebo 연구에서 온 값이므로 실제 지도에서 다시 맞춘다.

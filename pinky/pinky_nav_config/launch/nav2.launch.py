@@ -10,15 +10,19 @@
 - controller_server는 cmd_vel로 바로 낸다(velocity_smoother, collision_monitor 없음).
 - AMCL은 1 cm 지도를, costmap은 5 cm 지도를 쓴다(R15).
 - bt_navigator는 계약의 navigate_to_pose를 위해 띄운다. 복구 없이 한 번 계획하는 BT(R14).
+- use_composition:=true면 같은 노드 아홉을 컨테이너(component_container_isolated) 한 프로세스에
+  올린다. 한 PC에 로봇 여럿을 띄울 때 DDS 참가자(프로세스) 수를 줄인다.
+  기본은 false(노드마다 프로세스).
 """
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node, PushRosNamespace, SetParameter
-from launch_ros.descriptions import ParameterFile, ParameterValue
+from launch_ros.actions import ComposableNodeContainer, Node, PushRosNamespace, SetParameter
+from launch_ros.descriptions import ComposableNode, ParameterFile, ParameterValue
 from nav2_common.launch import ReplaceString, RewrittenYaml
 
 SHARE = Path(get_package_share_directory("pinky_nav_config"))
@@ -38,15 +42,9 @@ def generate_launch_description():
         root_key=namespace, param_rewrites={}, convert_types=True), allow_substs=True)
     log = ["--ros-args", "--log-level", arg("log_level")]
 
-    def nav_node(package, executable, name, *extra):
-        return Node(package=package, executable=executable, name=name, output="screen",
-                    parameters=[params, *extra], remappings=TF_REMAPS, arguments=log)
-
-    def manager(name, nodes):
-        return Node(package="nav2_lifecycle_manager", executable="lifecycle_manager", name=name,
-                    output="screen", arguments=log,
-                    parameters=[{"autostart": ParameterValue(arg("autostart"), value_type=bool),
-                                 "node_names": nodes}])
+    def manager_params(nodes):
+        return {"autostart": ParameterValue(arg("autostart"), value_type=bool),
+                "node_names": nodes}
 
     initial_pose = {
         "set_initial_pose": True,
@@ -54,6 +52,52 @@ def generate_launch_description():
         "initial_pose.y": ParameterValue(arg("initial_y"), value_type=float),
         "initial_pose.yaw": ParameterValue(arg("initial_yaw"), value_type=float),
     }
+    # (패키지, 실행 파일, 컴포넌트 플러그인, 노드 이름, 덧붙일 파라미터 목록)
+    nav_nodes = [
+        ("nav2_map_server", "map_server", "nav2_map_server::MapServer", "map_server",
+         [{"yaml_filename": arg("map")}]),
+        ("nav2_map_server", "map_server", "nav2_map_server::MapServer", "map_server_fine",
+         [{"yaml_filename": arg("map_fine")}]),
+        ("nav2_amcl", "amcl", "nav2_amcl::AmclNode", "amcl", [initial_pose]),
+        ("nav2_controller", "controller_server", "nav2_controller::ControllerServer",
+         "controller_server", []),
+        ("nav2_planner", "planner_server", "nav2_planner::PlannerServer", "planner_server", []),
+        ("nav2_behaviors", "behavior_server", "behavior_server::BehaviorServer",
+         "behavior_server", []),
+        ("nav2_bt_navigator", "bt_navigator", "nav2_bt_navigator::BtNavigator", "bt_navigator",
+         [{"default_nav_to_pose_bt_xml": arg("bt_xml")}]),
+    ]
+    managers = [("lifecycle_manager_localization", LOCALIZATION),
+                ("lifecycle_manager_navigation", NAVIGATION)]
+
+    processes = [
+        Node(package=package, executable=executable, name=name, output="screen",
+             parameters=[params, *extra], remappings=TF_REMAPS, arguments=log)
+        for package, executable, _, name, extra in nav_nodes
+    ] + [
+        Node(package="nav2_lifecycle_manager", executable="lifecycle_manager", name=name,
+             output="screen", arguments=log, parameters=[manager_params(nodes)])
+        for name, nodes in managers
+    ]
+    # 컴포넌트의 namespace와 SetParameter(use_sim_time)는 LoadNode 요청을 만들 때 이 GroupAction
+    # 범위에서 읽힌다(launch_ros가 execute 안에서 요청을 만든다). costmap처럼 노드 안에서 만드는
+    # 하위 노드는 요청이 아니라 프로세스 인자로 파라미터를 받으므로 컨테이너에도 params를 준다
+    # (nav2_bringup과 같다).
+    container = ComposableNodeContainer(
+        name="nav2_container", namespace="", package="rclcpp_components",
+        executable="component_container_isolated", output="screen", arguments=log,
+        parameters=[params], remappings=TF_REMAPS,
+        composable_node_descriptions=[
+            ComposableNode(package=package, plugin=plugin, name=name,
+                           parameters=[params, *extra], remappings=TF_REMAPS)
+            for package, _, plugin, name, extra in nav_nodes
+        ] + [
+            ComposableNode(package="nav2_lifecycle_manager",
+                           plugin="nav2_lifecycle_manager::LifecycleManager", name=name,
+                           parameters=[manager_params(nodes)])
+            for name, nodes in managers
+        ])
+    use_composition = arg("use_composition")
     return LaunchDescription([
         DeclareLaunchArgument("namespace", default_value="pinky1"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
@@ -69,20 +113,16 @@ def generate_launch_description():
         DeclareLaunchArgument("initial_yaw", default_value="0.0"),
         DeclareLaunchArgument("autostart", default_value="true"),
         DeclareLaunchArgument("log_level", default_value="info"),
+        DeclareLaunchArgument("use_composition", default_value="false",
+                              description="true면 노드 아홉을 컨테이너 한 프로세스로 띄운다"),
         GroupAction([
             PushRosNamespace(namespace),
             SetParameter("use_sim_time", arg("use_sim_time")),
-            nav_node("nav2_map_server", "map_server", "map_server",
-                     {"yaml_filename": arg("map")}),
-            nav_node("nav2_map_server", "map_server", "map_server_fine",
-                     {"yaml_filename": arg("map_fine")}),
-            nav_node("nav2_amcl", "amcl", "amcl", initial_pose),
-            nav_node("nav2_controller", "controller_server", "controller_server"),
-            nav_node("nav2_planner", "planner_server", "planner_server"),
-            nav_node("nav2_behaviors", "behavior_server", "behavior_server"),
-            nav_node("nav2_bt_navigator", "bt_navigator", "bt_navigator",
-                     {"default_nav_to_pose_bt_xml": arg("bt_xml")}),
-            manager("lifecycle_manager_localization", LOCALIZATION),
-            manager("lifecycle_manager_navigation", NAVIGATION),
-        ]),
+            *processes,
+        ], condition=UnlessCondition(use_composition)),
+        GroupAction([
+            PushRosNamespace(namespace),
+            SetParameter("use_sim_time", arg("use_sim_time")),
+            container,
+        ], condition=IfCondition(use_composition)),
     ])
