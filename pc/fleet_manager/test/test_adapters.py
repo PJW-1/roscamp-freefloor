@@ -20,7 +20,12 @@ from fleet_core.common.commands import (  # noqa: E402
     ZoneView,
 )
 from fleet_core.orders.orchestrator import CANCELED  # noqa: E402
-from fleet_core.traffic.mission import BLOCKED, HEARTBEAT_LOST, LOCALIZING  # noqa: E402
+from fleet_core.traffic.mission import (  # noqa: E402
+    BLOCKED,
+    HEARTBEAT_LOST,
+    LOCALIZING,
+    SELF_RECOVERING,
+)
 from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket  # noqa: E402
 from fleet_interfaces.msg import (  # noqa: E402
     Assignment,
@@ -142,6 +147,16 @@ def test_robot_report_reads_every_field_the_core_needs():
     assert adapters.robot_report(msg) == (1.0, 2.0, 0.5, RobotState.STATE_MOVING, 87.5)
 
 
+def test_a_self_recovering_robot_reaches_the_core_and_the_status_as_it_is():
+    """로봇 상태 RECOVERING(자가 복구, 제안)은 그대로 지나간다. fault는 NONE이다."""
+    msg = RobotState(state=RobotState.STATE_RECOVERING)
+    assert adapters.robot_report(msg)[3] == SELF_RECOVERING
+    view = RobotStatusView("pinky1", SELF_RECOVERING, "TO_WORK", "O-001", "NONE", "", "",
+                           (), 50.0, 0.0, 0.0, 0.0)
+    status = adapters.robots_to_msg([view], 0.0).robots[0]
+    assert (status.fsm_state, status.fault) == ("RECOVERING", "NONE")
+
+
 def test_every_field_of_the_robot_status_reaches_the_message():
     view = RobotStatusView("pinky2", "MOVING", "TO_OUTBOUND", "O-003", "ERROR", "DOCK_FAILED",
                            "AVENUE", ("pinky1", "pinky3"), 87.5, 1.5, 2.5, 0.25)
@@ -245,6 +260,7 @@ def test_the_robot_values_the_core_reads_are_the_message_constants():
     """이름이 어긋나면 관제가 BLOCKED, LOCALIZING, HEARTBEAT_LOST를 못 알아본다(계약 3·4절)."""
     assert RobotState.STATE_BLOCKED == BLOCKED
     assert RobotState.STATE_LOCALIZING == LOCALIZING
+    assert RobotState.STATE_RECOVERING == SELF_RECOVERING
     assert MoveTo.Result.REASON_HEARTBEAT_LOST == HEARTBEAT_LOST
 
 
