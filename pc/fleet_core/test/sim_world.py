@@ -511,9 +511,10 @@ class SimWorld:
         """핑키의 연결 검사(지시서 7.5). 받은 path가 로봇이 아는 제 자리(보고 자리에서 잡음을
         뺀 것)에서 lane_error_warn_m보다 멀면 따라가지 않는다. 이전 목표는 끝나고 로봇은 선다.
 
-        이 세계는 보고하고 같은 step에 명령을 받으므로 관제가 만든 path는 마지막 보고를 지난다.
-        주입하지 않은 path가 그 보고를 지나지 않으면 관제 결함이라 거절로 가리지 않고 불변식
-        위반으로 멈춘다. 보고를 지나는데도 멀면 잡음이 보고를 튀게 한 것(gaussian_noise는 한계가
+        이 세계는 보고하고 같은 step에 명령을 받으므로 관제가 만든 path는 관제가 받아들인 마지막
+        위치를 지난다(관제가 버린 보고는 그 위치를 바꾸지 않는다). 거절할 만큼 먼 path가 주입한
+        것도 아니고 그 위치도 지나지 않으면 관제 결함이라 거절로 가리지 않고 불변식 위반으로
+        멈춘다. 그 위치를 지나는데도 멀면 잡음이 보고를 튀게 한 것(gaussian_noise는 한계가
         없다)이므로 핑키처럼 거절한다.
         """
         path = [tuple(p[:2]) for p in cmd.path]
@@ -528,9 +529,10 @@ class SimWorld:
         if gap <= self.params.lane_error_warn_m:
             return False
         if not injected:
-            report = self.reported.get(r.name)
-            assert report and path_gap(*report, path) <= 1e-6, (
-                f"{cmd} does not pass the last report {report} (the robot is {gap:.3f} m away)")
+            m = self.core.traffic._missions[r.name]
+            assert path_gap(m.x, m.y, path) <= 1e-6, (
+                f"{cmd} does not pass the accepted pose {(m.x, m.y)} "
+                f"(the robot is {gap:.3f} m away)")
         self._preempt(r)
         r.target, r.via = None, []
         self.path_refusals.append((self.t, r.name, cmd.goal_id))

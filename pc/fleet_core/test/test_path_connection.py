@@ -124,26 +124,32 @@ def test_a_normal_run_never_sends_a_path_that_misses_the_robot(site, mode, seed)
     assert sent and all(bool(c.path) == (mode == "path") for c in sent)
 
 
-def test_a_fleet_path_that_misses_the_last_report_breaks_the_world_invariant():
-    """SimWorld는 보고하고 같은 step에 명령을 받으므로 관제가 만든 path는 마지막 보고를 지난다.
-    주입하지 않은 path가 그 보고를 지나지 않으면 관제 결함이므로 재시도로 가리지 않고
-    멈춘다(Codex)."""
+def test_a_fleet_path_that_misses_the_accepted_pose_breaks_the_world_invariant():
+    """SimWorld는 보고하고 같은 step에 명령을 받으므로 관제가 만든 path는 관제가 받아들인
+    마지막 위치를 지난다. 로봇이 거절할 만큼 먼 path가 주입한 것도 아니고 그 위치도 지나지
+    않으면 관제 결함이므로 재시도로 가리지 않고 멈춘다(Codex)."""
     world = SimWorld(seed=1)
     r = world.virtual[ROBOT]
-    world.reported[ROBOT] = (r.x, r.y)
+    world.core.on_robot_state(ROBOT, r.x, r.y, 0.0, "IDLE")
     far = MoveCmd(ROBOT, 99, "x", r.x + 0.9, r.y + 0.5, 0.0,
                   path=((r.x + 0.5, r.y + 0.5, 0.0), (r.x + 0.9, r.y + 0.5, 0.0)))
-    with pytest.raises(AssertionError, match="does not pass the last report"):
+    with pytest.raises(AssertionError, match="does not pass the accepted pose"):
         world._refuses_path(r, far)
     assert world.path_refusals == []
 
 
 def test_a_report_that_the_noise_threw_far_is_a_refusal_not_an_invariant_break():
-    """한계 없는 잡음(gaussian_noise)은 드물게 보고를 0.15 m 넘게 튀게 한다. 관제가 그 보고에서
-    시작한 path는 맞게 만든 것이고, 로봇이 거절하는 것도 맞다(Codex 재검수)."""
+    """한계 없는 잡음(gaussian_noise)은 드물게 보고를 0.15 m 넘게 튀게 한다. 관제가 받아들인
+    그 보고에서 시작한 path는 맞게 만든 것이고, 로봇이 거절하는 것도 맞다. 그 뒤 관제가 버린
+    보고(지도 밖)는 관제가 아는 위치를 바꾸지 않는다(Codex 재검수 두 번)."""
     world = SimWorld(seed=1, gaussian_noise=True)
     r = world.virtual[ROBOT]
-    x, y = world.reported[ROBOT] = (r.x, r.y + 0.3)
+    x, y = r.x, r.y + 0.3
+    world.core.on_robot_state(ROBOT, x, y, 0.0, "IDLE")
+    world.reported[ROBOT] = (-50.0, -50.0)  # SimWorld가 보냈지만
+    world.core.on_robot_state(ROBOT, -50.0, -50.0, 0.0, "IDLE")  # 관제가 버린 보고
+    m = world.core.traffic._missions[ROBOT]
+    assert (m.x, m.y) == (x, y)
     thrown = MoveCmd(ROBOT, 99, "x", x + 0.5, y, 0.0, path=((x, y, 0.0), (x + 0.5, y, 0.0)))
     assert world._refuses_path(r, thrown) is True
     assert [(robot, goal) for _, robot, goal in world.path_refusals] == [(ROBOT, 99)]
