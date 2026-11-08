@@ -1,0 +1,114 @@
+# 긴 실행(자유바닥 실험 P6): 주문 100건이 8~16초 간격으로 온다. 레인과 자유바닥을 같은 파일로
+# 비교한다(tools/compare_floor.py). 시나리오 시험 목록에 들지 않게 tools/scenarios에 둔다.
+seed: 100
+speed_factor: 5.0
+timeout_s: 7200
+stock: {arm1: {A: 200, B: 200}, arm2: {C: 200, D: 200}}
+orders:
+  - {at_s: 0, id: L-001, items: {D: 1}}
+  - {at_s: 15, id: L-002, items: {D: 1}}
+  - {at_s: 28, id: L-003, items: {A: 2}}
+  - {at_s: 37, id: L-004, items: {A: 1, C: 1}}
+  - {at_s: 48, id: L-005, items: {B: 1, C: 1}}
+  - {at_s: 59, id: L-006, items: {B: 1}}
+  - {at_s: 70, id: L-007, items: {C: 1, D: 1}}
+  - {at_s: 81, id: L-008, items: {C: 1, D: 1}}
+  - {at_s: 95, id: L-009, items: {A: 1}}
+  - {at_s: 105, id: L-010, items: {D: 1}}
+  - {at_s: 115, id: L-011, items: {B: 3}}
+  - {at_s: 123, id: L-012, items: {D: 1}}
+  - {at_s: 137, id: L-013, items: {A: 1}}
+  - {at_s: 148, id: L-014, items: {C: 3}}
+  - {at_s: 164, id: L-015, items: {D: 2}}
+  - {at_s: 172, id: L-016, items: {C: 1}}
+  - {at_s: 186, id: L-017, items: {B: 1, D: 1}}
+  - {at_s: 202, id: L-018, items: {B: 1, C: 1}}
+  - {at_s: 210, id: L-019, items: {A: 1, B: 1, C: 1}}
+  - {at_s: 222, id: L-020, items: {A: 1}}
+  - {at_s: 233, id: L-021, items: {B: 1, C: 1}}
+  - {at_s: 246, id: L-022, items: {A: 2}}
+  - {at_s: 261, id: L-023, items: {A: 1}}
+  - {at_s: 272, id: L-024, items: {D: 1}}
+  - {at_s: 281, id: L-025, items: {B: 1, D: 1}}
+  - {at_s: 297, id: L-026, items: {D: 1}}
+  - {at_s: 307, id: L-027, items: {D: 1}}
+  - {at_s: 315, id: L-028, items: {B: 1}}
+  - {at_s: 325, id: L-029, items: {A: 1}}
+  - {at_s: 335, id: L-030, items: {A: 1}}
+  - {at_s: 344, id: L-031, items: {A: 1, D: 1}}
+  - {at_s: 352, id: L-032, items: {D: 3}}
+  - {at_s: 365, id: L-033, items: {B: 1, C: 1}}
+  - {at_s: 379, id: L-034, items: {B: 1}}
+  - {at_s: 393, id: L-035, items: {C: 1}}
+  - {at_s: 407, id: L-036, items: {A: 1, B: 1}}
+  - {at_s: 418, id: L-037, items: {D: 1}}
+  - {at_s: 430, id: L-038, items: {C: 1}}
+  - {at_s: 442, id: L-039, items: {A: 1}}
+  - {at_s: 458, id: L-040, items: {B: 1, D: 1}}
+  - {at_s: 466, id: L-041, items: {B: 1}}
+  - {at_s: 478, id: L-042, items: {A: 1}}
+  - {at_s: 491, id: L-043, items: {A: 1, D: 1}}
+  - {at_s: 501, id: L-044, items: {A: 1}}
+  - {at_s: 514, id: L-045, items: {A: 1, B: 2}}
+  - {at_s: 522, id: L-046, items: {B: 1, D: 1}}
+  - {at_s: 536, id: L-047, items: {B: 1, D: 1}}
+  - {at_s: 547, id: L-048, items: {C: 1}}
+  - {at_s: 556, id: L-049, items: {B: 1, D: 1}}
+  - {at_s: 572, id: L-050, items: {C: 1}}
+  - {at_s: 582, id: L-051, items: {B: 1}}
+  - {at_s: 590, id: L-052, items: {D: 2}}
+  - {at_s: 603, id: L-053, items: {A: 1}}
+  - {at_s: 611, id: L-054, items: {A: 1, D: 1}}
+  - {at_s: 621, id: L-055, items: {A: 2}}
+  - {at_s: 633, id: L-056, items: {B: 1}}
+  - {at_s: 643, id: L-057, items: {B: 2, C: 1}}
+  - {at_s: 657, id: L-058, items: {D: 1}}
+  - {at_s: 670, id: L-059, items: {D: 1}}
+  - {at_s: 682, id: L-060, items: {C: 1}}
+  - {at_s: 693, id: L-061, items: {A: 1}}
+  - {at_s: 704, id: L-062, items: {A: 2, B: 1}}
+  - {at_s: 719, id: L-063, items: {D: 1}}
+  - {at_s: 732, id: L-064, items: {B: 1, D: 2}}
+  - {at_s: 740, id: L-065, items: {A: 2, C: 1}}
+  - {at_s: 750, id: L-066, items: {B: 1}}
+  - {at_s: 765, id: L-067, items: {A: 1}}
+  - {at_s: 776, id: L-068, items: {A: 1, C: 1}}
+  - {at_s: 788, id: L-069, items: {C: 1}}
+  - {at_s: 800, id: L-070, items: {B: 1, C: 1}}
+  - {at_s: 809, id: L-071, items: {C: 1}}
+  - {at_s: 819, id: L-072, items: {D: 1}}
+  - {at_s: 828, id: L-073, items: {C: 1}}
+  - {at_s: 839, id: L-074, items: {B: 1, C: 1}}
+  - {at_s: 848, id: L-075, items: {A: 1, B: 1}}
+  - {at_s: 864, id: L-076, items: {D: 1}}
+  - {at_s: 872, id: L-077, items: {A: 1, C: 1, D: 1}}
+  - {at_s: 881, id: L-078, items: {A: 1, D: 1}}
+  - {at_s: 895, id: L-079, items: {B: 1}}
+  - {at_s: 909, id: L-080, items: {B: 1}}
+  - {at_s: 921, id: L-081, items: {B: 1, C: 1}}
+  - {at_s: 935, id: L-082, items: {C: 2}}
+  - {at_s: 943, id: L-083, items: {B: 2}}
+  - {at_s: 951, id: L-084, items: {A: 1, C: 1}}
+  - {at_s: 960, id: L-085, items: {D: 1}}
+  - {at_s: 973, id: L-086, items: {B: 1}}
+  - {at_s: 987, id: L-087, items: {D: 1}}
+  - {at_s: 1000, id: L-088, items: {C: 1}}
+  - {at_s: 1015, id: L-089, items: {A: 2, C: 1}}
+  - {at_s: 1023, id: L-090, items: {C: 1, D: 1}}
+  - {at_s: 1039, id: L-091, items: {C: 2}}
+  - {at_s: 1049, id: L-092, items: {B: 1}}
+  - {at_s: 1062, id: L-093, items: {D: 2}}
+  - {at_s: 1073, id: L-094, items: {A: 1, B: 1}}
+  - {at_s: 1083, id: L-095, items: {B: 1}}
+  - {at_s: 1092, id: L-096, items: {C: 1}}
+  - {at_s: 1107, id: L-097, items: {C: 1}}
+  - {at_s: 1121, id: L-098, items: {C: 1}}
+  - {at_s: 1136, id: L-099, items: {A: 1, C: 1}}
+  - {at_s: 1152, id: L-100, items: {B: 1, C: 1}}
+robots:
+  pinky1: {start: P-6, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-5, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-4, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
