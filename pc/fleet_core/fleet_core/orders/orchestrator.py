@@ -99,6 +99,9 @@ class _Robot:
     order: _BoundOrder | None = None
     last_order_id: str = ""  # 주문 보고 뒤에도 교환 goal에 붙일 이름
     outbound_goal: int | None = None
+    dispatch_failures: int = 0  # failed outbound dispatches in a row
+    dispatch_retry_at: float | None = None  # send the outbound dispatch again from this time
+    dispatch_reason: str = ""  # why the last outbound dispatch failed
     arm: _ArmJob | None = None
     arm_retry_at: float = 0.0  # 실패나 거절 뒤 이 시각 전에는 새 팔 goal 없음
     attempts: int = 0
@@ -158,6 +161,13 @@ class OrderOrchestrator:
             r.outbound_goal = None
             if success:
                 r.stage = SWAPPING
+                r.dispatch_failures = 0
+            else:
+                # step() decides once the wait is over. Traffic isolates a robot right after
+                # failing its dispatch, and an isolated robot is neither sent again nor faulted.
+                r.dispatch_failures += 1
+                r.dispatch_retry_at = self._clock() + self.params.dispatch_retry_wait_s
+                r.dispatch_reason = reason
 
     def on_fill_result(self, goal_id, success, placed, missing, reason="") -> None:
         self._forget_cleared_job(goal_id)
@@ -211,6 +221,7 @@ class OrderOrchestrator:
             r.order = None
         r.stage = ""
         r.outbound_goal = None
+        self._forget_dispatch_failures(r)
         self._sync_calls()
 
     def on_robot_reinstated(self, robot, basket) -> None:
@@ -247,6 +258,7 @@ class OrderOrchestrator:
         r.basket = NONE  # 바구니 안 물건은 로봇과 함께 남는다. 사람이 치운다
         r.stage = ""
         r.outbound_goal = None
+        self._forget_dispatch_failures(r)
         self._sync_calls()
 
     # ---- outputs ------------------------------------------------------------------------
@@ -280,7 +292,11 @@ class OrderOrchestrator:
             self._step_filling(r)
         elif r.stage == SWAPPING:
             self._step_swapping(r)
-        elif r.basket == NONE and not r.order and r.outbound_goal is None:
+        elif r.isolated or r.outbound_goal is not None:
+            return
+        elif r.dispatch_retry_at is not None:
+            self._retry_outbound(r)
+        elif r.basket == NONE and not r.order:
             # 바구니 없이 다시 투입됐다. 주문을 받기 전에 출고대에서 빈 바구니를 받는다.
             self._send_to_outbound(r)
 
@@ -488,6 +504,30 @@ class OrderOrchestrator:
     def _send_to_outbound(self, r: _Robot) -> None:
         r.outbound_goal = self._next_dispatch_id()
         self._out.append(DispatchCmd(r.outbound_goal, self._outbound, r.name))
+
+    def _retry_outbound(self, r: _Robot) -> None:
+        """Sends a failed outbound dispatch again, or past the limit fails the robot.
+
+        Like the arm retry limit: traffic isolates the robot and the isolation puts the order
+        back (no HELD report).
+        """
+        if self._clock() < r.dispatch_retry_at:
+            return
+        r.dispatch_retry_at = None
+        detail = (f"dispatch to {self._outbound} failed {r.dispatch_failures} times: "
+                  f"{r.dispatch_reason}")
+        if r.dispatch_failures > self.params.dispatch_retry_limit:
+            self._fail(r, detail)
+            self._event("ERROR", "DISPATCH_FAILED", detail, r.name)
+            return
+        self._event("WARN", "DISPATCH_RETRY", f"{detail}, sending it again", r.name)
+        self._send_to_outbound(r)
+
+    @staticmethod
+    def _forget_dispatch_failures(r: _Robot) -> None:
+        r.dispatch_failures = 0
+        r.dispatch_retry_at = None
+        r.dispatch_reason = ""
 
     def _step_filling(self, r: _Robot) -> None:
         if r.arm:

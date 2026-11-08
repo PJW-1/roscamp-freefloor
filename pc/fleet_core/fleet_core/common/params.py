@@ -63,6 +63,10 @@ class FleetParams:
     deadlock_unresolved_s: float = 30.0
     # 조용히 서 있는 로봇 감시(1.1 지시서 H2). 0이면 끈다. 이 값이 없던 기록은 감시 없이 재생한다
     idle_watch_s: float = 0.0
+    # Proposal (work order 1.1, H3): a failed outbound dispatch is sent again after the wait,
+    # and failing more than the limit is an ERROR. Records without these values replay with them
+    dispatch_retry_wait_s: float = 2.0
+    dispatch_retry_limit: int = 3
 
 
 def load_params(path=None) -> FleetParams:
