@@ -1,5 +1,7 @@
 """gz.launch.py가 시나리오에서 정하는 것: 핑키를 놓는 자리와 방향, 돌릴 수 없는 시나리오."""
 import math
+from itertools import pairwise
+from pathlib import Path
 
 import pytest
 
@@ -39,3 +41,39 @@ def test_a_scenario_is_a_name_in_fake_robots_or_a_file(tmp_path):
     assert scenario_path(str(mine), share()) == mine
     with pytest.raises(ScenarioUnfit, match="nowhere"):
         scenario_path("no_such_scenario", share())
+
+
+def test_a_scenario_name_is_looked_up_in_each_share_in_order(tmp_path):
+    """gz.launch.py는 fleet_gz_sim의 scenarios를 먼저 보고, 없으면 fake_robots를 본다."""
+    first, second = tmp_path / "first", tmp_path / "second"
+    for folder in (first, second):
+        (folder / "scenarios").mkdir(parents=True)
+        (folder / "scenarios" / "both.yaml").write_text("{}")
+    (second / "scenarios" / "only_second.yaml").write_text("{}")
+    assert scenario_path("both", first, second) == first / "scenarios" / "both.yaml"
+    assert scenario_path("only_second", first, second) == second / "scenarios" / "only_second.yaml"
+    with pytest.raises(ScenarioUnfit, match="nowhere"):
+        scenario_path("no_such_scenario", first, second)
+
+
+ROAM = Path(__file__).resolve().parent.parent / "scenarios" / "gz_roam.yaml"
+
+
+def test_the_roaming_scenario_keeps_three_pinkies_busy_for_twenty_minutes():
+    """gz_roam: 주문이 끊기지 않고 들어와 3대가 20분 넘게 계속 다음 목적지를 받는다."""
+    site, scenario = load(ROAM)
+    assert list(scenario.robots) == ["pinky1", "pinky2", "pinky3"]
+    times = [order.at_s for order in scenario.orders]
+    assert times == sorted(times)
+    assert times[-1] >= 1200
+    assert max(b - a for a, b in pairwise(times)) <= 60  # 1분 넘게 주문이 끊기지 않는다
+    assert scenario.timeout_s > times[-1] + 600  # 마지막 주문도 끝낼 시간
+
+
+def test_the_roaming_scenario_has_stock_for_every_order():
+    """재고가 모자라면 주문이 HELD로 멈춰 로봇이 쉰다."""
+    _, scenario = load(ROAM)
+    stock = {item: count for items in scenario.stock.values() for item, count in items.items()}
+    for item in stock:
+        wanted = sum(order.items.get(item, 0) for order in scenario.orders)
+        assert wanted <= stock[item], item

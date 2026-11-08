@@ -18,16 +18,18 @@ class ScenarioUnfit(RuntimeError):
     """Gazebo 경기장에서 돌릴 수 없는 시나리오."""
 
 
-def scenario_path(value: str, share: str | Path) -> Path:
-    """파일 경로이거나 fake_robots의 scenarios 폴더에 있는 이름."""
+def scenario_path(value: str, *shares: str | Path) -> Path:
+    """파일 경로이거나, 주어진 패키지 share의 scenarios 폴더에 있는 이름(앞 share가 먼저)."""
     path = Path(value)
     if path.is_file():
         return path
     name = value if value.endswith(".yaml") else value + ".yaml"
-    path = Path(share) / "scenarios" / name
-    if not path.is_file():
-        raise ScenarioUnfit(f"scenario {value!r} is nowhere: not a file and not in {path.parent}")
-    return path
+    folders = [Path(share) / "scenarios" for share in shares]
+    for folder in folders:
+        if (folder / name).is_file():
+            return folder / name
+    where = ", ".join(str(folder) for folder in folders)
+    raise ScenarioUnfit(f"scenario {value!r} is nowhere: not a file and not in {where}")
 
 
 def load(path):

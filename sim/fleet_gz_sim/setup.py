@@ -13,6 +13,7 @@ setup(
         ('share/fleet_gz_sim/urdf', glob('urdf/*.xacro')),
         ('share/fleet_gz_sim/worlds', glob('worlds/*.sdf')),
         ('share/fleet_gz_sim/maps', glob('maps/*.yaml') + glob('maps/*.pgm')),
+        ('share/fleet_gz_sim/scenarios', glob('scenarios/*.yaml')),
     ],
     install_requires=['setuptools'],
     tests_require=['pytest'],

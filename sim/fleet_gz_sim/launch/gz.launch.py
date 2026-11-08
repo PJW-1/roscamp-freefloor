@@ -33,7 +33,8 @@ from launch_ros.actions import Node
 from rclpy import get_rmw_implementation_identifier
 
 ARGS = {
-    "scenario": ("basic_orders", "fake_robots 시나리오 이름이나 파일(기본 지도, 로봇 고장 없음)"),
+    "scenario": ("basic_orders", "시나리오 이름(fleet_gz_sim, fake_robots 순서로 찾음)이나 파일."
+                                  " 기본 지도, 로봇 고장 없음. gz_roam은 24분 순환 운행"),
     "gui": ("true", "Gazebo 화면"),
     "rviz": ("pinky1", "RViz로 볼 로봇. none이면 띄우지 않는다"),
     "heartbeat_timeout_s": ("1.5", "pinky_fsm heartbeat 끊김 판정"),
@@ -85,7 +86,8 @@ def _start(context):
     def value(name):
         return LaunchConfiguration(name).perform(context)
 
-    scenario_file = str(scenario_path(value("scenario"), launch_parts.share("fake_robots")))
+    scenario_file = str(scenario_path(value("scenario"), launch_parts.share("fleet_gz_sim"),
+                                      launch_parts.share("fake_robots")))
     site, scenario = load(scenario_file)
     poses = start_poses(site, scenario)
     robots = list(poses)
