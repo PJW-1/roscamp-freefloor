@@ -101,6 +101,7 @@ class FloorController(TrafficController):
         self._block_since: dict[str, float] = {}  # robot -> first BLOCKED report of this run
         self._clear_n: dict[str, int] = {}  # robot -> non-BLOCKED reports since its mark
         self._marks: dict[str, set[str]] = {}  # robot -> cells it marked as blocked
+        self._ahead: dict[str, set[str]] = {}  # robot -> cells to mark once its goal has ended
         self._deadlock_key: tuple = ()
         # cell offsets whose box comes nearer than the body radius to a cell's box
         step = self.floor.cell_m
@@ -195,6 +196,7 @@ class FloorController(TrafficController):
         if m.robot_state == "BLOCKED":
             self._clear_n[name] = 0
             since = self._block_since.setdefault(name, now)
+            self._take_ahead(m)
             if name not in self._marks and now - since >= self.params.blocked_mark_s:
                 self._mark_blocked(m)
             elif now - since >= self.params.blocked_timeout_s and not m.fault:
@@ -204,6 +206,7 @@ class FloorController(TrafficController):
         if name in self._marks:
             self._clear_n[name] = self._clear_n.get(name, 0) + 1
             if self._clear_n[name] >= self.params.release_confirm_samples:
+                self._ahead.pop(name, None)
                 for cell in self._marks.pop(name):
                     self.zones.release(BLOCK_OWNER, cell)
                 self._event("INFO", "FLOOR_CLEARED", "the object is gone", name)
@@ -219,15 +222,32 @@ class FloorController(TrafficController):
         ahead -= self._body_cells(m.x, m.y)
         if m.goal:
             self._cancel_goal(m)
-        for cell in ahead & self.zones.held_set(m.name):
-            self.zones.release(m.name, cell)
+        # cells the robot holds stay its own until the cancelled goal has ended (it may still
+        # follow it until the result): _take_ahead moves them to the mark then
         free = {c for c in ahead if self.zones.holder(c) is None}
         self.zones.acquire_all(BLOCK_OWNER, free)
         self._marks[m.name] = free
+        self._ahead[m.name] = ahead - free
         if leg and leg.route:
             leg.s_lock = leg.s_sent = leg.s
         self._event("WARN", "FLOOR_BLOCKED",
                     f"object ahead, {len(free)} cells marked blocked", m.name)
+
+    def _take_ahead(self, m: _Mission) -> None:
+        """표시할 앞 칸 중 로봇이 쥐고 있던 칸: goal이 모두 끝난 뒤에야 막힘 표시로 옮긴다."""
+        ahead = self._ahead.get(m.name)
+        if not ahead or m.goal is not None or self._active[m.name]:
+            return
+        body = self._body_cells(m.x, m.y)
+        for cell in sorted(ahead):
+            holder = self.zones.holder(cell)
+            if cell in body or holder not in (None, m.name):
+                continue
+            if holder == m.name:
+                self.zones.release(m.name, cell)
+            if self.zones.acquire_all(BLOCK_OWNER, {cell}):
+                self._marks[m.name].add(cell)
+        self._ahead.pop(m.name)
 
     def blocked_cells(self) -> list[str]:
         return self.zones.held_by(BLOCK_OWNER)
@@ -354,14 +374,21 @@ class FloorController(TrafficController):
         for name in self._missions:
             if name == m.name:
                 continue
-            other = self._legs.get(name)
-            if other is not None and other.in_line == line and not other.waiting:
-                return False
             if not cells.isdisjoint(self.zones.held_set(name)):
+                return False
+            other = self._legs.get(name)
+            if (other is not None and other.in_line == line and not other.waiting
+                    and self._in_service(name)):
                 return False
         mine = (leg.asked_at, m.name)
         return not any((other.asked_at, name) < mine for name, other in self._legs.items()
-                       if name != m.name and other.in_line == line and other.waiting)
+                       if name != m.name and other.in_line == line and other.waiting
+                       and self._in_service(name))
+
+    def _in_service(self, name: str) -> bool:
+        """격리되지 않고 관제 중인 로봇(격리·제거된 로봇의 다리는 줄을 잡지 않는다)."""
+        other = self._missions[name]
+        return other.available and other.fault != ERROR
 
     def _plan_wait(self, m: _Mission, leg: _Leg, out_line) -> None:
         """접근선 시작 근처, 고정 선 칸·남의 칸·다른 대기 자리에 닿지 않는 가장 가까운 빈 자리로."""
@@ -552,21 +579,20 @@ class FloorController(TrafficController):
             self._unresolved_at = None
             self._event("ERROR", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
             return frozenset()
-        cycle = list(self._deadlock_key)
         if not self._deadlock_acted and now - self._deadlock_since >= \
                 self.params.deadlock_grace_s:
             self._deadlock_acted = True
             # lowest priority first, as choose_retreat; one that cannot step aside (on a fixed
             # line, docking) passes the turn to the next
-            order = sorted(cycle, key=lambda name: (self._priority(name), name))
-            if not any(self._sidestep(self._missions[name], cycle) for name in order):
+            turns = sorted(cycle, key=lambda name: (self._priority(name), name))
+            if not any(self._sidestep(self._missions[name], cycle) for name in turns):
                 robot = choose_retreat(cycle, self._priority)
                 self._event("ERROR", "DEADLOCK_UNRESOLVED",
                             f"{robot} of {cycle} has no free spot to step aside to", robot)
                 self._unresolved_at = now
         elif (self._deadlock_acted and self._unresolved_at is None
               and now - self._deadlock_since >= 2 * self.params.deadlock_grace_s + SIDESTEP_HOLD_S
-              and not any(leg.resume for leg in self._legs.values())):
+              and not any(self._legs[name].resume for name in cycle if name in self._legs)):
             robot = choose_retreat(cycle, self._priority)
             self._event("ERROR", "DEADLOCK_UNRESOLVED",
                         f"{robot} of {cycle} stepped aside but the cycle remains", robot)

@@ -136,3 +136,29 @@ def test_a_robot_already_on_the_in_line_joins_it_where_it_stands(planner, floor)
     assert route.points[0] == start
     assert route.length < 0.6 * line.length() + 0.05
     assert route.fixed == [(0.0, route.length, "work_in")]
+
+
+def test_reservation_time_is_the_distance_driven_not_the_cost(planner, floor):
+    """The penalty is asked for the time a cell is reached: distance along the path, without
+    earlier penalties or the fixed-line cost folded in."""
+    seen = []
+
+    def penalty(cell, s):
+        seen.append((cell, s))
+        return 100.0  # far more than any distance on this floor
+
+    a, b = floor.cell_of(1.0, 0.8), floor.cell_of(1.5, 0.8)
+    planner.astar(a, b, floor.clear, penalty)
+    assert seen
+    assert max(s for _, s in seen) < 10.0
+
+
+def test_joining_the_line_from_a_cell_too_close_to_a_wall_is_refused():
+    floor = FloorMap({"bounds": [0, 0, 2, 1.4], "boxes": [[0.8, 0.9, 1.2, 1.4]], "cell_m": 0.1,
+                      "robot_radius_m": 0.08, "cell_margin_m": 0.05,
+                      "fixed_lines": {"l": [[0.4, 0.65], [1.6, 0.65]]}})
+    planner = FloorPlanner(floor)
+    start = (1.0, 0.76)  # 0.11 m off the line, but its cell is too close to the box
+    assert floor.cell_of(*start) not in floor.clear
+    route = planner.leg(start, (1.6, 0.65), in_line="l")
+    assert route is None or route.points[0] != start or route.fixed[0][0] > 0.0

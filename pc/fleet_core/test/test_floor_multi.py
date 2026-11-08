@@ -80,8 +80,6 @@ def test_a_second_robot_is_steered_off_a_reserved_corridor():
     penalty = traffic._penalty_for("b")
     floor = traffic.floor
     corridor = floor.cell_of(1.8, 1.15)
-    # b would reach this cell while a is in it (both at about 4 s), so it costs extra
-    assert penalty(corridor, 0.8 * 0.2 / 0.2 * 1.0 + 0.0) >= 0.0
     assert max(penalty(corridor, s) for s in (0.2 * t for t in range(0, 40))) > 0.0
     assert penalty(floor.cell_of(1.8, 0.45), 1.0) == 0.0  # nobody plans to be there
 
@@ -169,3 +167,81 @@ def test_a_route_keeps_the_whole_body_off_cells_others_hold():
     route = traffic._route(b, (b.x, b.y), (1.0, 0.75))
     assert route is not None
     assert not traffic._swept(route.points) & traffic.zones.held_set("a")
+
+
+# ---- review fixes (Codex P3) ------------------------------------------------------------
+
+
+def test_an_isolated_robot_on_its_way_to_a_dock_does_not_hold_the_line_queue():
+    traffic = two_robot_floor()
+    a, b = traffic._missions["a"], traffic._missions["b"]
+    traffic._start_leg(a, "TO_WORK", None, "W")
+    traffic._start_leg(b, "TO_WORK", None, "W")
+    assert traffic._legs["b"].waiting
+    traffic._fail(a, "DEADLOCK_UNRESOLVED")
+    for cell in list(traffic.zones.held_set("a")):  # the operator cleared it off the floor
+        traffic.zones.release("a", cell)
+    traffic._drive(b)
+    assert not traffic._legs["b"].waiting
+
+
+def test_only_robots_in_the_current_cycle_step_aside(monkeypatch):
+    from fleet_core.traffic.floor import controller as floor_controller
+    params = load_params().__class__(**{**load_params().__dict__, "traffic_mode": "freefloor"})
+    now = [0.0]
+    core = FleetManager(load_lane_map(), params, ["a", "b", "c"], lambda: now[0])
+    traffic = core.traffic
+    graphs = [{"a": {"b"}, "b": {"a"}}, {"b": {"c"}, "c": {"b"}}]
+    tick = [0]
+
+    def alternating(_zones):
+        tick[0] += 1
+        return {k: set(v) for k, v in graphs[tick[0] % 2].items()}
+
+    monkeypatch.setattr(floor_controller, "wait_graph", alternating)
+    steps = []
+    monkeypatch.setattr(traffic, "_sidestep", lambda m, cycle: steps.append(
+        (m.name, set(cycle), set(graphs[tick[0] % 2]))) or True)
+    while now[0] < params.deadlock_grace_s + 1.0:
+        traffic._check_deadlock(now[0])
+        now[0] = round(now[0] + 0.1, 1)
+    assert steps
+    for name, cycle, current in steps:
+        assert name in current and cycle == current
+
+
+def test_a_sidestep_elsewhere_does_not_postpone_an_unresolved_cycle(monkeypatch):
+    from fleet_core.traffic.floor import controller as floor_controller
+    from fleet_core.traffic.floor.controller import _Leg
+    params = load_params().__class__(**{**load_params().__dict__, "traffic_mode": "freefloor"})
+    now = [0.0]
+    core = FleetManager(load_lane_map(), params, ["a", "b", "c"], lambda: now[0])
+    traffic = core.traffic
+    monkeypatch.setattr(floor_controller, "wait_graph", lambda _z: {"a": {"b"}, "b": {"a"}})
+    monkeypatch.setattr(traffic, "_sidestep", lambda m, cycle: True)
+    traffic._legs["c"] = _Leg(None, (0.0, 0.0), resume=("TO_PARK", None, "P-3"))  # stuck aside
+    end = 2 * params.deadlock_grace_s + floor_controller.SIDESTEP_HOLD_S + 1.0
+    while now[0] < end:
+        traffic._check_deadlock(now[0])
+        now[0] = round(now[0] + 0.1, 1)
+    codes = [getattr(e, "code", "") for e in traffic.take_output()]
+    assert "DEADLOCK_UNRESOLVED" in codes
+
+
+def test_cells_ahead_of_an_object_stay_with_the_robot_until_its_goal_has_ended():
+    """The robot may still follow the cancelled MoveTo until the cancel result: the cells of that
+    path stay its own; they go to the blocked mark only after the goal has ended."""
+    traffic = two_robot_floor()
+    b = traffic._missions["b"]
+    traffic._start_leg(b, "TO_PARK", None, "P-3")
+    traffic._drive(b)
+    goal = b.goal
+    assert goal is not None
+    sent = set(traffic.zones.held_set("b"))
+    b.robot_state = "BLOCKED"
+    traffic._mark_blocked(b)
+    assert sent <= traffic.zones.held_set("b")
+    traffic.on_move_result("b", goal.id, False, "CANCELED")
+    for _ in range(3):
+        traffic._note_block_report(b)
+    assert traffic.blocked_cells()

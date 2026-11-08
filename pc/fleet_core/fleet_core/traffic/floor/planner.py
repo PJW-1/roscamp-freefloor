@@ -112,6 +112,9 @@ class FloorPlanner:
         if in_line:
             tail = list(lines[in_line].points)
             rest = None if out_line else _rest_of_line(start, tail)
+            if rest is not None and not line_cells(self.floor, [start, rest[0]]) <= \
+                    self.floor.clear:
+                rest = None  # the step onto the line would leave clear floor: plan as usual
             if rest is not None:
                 # already standing on the approach line (it waited there): go on up the line
                 route = Route([tuple(start), *rest])
@@ -152,9 +155,9 @@ class FloorPlanner:
         goal_xy = floor.centre(b)
         best = {a: 0.0}
         came = {}
-        heap = [(math.dist(floor.centre(a), goal_xy), 0.0, a)]
+        heap = [(math.dist(floor.centre(a), goal_xy), 0.0, 0.0, a)]
         while heap:
-            _, g, cell = heapq.heappop(heap)
+            _, g, dist, cell = heapq.heappop(heap)
             if cell == b:
                 path = [cell]
                 while cell in came:
@@ -171,15 +174,14 @@ class FloorPlanner:
                                   or (cell[0], cell[1] + dj) not in allowed):
                     continue  # no corner cutting
                 d = step * (math.sqrt(2) if di and dj else 1.0)
-                if nxt in self.line_cells and nxt not in (a, b):
-                    d *= LINE_COST
-                cost = g + d
+                cost = g + (d * LINE_COST if nxt in self.line_cells and nxt not in (a, b) else d)
                 if penalty is not None:
-                    cost += penalty(nxt, s0 + g + d)
+                    cost += penalty(nxt, s0 + dist + d)  # reached after driving dist + d
                 if cost < best.get(nxt, math.inf) - 1e-12:
                     best[nxt] = cost
                     came[nxt] = cell
-                    heapq.heappush(heap, (cost + math.dist(floor.centre(nxt), goal_xy), cost, nxt))
+                    heapq.heappush(heap, (cost + math.dist(floor.centre(nxt), goal_xy), cost,
+                                          dist + d, nxt))
         return None
 
     def visible(self, p, q, allowed) -> bool:
