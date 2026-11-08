@@ -200,3 +200,62 @@ def test_the_stand_in_serves_every_dock_when_allowed(ros):
         assert len(node.dock_servers) == 3
     finally:
         node.destroy_node()
+
+
+class _Handle:
+    """Just enough of a dock goal handle for SimStandIn._dock."""
+
+    def __init__(self, dock_id):
+        from types import SimpleNamespace
+        self.request = SimpleNamespace(dock_id=dock_id)
+        self.is_cancel_requested = False
+        self.ended = ""
+
+    def abort(self):
+        self.ended = "aborted"
+
+    def succeed(self):
+        self.ended = "succeeded"
+
+    def canceled(self):
+        self.ended = "canceled"
+
+    def publish_feedback(self, feedback):
+        pass
+
+
+def _docking_stub(ros, monkeypatch, sim_now):
+    """A stub with duration_s 0, the robot on the WORK dock and Gazebo time given by sim_now."""
+    from ament_index_python.packages import get_package_share_directory
+    from fleet_gz_sim import stand_in_node
+    scenario = f"{get_package_share_directory('fake_robots')}/scenarios/basic_orders.yaml"
+    node = stand_in(ros, dock_stub=True, use_sim_time=True, scenario_file=scenario)
+    node._duration = 0.0
+    monkeypatch.setattr(stand_in_node, "CLOCK_STALL_S", 0.1)
+    monkeypatch.setattr(stand_in_node, "stub_may_answer", lambda active, now: True)
+    monkeypatch.setattr(node, "_now", sim_now)
+    x, y = node._site.waypoint_pose(node._site.stations["WORK"].dock)[:2]
+    node._pose["pinky1"] = (x, y, 0.0)
+    return node
+
+
+def test_the_dock_loop_fails_a_goal_on_a_clock_that_stopped_before_it(ros, monkeypatch):
+    """The _dock loop itself, not only dock_done (Codex review of c98c086)."""
+    node = _docking_stub(ros, monkeypatch, lambda: 12.0)
+    try:
+        handle = _Handle("WORK")
+        assert not node._dock("pinky1", handle).success
+        assert handle.ended == "aborted"
+    finally:
+        node.destroy_node()
+
+
+def test_the_dock_loop_succeeds_once_the_clock_moves(ros, monkeypatch):
+    ticks = iter(12.0 + 0.01 * i for i in range(10_000))
+    node = _docking_stub(ros, monkeypatch, lambda: next(ticks))
+    try:
+        handle = _Handle("WORK")
+        assert node._dock("pinky1", handle).success
+        assert handle.ended == "succeeded"
+    finally:
+        node.destroy_node()
