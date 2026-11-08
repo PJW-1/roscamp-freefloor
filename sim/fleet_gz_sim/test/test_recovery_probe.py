@@ -156,3 +156,29 @@ def test_empty_result_dir_means_log_only():
     sink = CsvSink("")
     sink.write({"event": "start"})
     sink.close()
+
+
+# -- hosted in the fleet_check process ------------------------------------------------------------
+
+def test_a_hosted_probe_ignores_the_arguments_of_its_host(monkeypatch):
+    """gz.launch.py starts fleet_check with -r __node:=fleet_check and a /** parameter file. Those
+    apply to every node in the process, so the hosted probe must not read them: it would be
+    renamed fleet_check and could lose use_sim_time."""
+    rclpy = pytest.importorskip("rclpy")
+    pytest.importorskip("fleet_interfaces.msg")
+    monkeypatch.setenv("ROS_DOMAIN_ID", "97")
+    monkeypatch.setenv("ROS_AUTOMATIC_DISCOVERY_RANGE", "LOCALHOST")
+    from fleet_gz_sim.recovery_probe_node import RecoveryProbeNode
+    context = rclpy.Context()
+    rclpy.init(context=context, args=["--ros-args", "-r", "__node:=fleet_check",
+                                      "-p", "use_sim_time:=false"])
+    try:
+        node = RecoveryProbeNode(["pinky1"], "", 2.0, context=context)
+        try:
+            assert node.get_name() == "recovery_probe"
+            assert node.get_parameter("use_sim_time").value is True
+        finally:
+            node.sink.close()
+            node.destroy_node()
+    finally:
+        rclpy.try_shutdown(context=context)

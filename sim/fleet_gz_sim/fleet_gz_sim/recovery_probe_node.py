@@ -26,10 +26,16 @@ def _seconds(stamp) -> float:
 
 
 class RecoveryProbeNode(Node):
-    def __init__(self, robots=None, result_dir=None, settle_s=None):
-        """Arguments (fleet_check passes its own parameters) win over the node's parameters."""
-        super().__init__("recovery_probe", **({} if robots is None else {
-            "parameter_overrides": [Parameter("use_sim_time", value=True)]}))
+    def __init__(self, robots=None, result_dir=None, settle_s=None, **node_kwargs):
+        """Arguments (fleet_check passes its own parameters) win over the node's parameters.
+
+        Hosted in fleet_check, the node ignores the process arguments: launch gives that process
+        -r __node:=fleet_check and a /** parameter file, which would rename this node too.
+        """
+        hosted = {} if robots is None else {
+            "use_global_arguments": False,
+            "parameter_overrides": [Parameter("use_sim_time", value=True)]}
+        super().__init__("recovery_probe", **node_kwargs, **hosted)
         if robots is None:
             robots = list(self.declare_parameter("robots", ["pinky1", "pinky2", "pinky3"]).value)
             result_dir = self.declare_parameter("result_dir", "").value
