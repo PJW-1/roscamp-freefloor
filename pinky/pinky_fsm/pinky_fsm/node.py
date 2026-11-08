@@ -4,7 +4,9 @@
 - 액션 서버: 계약의 move_to(MoveTo), dock(Dock)
 - 발행: 계약의 robot_state(RobotState, 기본 10 Hz)
 - 구독: 계약의 heartbeat, odom(속도), local costmap(BLOCKED 판단)
-- 액션 클라이언트: Nav2 controller의 follow_path(FollowPath)
+- 액션 클라이언트: Nav2 controller의 follow_path(FollowPath), behavior_server의
+  backup(BackUp, 자가 복구. 핑키_계약 3절 7번 2026-11-09 제안)
+- 서비스 클라이언트: local costmap 비우기(ClearEntireCostmap, 자가 복구)
 - 위치: TF map → base_footprint(AMCL). 시간이 지난 TF는 위치를 모르는 것으로 친다
 
 로봇 namespace 안에서 돌고 /tf, /tf_static을 namespace의 tf, tf_static으로 바꿔 띄운다.
@@ -22,6 +24,7 @@ from fleet_interfaces.action import Dock, MoveTo
 from fleet_interfaces.msg import RobotState
 from geometry_msgs.msg import Pose2D, PoseStamped
 from nav2_msgs.action import FollowPath
+from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -34,8 +37,18 @@ from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Header
 from tf2_ros import Buffer, TransformException, TransformListener
 
+from pinky_fsm.backup import BackUp, CancelBackUp, reason_of
+from pinky_fsm.backup_ros import BackUpRunner
 from pinky_fsm.contract import default_contract_path, load_contract, to_ros_qos
-from pinky_fsm.core import CancelNav, Finish, FsmParams, PinkyFsm, SendPath
+from pinky_fsm.core import (
+    RECOVERING,
+    CancelNav,
+    ClearCostmap,
+    Finish,
+    FsmParams,
+    PinkyFsm,
+    SendPath,
+)
 from pinky_fsm.costmap import Grid, obstacle_on, to_frame
 from pinky_fsm.geometry import quaternion_yaw, yaw_quaternion
 
@@ -43,6 +56,15 @@ FEEDBACK_PERIOD_S = 0.2
 UNKNOWN_BATTERY = -1.0  # 배터리 토픽이 없을 때. 관제는 보여 주기만 한다
 _OUTCOME = {GoalStatus.STATUS_SUCCEEDED: "succeeded", GoalStatus.STATUS_ABORTED: "aborted",
             GoalStatus.STATUS_CANCELED: "canceled"}
+_FLOAT_PARAMS = (
+    "arrival_tolerance_m", "connect_tolerance_m", "refresh_within_m", "refresh_every_s",
+    "heartbeat_timeout_s", "stopped_speed_mps", "stopped_turn_rps", "block_report_s",
+    "block_clear_s", "block_timeout_s", "block_lookahead_m", "path_step_m",
+    # 자가 복구
+    "backup_max_m", "robot_radius_m", "backup_margin_m", "backup_min_m",
+    "backup_lateral_limit_m", "backup_speed_mps", "backup_time_allowance_s",
+    "backup_result_grace_s", "recovery_pass_m", "recovery_timeout_s", "recovery_reset_m")
+_INT_PARAMS = ("recovery_attempts",)
 
 
 class _Slot:
@@ -65,6 +87,8 @@ class PinkyFsmNode(Node):
         declare("map_frame", "map")
         declare("base_frame", "base_footprint")
         declare("follow_path_action", "follow_path")
+        declare("backup_action", "backup")
+        declare("clear_costmap_service", "local_costmap/clear_entirely_local_costmap")
         declare("controller_id", "FollowPath")
         declare("goal_checker_id", "general_goal_checker")
         declare("progress_checker_id", "progress_checker")
@@ -74,11 +98,10 @@ class PinkyFsmNode(Node):
         declare("state_rate_hz", 10.0)
         declare("control_rate_hz", 20.0)
         declare("pose_timeout_s", 1.0)
-        for name in ("arrival_tolerance_m", "connect_tolerance_m", "refresh_within_m",
-                     "refresh_every_s", "heartbeat_timeout_s", "stopped_speed_mps",
-                     "stopped_turn_rps", "block_report_s", "block_clear_s", "block_timeout_s",
-                     "block_lookahead_m", "path_step_m"):
+        for name in _FLOAT_PARAMS:
             declare(name, float(getattr(d, name)))
+        for name in _INT_PARAMS:
+            declare(name, int(getattr(d, name)))
         get = self.get_parameter
         self.robot_id = get("robot_id").value
         self._map_frame = get("map_frame").value
@@ -86,12 +109,10 @@ class PinkyFsmNode(Node):
         self._pose_timeout = float(get("pose_timeout_s").value)
         self._nav_ids = (get("controller_id").value, get("goal_checker_id").value,
                          get("progress_checker_id").value)
-        self._fsm = PinkyFsm(FsmParams(**{
-            name: float(get(name).value) for name in (
-                "arrival_tolerance_m", "connect_tolerance_m", "refresh_within_m",
-                "refresh_every_s", "heartbeat_timeout_s", "stopped_speed_mps",
-                "stopped_turn_rps", "block_report_s", "block_clear_s", "block_timeout_s",
-                "block_lookahead_m", "path_step_m")}))
+        self._fsm = PinkyFsm(FsmParams(
+            **{name: float(get(name).value) for name in _FLOAT_PARAMS},
+            **{name: int(get(name).value) for name in _INT_PARAMS}))
+        self._last_state = ""
         contract = load_contract(get("contract_file").value or default_contract_path())
 
         self._lock = threading.RLock()
@@ -101,6 +122,7 @@ class PinkyFsmNode(Node):
         self._nav_pending: set[int] = set()  # 보냈지만 수락 여부를 아직 모른다
         self._cancel_on_accept: set[int] = set()
         self._late: list[tuple[int, str]] = []  # 다음 주기에 core에 넘길 FollowPath 결과
+        self._late_backup: list[tuple[int, str]] = []  # 다음 주기에 넘길 BackUp 결과
         self._speed = (0.0, 0.0)
         self._costmap: tuple[Grid, str] | None = None  # (격자, 틀). 한 번에 바꿔 짝이 맞게 둔다
         self._battery = UNKNOWN_BATTERY
@@ -124,6 +146,10 @@ class PinkyFsmNode(Node):
                                      self._on_battery, qos_profile_sensor_data)
         self._nav = ActionClient(self, FollowPath, get("follow_path_action").value,
                                  callback_group=group)
+        self._backup = BackUpRunner(self, get("backup_action").value, self._on_backup_result,
+                                    callback_group=group)
+        self._clear = self.create_client(ClearEntireCostmap, get("clear_costmap_service").value,
+                                         callback_group=group)
         self._move_server = self._server(MoveTo, contract.name("move_to", pinky=self.robot_id),
                                          "move", group)
         self._dock_server = self._server(Dock, contract.name("dock", pinky=self.robot_id),
@@ -152,12 +178,14 @@ class PinkyFsmNode(Node):
         with self._lock:
             self._alive = False
             self._cancel_all_nav()
+            self._backup.cancel_all()
 
     def destroy_node(self):
         self.stop()
         self._move_server.destroy()
         self._dock_server.destroy()
         self._nav.destroy()
+        self._backup.destroy()
         return super().destroy_node()
 
     # -- 입력 ------------------------------------------------------------------------------
@@ -272,6 +300,18 @@ class PinkyFsmNode(Node):
                 self._send_path(cmd)
             elif isinstance(cmd, CancelNav):
                 self._cancel_all_nav()
+            elif isinstance(cmd, BackUp):
+                self.get_logger().info(
+                    f"self-recovery {self._fsm.recovery_attempts_used}: backup #{cmd.seq} "
+                    f"{cmd.distance_m:.3f} m")
+                if not self._backup.send(cmd.seq, cmd.distance_m, cmd.speed_mps,
+                                         cmd.time_allowance_s):
+                    self.get_logger().warn("backup server is not available")
+                    self._late_backup.append((cmd.seq, "rejected"))
+            elif isinstance(cmd, CancelBackUp):
+                self._backup.cancel_all()
+            elif isinstance(cmd, ClearCostmap):
+                self._clear_costmap()
             elif isinstance(cmd, Finish):
                 slot = self._slots.get(cmd.goal_id)
                 if slot is not None:
@@ -301,6 +341,22 @@ class PinkyFsmNode(Node):
         self._nav_pending.add(cmd.seq)
         self._nav.send_goal_async(goal).add_done_callback(partial(self._on_nav_response,
                                                                   cmd.seq))
+
+    def _clear_costmap(self) -> None:
+        if not self._clear.service_is_ready():
+            self.get_logger().warn("clear costmap service is not available")
+            return
+        self._clear.call_async(ClearEntireCostmap.Request())
+
+    def _on_backup_result(self, seq: int, outcome: str, error_code: int,
+                          travelled: float) -> None:
+        reason = reason_of(outcome, error_code)
+        self.get_logger().info(f"backup #{seq} {outcome} {reason or 'OK'} "
+                               f"after {travelled:.3f} m")
+        with self._lock:
+            pose = self._pose()
+            self._run(self._fsm.backup_result(seq, outcome, time.monotonic(),
+                                              pose[:3] if pose else None))
 
     def _cancel_all_nav(self) -> None:
         for handle in self._nav_handles.values():
@@ -344,7 +400,20 @@ class PinkyFsmNode(Node):
             late, self._late = self._late, []
             for seq, outcome in late:
                 self._run(self._fsm.nav_result(seq, outcome, now, here, self._obstacle))
+            late_backup, self._late_backup = self._late_backup, []
+            for seq, outcome in late_backup:
+                self._run(self._fsm.backup_result(seq, outcome, now, here))
             self._run(self._fsm.tick(now, here, self._speed, self._obstacle))
+            self._log_state()
+
+    def _log_state(self) -> None:
+        """자가 복구가 들고 나는 것을 남긴다(시뮬 기록과 맞춰 보려고)."""
+        state = self._fsm.state()
+        if state != self._last_state and RECOVERING in (state, self._last_state):
+            self.get_logger().info(f"state {self._last_state} -> {state} "
+                                   f"(self-recovery attempts used "
+                                   f"{self._fsm.recovery_attempts_used})")
+        self._last_state = state
 
     def _publish_state(self) -> None:
         with self._lock:

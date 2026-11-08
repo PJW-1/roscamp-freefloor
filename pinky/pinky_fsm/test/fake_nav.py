@@ -4,6 +4,10 @@ FakeNav는 follow_path(FollowPath)를 받아 경로를 따라 TF(map → odom �
 odom을 낸다. Nav2 controller처럼 새 목표가 오면 옛 목표를 ABORTED로 끝내고 서지 않고
 새 경로로 넘어간다(nav2_util simple_action_server의 accept_pending_goal). 앞에 물체가 있으면
 서고, 1초 뒤 FollowPath를 실패로 끝낸다(RPP 충돌 검사 + failure_tolerance 1.0).
+
+behavior_server의 backup(BackUp)도 흉내 낸다: 바라보는 방향의 반대로 곧게 물러나고, 뒤에
+벽(wall_behind_m)이 있으면 거기서 서고 COLLISION_AHEAD로 끝낸다. local costmap 비우기
+(ClearEntireCostmap)는 부른 시각만 적는다.
 """
 from __future__ import annotations
 
@@ -12,7 +16,8 @@ import threading
 import time
 
 from geometry_msgs.msg import TransformStamped
-from nav2_msgs.action import FollowPath
+from nav2_msgs.action import BackUp, FollowPath
+from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -40,6 +45,13 @@ class FakeNav(Node):
         self.cancels = []  # 시각
         self.speed_log = []  # (시각, 선속도)
         self.obstacle: tuple[float, float] | None = None
+        self.backups = []  # (시각, 거리, 속도)
+        self.backup_ends = []  # (outcome, error_code)
+        self.clears = []  # 시각
+        self.wall_behind_m: float | None = None  # 물러날 때 이만큼 가면 뒤에 벽
+        self._backing: dict | None = None
+        self._backing_of: dict[int, dict] = {}
+        self._stopping = False
         self._blocked_since: float | None = None
         self._outcome: dict[int, str] = {}
         self._tf = TransformBroadcaster(self)
@@ -60,8 +72,20 @@ class FakeNav(Node):
             goal_callback=lambda _g: GoalResponse.ACCEPT,
             cancel_callback=self._on_cancel, handle_accepted_callback=self._accepted,
             callback_group=group)
+        self._backup_server = ActionServer(
+            self, BackUp, "backup", execute_callback=self._execute_backup,
+            goal_callback=lambda _g: GoalResponse.ACCEPT,
+            cancel_callback=lambda _h: CancelResponse.ACCEPT,
+            handle_accepted_callback=self._accepted_backup, callback_group=group)
+        self.create_service(ClearEntireCostmap, "local_costmap/clear_entirely_local_costmap",
+                            self._on_clear, callback_group=group)
         self.create_timer(1.0 / STEP_HZ, self._step, callback_group=group)
         self.create_timer(0.2, self._publish_grid, callback_group=group)
+
+    def stop(self) -> None:
+        """Harness가 실행기를 끄기 전에 부른다. 도는 목표를 모두 끝내야 실행기가 멈춘다."""
+        with self.lock:
+            self._stopping = True
 
     # -- 액션 ------------------------------------------------------------------------------
 
@@ -88,6 +112,8 @@ class FakeNav(Node):
         while True:
             with self.lock:
                 outcome = self._outcome.pop(id(handle), None)
+                if self._stopping and outcome is None:
+                    outcome = "preempted"
                 if handle.is_cancel_requested and outcome is None:
                     if self.current is handle:
                         self.current, self.v = None, 0.0
@@ -105,6 +131,72 @@ class FakeNav(Node):
                                          error_msg="fake collision ahead")
             time.sleep(0.005)
 
+    def _on_clear(self, _req, res):
+        with self.lock:
+            self.clears.append(time.monotonic())
+        return res
+
+    def _accepted_backup(self, handle):
+        g = handle.request
+        with self.lock:
+            if self._backing is not None:
+                self._backing["outcome"] = ("preempted", 0)
+            self.backups.append((time.monotonic(), abs(g.target.x), abs(g.speed)))
+            self._backing = {"handle": handle, "left": abs(g.target.x), "travelled": 0.0,
+                             "speed": abs(g.speed), "outcome": None}
+            self._backing_of[id(handle)] = self._backing
+        handle.execute()
+
+    def _execute_backup(self, handle):
+        with self.lock:
+            b = self._backing_of.pop(id(handle))
+        while True:
+            with self.lock:
+                outcome = b["outcome"]
+                if outcome is None and handle.is_cancel_requested:
+                    outcome = ("canceled", 0)
+                if outcome is None and self._stopping:
+                    outcome = ("preempted", 0)
+                if outcome is not None:
+                    if self._backing is b:
+                        self._backing, self.v = None, 0.0
+                    self.backup_ends.append(outcome)
+                travelled = b["travelled"]
+            if outcome is None:
+                fb = BackUp.Feedback()
+                fb.distance_traveled = float(travelled)
+                handle.publish_feedback(fb)
+                time.sleep(0.02)
+                continue
+            kind, code = outcome
+            res = BackUp.Result(error_code=code)
+            if kind == "done":
+                handle.succeed()
+            elif kind == "canceled":
+                handle.canceled()
+            else:
+                handle.abort()
+            return res
+
+    def _back_up(self, b):
+        """바라보는 방향의 반대로 한 걸음 물러난다."""
+        if b["outcome"] is not None:
+            return
+        wall = self.wall_behind_m
+        if wall is not None and b["travelled"] >= wall - 1e-9:
+            b["outcome"] = ("collision", BackUp.Result.COLLISION_AHEAD)
+            return
+        d = min(b["speed"] / STEP_HZ, b["left"])
+        if wall is not None:
+            d = min(d, wall - b["travelled"])
+        x, y, yaw = self.pose
+        self.pose[0], self.pose[1] = x - d * math.cos(yaw), y - d * math.sin(yaw)
+        b["left"] -= d
+        b["travelled"] += d
+        self.v = -b["speed"]
+        if b["left"] <= 1e-9:
+            b["outcome"] = ("done", 0)
+
     # -- 움직임 ----------------------------------------------------------------------------
 
     def _step(self):
@@ -112,7 +204,10 @@ class FakeNav(Node):
         with self.lock:
             self.v = 0.0
             handle = self.current
-            if handle is not None and self.path:
+            if self._backing is not None:
+                self._back_up(self._backing)  # BackUp이 cmd_vel을 쥔다
+                self._blocked_since = None
+            elif handle is not None and self.path:
                 if self._blocked():
                     if self._blocked_since is None:
                         self._blocked_since = now

@@ -6,6 +6,7 @@ import math
 from itertools import pairwise
 
 import pytest
+from pinky_fsm.backup import BackUp, CancelBackUp
 from pinky_fsm.core import (
     BLOCKED,
     CANCELED,
@@ -16,8 +17,10 @@ from pinky_fsm.core import (
     MOVING,
     NAV_ABORTED,
     PATH_NOT_CONNECTED,
+    RECOVERING,
     TIMEOUT,
     CancelNav,
+    ClearCostmap,
     Finish,
     FsmParams,
     PinkyFsm,
@@ -236,7 +239,8 @@ def test_repeated_far_successes_give_up_with_nav_aborted():
 
 
 def test_nav_abort_without_an_obstacle_fails_with_nav_aborted():
-    fsm = ready()
+    """With both self-recovery attempts used (here: none allowed)."""
+    fsm = ready(recovery_attempts=0)
     [send] = sends(move(fsm, "g1", 1.0))
     cmds = fsm.nav_result(send.seq, "aborted", 4.0, (0.35, 1.70, NORTH), no_obstacle)
     assert cmds == [Finish("g1", False, NAV_ABORTED), CancelNav()]
@@ -336,10 +340,11 @@ def test_zero_heartbeat_timeout_never_stops():
 
 
 # ---- BLOCKED (핑키_계약 4절, R9) -------------------------------------------------------------
+# 자가 복구를 다 쓴 뒤의 동작이다. recovery_attempts=0은 두 번을 이미 쓴 것과 같다.
 
 
 def test_blocked_after_one_second_stopped_with_an_obstacle_ahead():
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     move(fsm, "g1", 0.0)
     here = (0.35, 1.70, NORTH)
     fsm.heartbeat(1.0)
@@ -390,7 +395,7 @@ def test_obstacle_check_looks_half_a_metre_along_the_path():
 
 
 def test_blocked_goal_survives_a_nav_abort_and_resumes_when_clear():
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     [send] = sends(move(fsm, "g1", 0.0))
     here = (0.35, 1.70, NORTH)
     for t in (1.0, 2.1):
@@ -408,7 +413,7 @@ def test_blocked_goal_survives_a_nav_abort_and_resumes_when_clear():
 
 
 def test_nav_abort_with_an_obstacle_waits_even_before_blocked_is_reported():
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     [send] = sends(move(fsm, "g1", 0.0))
     here = (0.35, 1.70, NORTH)
     fsm.tick(0.5, here, STILL, obstacle)
@@ -421,7 +426,7 @@ def test_nav_abort_with_an_obstacle_waits_even_before_blocked_is_reported():
 
 
 def test_blocked_stays_after_cancel_while_the_obstacle_remains():
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     move(fsm, "g1", 0.0)
     here = (0.35, 1.70, NORTH)
     for t in (1.0, 2.1):
@@ -440,7 +445,7 @@ def test_blocked_goal_ends_with_timeout_when_the_obstacle_stays():
     """A goal that cannot go on must end with a failure or TIMEOUT. The fleet manager cancels a
     blocked goal after blocked_mark_s (5 s), so block_timeout_s (90 s) only matters when the
     fleet manager does not."""
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     [send] = sends(move(fsm, "g1", 0.0))
     here = (0.35, 1.70, NORTH)
     fsm.tick(1.0, here, STILL, obstacle)
@@ -455,7 +460,7 @@ def test_blocked_goal_ends_with_timeout_when_the_obstacle_stays():
 
 def test_a_goal_waiting_after_an_obstacle_abort_still_cancels_when_it_ends():
     """The latest FollowPath ended, but an older one may still be on its way: cancel."""
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     [send] = sends(move(fsm, "g1", 0.0))
     here = (0.35, 1.70, NORTH)
     assert fsm.nav_result(send.seq, "aborted", 1.0, here, obstacle) == []
@@ -464,7 +469,7 @@ def test_a_goal_waiting_after_an_obstacle_abort_still_cancels_when_it_ends():
 
 def test_an_obstacle_that_cleared_in_time_resends_instead_of_timing_out():
     """Both the clear time and block_timeout_s pass before one tick: the clear wins."""
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     [send] = sends(move(fsm, "g1", 0.0))
     here = (0.35, 1.70, NORTH)
     fsm.nav_result(send.seq, "aborted", 2.0, here, obstacle)
@@ -477,7 +482,7 @@ def test_an_obstacle_that_cleared_in_time_resends_instead_of_timing_out():
 
 def test_blocked_goal_times_out_while_nav2_still_holds_it():
     """BLOCKED for block_timeout_s also ends a goal Nav2 never gave up on, and stops Nav2."""
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     move(fsm, "g1", 0.0)
     here = (0.35, 1.70, NORTH)
     for t in (1.0, 2.0, 60.0, 91.9):
@@ -489,7 +494,7 @@ def test_blocked_goal_times_out_while_nav2_still_holds_it():
 
 
 def test_block_timeout_counts_again_after_the_obstacle_clears():
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     [send] = sends(move(fsm, "g1", 0.0))
     here = (0.35, 1.70, NORTH)
     fsm.nav_result(send.seq, "aborted", 1.0, here, obstacle)
@@ -506,13 +511,266 @@ def test_block_timeout_counts_again_after_the_obstacle_clears():
 
 
 def test_heartbeat_loss_while_blocked_ends_the_goal():
-    fsm = ready()
+    fsm = ready(recovery_attempts=0)
     [send] = sends(move(fsm, "g1", 0.0))
     here = (0.35, 1.70, NORTH)
     fsm.tick(1.0, here, STILL, obstacle)
     fsm.nav_result(send.seq, "aborted", 1.2, here, obstacle)
     cmds = fsm.tick(1.6, here, STILL, obstacle)
     assert Finish("g1", False, HEARTBEAT_LOST) in cmds
+
+
+# ---- 자가 복구 (핑키_계약 3절 7번, 4절; 2026-11-09 제안) ---------------------------------------
+
+STUCK = (0.35, 1.75, NORTH)  # P3(경로 시작)에서 0.20 m. 후진 거리 0.20 - 0.08 - 0.03 = 0.09 m
+BEHIND = (0.35, 1.66, NORTH)  # 0.09 m 물러난 자리
+
+
+def stand(fsm, t0, pose, seen=obstacle):
+    """t0부터 1초 넘게 서 있는다. 마지막 tick의 명령을 돌려준다."""
+    cmds = []
+    for t in (t0, t0 + 1.05):
+        fsm.heartbeat(t)
+        cmds = fsm.tick(t, pose, STILL, seen)
+    return cmds
+
+
+def backups(cmds):
+    return [c for c in cmds if isinstance(c, BackUp)]
+
+
+def test_standing_at_an_obstacle_backs_up_instead_of_reporting_blocked():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    cmds = stand(fsm, 1.0, STUCK)
+    # FollowPath first: BackUp and FollowPath both drive cmd_vel
+    assert kinds(cmds) == ["CancelNav", "BackUp"]
+    [b] = backups(cmds)
+    assert b.distance_m == pytest.approx(0.09)
+    assert b.speed_mps == pytest.approx(0.08) and b.time_allowance_s == pytest.approx(5.0)
+    assert fsm.state() == RECOVERING and fsm.current_goal() == "P-5"
+
+
+def test_after_backing_up_the_costmap_is_cleared_and_the_rest_followed_again():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    [b] = backups(stand(fsm, 1.0, STUCK))
+    fsm.heartbeat(3.5)
+    cmds = fsm.backup_result(b.seq, "succeeded", 3.5, BEHIND)
+    assert kinds(cmds) == ["ClearCostmap", "SendPath"]
+    assert sends(cmds)[0].poses[0][:2] == pytest.approx(BEHIND[:2], abs=1e-6)
+    assert sends(cmds)[0].poses[-1][:2] == pytest.approx(P5)
+    assert fsm.state() == RECOVERING  # 막힌 곳을 지나야 끝난다
+
+
+def test_getting_past_the_stuck_point_ends_the_recovery():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    [b] = backups(stand(fsm, 1.0, STUCK))
+    fsm.backup_result(b.seq, "succeeded", 3.0, BEHIND)
+    fsm.heartbeat(4.0)
+    fsm.tick(4.0, (0.35, 1.78, NORTH), DRIVING, no_obstacle)  # 0.03 m past
+    assert fsm.state() == RECOVERING
+    fsm.heartbeat(4.2)
+    fsm.tick(4.2, (0.35, 1.81, NORTH), DRIVING, no_obstacle)  # 0.06 m past
+    assert fsm.state() == MOVING
+
+
+def test_two_failed_attempts_fall_back_to_blocked():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    [b1] = backups(stand(fsm, 1.0, STUCK))
+    fsm.backup_result(b1.seq, "succeeded", 3.0, BEHIND)
+    [b2] = backups(stand(fsm, 4.0, STUCK))  # 다시 같은 곳에서 섰다
+    assert b2.seq > b1.seq and fsm.state() == RECOVERING
+    fsm.backup_result(b2.seq, "succeeded", 6.0, BEHIND)
+    cmds = stand(fsm, 7.0, STUCK)
+    assert backups(cmds) == [] and ClearCostmap() not in cmds
+    assert fsm.state() == BLOCKED
+
+
+def test_a_nav_abort_starts_a_recovery_even_without_an_obstacle():
+    """RPP stops for its own collision check where the lane check sees nothing (the robot drifted
+    toward a rack, 2026-11-08). The abort itself is the trigger."""
+    fsm = ready()
+    [send] = sends(move(fsm, "g1", 0.0))
+    fsm.heartbeat(2.0)
+    fsm.tick(2.0, STUCK, STILL, no_obstacle)
+    cmds = fsm.nav_result(send.seq, "aborted", 2.1, STUCK, no_obstacle)
+    assert kinds(cmds) == ["CancelNav", "BackUp"]
+    assert fsm.state() == RECOVERING
+
+
+def test_a_nav_abort_with_both_attempts_used_fails_with_nav_aborted():
+    fsm = ready()
+    [send] = sends(move(fsm, "g1", 0.0))
+    seq = send.seq
+    for t in (2.0, 5.0):
+        fsm.heartbeat(t)
+        fsm.tick(t, STUCK, STILL, no_obstacle)
+        [b] = backups(fsm.nav_result(seq, "aborted", t + 0.1, STUCK, no_obstacle))
+        [again] = sends(fsm.backup_result(b.seq, "succeeded", t + 1.0, BEHIND))
+        seq = again.seq
+    cmds = fsm.nav_result(seq, "aborted", 7.0, STUCK, no_obstacle)
+    assert cmds == [Finish("g1", False, NAV_ABORTED), CancelNav()]
+    assert fsm.state() == IDLE
+
+
+def test_no_room_behind_only_clears_the_costmap_and_tries_again():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    near_start = (0.35, 1.67, NORTH)  # 0.12 m: 0.12 - 0.11 < backup_min_m 0.02
+    cmds = stand(fsm, 1.0, near_start)
+    assert kinds(cmds) == ["CancelNav", "ClearCostmap", "SendPath"]
+    assert fsm.state() == RECOVERING
+
+
+def test_a_skewed_robot_backs_up_less_to_stay_near_the_lane():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    # 0.05 m right of the lane, facing 30 deg left of it: backing up drifts further right
+    skewed = (0.40, 1.85, NORTH + math.radians(30))
+    [b] = backups(stand(fsm, 1.0, skewed))
+    assert b.distance_m == pytest.approx(0.10, abs=1e-3)  # not min(0.15, 0.30 - 0.11)
+
+
+def test_follow_path_results_are_ignored_while_backing_up():
+    fsm = ready()
+    [send] = sends(move(fsm, "g1", 0.0))
+    stand(fsm, 1.0, STUCK)
+    assert fsm.nav_result(send.seq, "canceled", 2.1, STUCK, obstacle) == []
+    assert fsm.state() == RECOVERING
+
+
+def test_the_obstacle_watch_rests_while_backing_up():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    stand(fsm, 1.0, STUCK)
+    for t in (2.5, 3.0, 4.0):
+        fsm.heartbeat(t)
+        assert fsm.tick(t, STUCK, STILL, obstacle) == []
+    assert fsm.state() == RECOVERING
+
+
+def test_a_lost_backup_result_does_not_hold_the_recovery():
+    """BackUp has a 5 s time allowance. Without a result 2 s after that, stop it and go on."""
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    stand(fsm, 1.0, STUCK)  # BackUp sent at 2.05
+    fsm.heartbeat(9.0)
+    assert fsm.tick(9.0, BEHIND, STILL, obstacle) == []
+    fsm.heartbeat(9.1)
+    cmds = fsm.tick(9.1, BEHIND, STILL, obstacle)
+    assert kinds(cmds) == ["CancelBackUp", "ClearCostmap", "SendPath"]
+
+
+def test_a_failed_backup_still_tries_the_path_again():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    [b] = backups(stand(fsm, 1.0, STUCK))
+    cmds = fsm.backup_result(b.seq, "aborted", 2.5, STUCK)  # something behind
+    assert kinds(cmds) == ["ClearCostmap", "SendPath"]
+    assert fsm.state() == RECOVERING
+
+
+def test_stale_backup_results_are_ignored():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    [b] = backups(stand(fsm, 1.0, STUCK))
+    assert fsm.backup_result(b.seq + 100, "succeeded", 2.5, BEHIND) == []
+    fsm.backup_result(b.seq, "succeeded", 2.6, BEHIND)
+    assert fsm.backup_result(b.seq, "succeeded", 2.7, BEHIND) == []
+
+
+def test_cancel_during_recovery_stops_the_backup_and_reports_idle():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    stand(fsm, 1.0, STUCK)
+    assert fsm.cancel("g1", 2.5) == [Finish("g1", False, CANCELED), CancelBackUp()]
+    fsm.tick(2.6, STUCK, STILL, obstacle)
+    assert fsm.state() == IDLE
+
+
+def test_a_new_goal_during_recovery_stops_the_backup_and_keeps_the_count():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    stand(fsm, 1.0, STUCK)
+    cmds = move(fsm, "g2", 2.5, pose=STUCK)
+    assert kinds(cmds) == ["Finish", "CancelBackUp", "SendPath"]
+    assert fsm.state() == MOVING
+    [b2] = backups(stand(fsm, 3.0, STUCK))  # the second attempt
+    fsm.backup_result(b2.seq, "succeeded", 5.0, BEHIND)
+    assert backups(stand(fsm, 6.0, STUCK)) == []
+    assert fsm.state() == BLOCKED
+
+
+def test_attempts_start_again_once_the_robot_drives_on():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    [b] = backups(stand(fsm, 1.0, STUCK))
+    fsm.backup_result(b.seq, "succeeded", 3.0, BEHIND)
+    east = math.atan2(P5[1] - P4[1], P5[0] - P4[0])
+    for t, pose in ((3.5, (0.35, 1.81, NORTH)), (4.0, (*P4, NORTH)),
+                    (4.5, (0.575, 2.0, east))):  # 0.34 m from where the attempt started
+        fsm.heartbeat(t)
+        fsm.tick(t, pose, DRIVING, no_obstacle)
+    assert fsm.state() == MOVING
+    [b1] = backups(stand(fsm, 5.0, (0.575, 2.0, east)))
+    fsm.backup_result(b1.seq, "succeeded", 7.0, (0.43, 1.97, east))
+    assert len(backups(stand(fsm, 8.0, (0.575, 2.0, east)))) == 1  # two attempts again
+
+
+def test_a_successful_goal_resets_the_attempts():
+    """P4 is 0.20 m from where the attempt started, so only the success can reset the count."""
+    fsm = ready()
+    move(fsm, "g1", 0.0, path=(P3, P4), target=P4, target_id="P-4")
+    [b] = backups(stand(fsm, 1.0, STUCK))
+    [again] = sends(fsm.backup_result(b.seq, "succeeded", 3.0, BEHIND))
+    [done, _stop] = fsm.nav_result(again.seq, "succeeded", 6.0, (*P4, NORTH), no_obstacle)
+    assert done == Finish("g1", True, "")
+    south = -NORTH
+    move(fsm, "g2", 7.0, path=(P4, P3), target=P3, pose=(*P4, south), target_id="P-3")
+    stuck = (*STUCK[:2], south)  # 0.20 m from P4
+    [b1] = backups(stand(fsm, 8.0, stuck))
+    fsm.backup_result(b1.seq, "succeeded", 10.0, (0.35, 1.84, south))
+    assert len(backups(stand(fsm, 11.0, stuck))) == 1  # two attempts again
+
+
+def test_no_progress_for_ten_seconds_counts_as_another_attempt():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    [b1] = backups(stand(fsm, 1.0, STUCK))
+    fsm.backup_result(b1.seq, "succeeded", 3.0, BEHIND)  # path sent again at 3.0
+    creeping = (0.35, 1.70, NORTH)
+    for t in (5.0, 8.0, 12.9):
+        fsm.heartbeat(t)
+        assert fsm.tick(t, creeping, DRIVING, no_obstacle) == []
+    fsm.heartbeat(13.0)
+    cmds = fsm.tick(13.0, creeping, DRIVING, no_obstacle)
+    assert kinds(cmds) == ["CancelNav", "BackUp"]
+    [b2] = backups(cmds)
+    fsm.backup_result(b2.seq, "succeeded", 15.0, BEHIND)  # sent again at 15.0
+    fsm.heartbeat(25.0)
+    assert fsm.tick(25.0, creeping, DRIVING, no_obstacle) == [
+        Finish("g1", False, NAV_ABORTED), CancelNav()]
+
+
+def test_heartbeat_loss_during_recovery_stops_everything():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    stand(fsm, 1.0, STUCK)  # last heartbeat at 2.05
+    assert fsm.tick(3.6, BEHIND, STILL, obstacle) == [
+        Finish("g1", False, HEARTBEAT_LOST), CancelBackUp()]
+    assert fsm.state() == IDLE
+
+
+def test_losing_the_pose_during_recovery_stops_everything():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    stand(fsm, 1.0, STUCK)
+    fsm.heartbeat(2.5)
+    assert fsm.tick(2.5, None, STILL, obstacle) == [
+        Finish("g1", False, NAV_ABORTED), CancelBackUp()]
 
 
 # ---- 도킹 ---------------------------------------------------------------------------------

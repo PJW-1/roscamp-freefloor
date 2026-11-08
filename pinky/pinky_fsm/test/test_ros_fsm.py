@@ -123,8 +123,9 @@ def test_heartbeat_keeps_the_goal_running(harness):
 
 
 def test_obstacle_ahead_reports_blocked_and_resumes(harness):
-    """핑키_계약 4절: 서고 2초 안에 BLOCKED, 목표는 끝내지 않고, 비키면 이어 간다."""
-    fake, probe = start(harness)
+    """핑키_계약 4절: 서고 2초 안에 BLOCKED, 목표는 끝내지 않고, 비키면 이어 간다.
+    recovery_attempts=0은 자가 복구 두 번을 이미 쓴 것과 같다."""
+    fake, probe = start(harness, recovery_attempts=0)
     fake.obstacle = (0.35, 1.95)  # P-4 위
     h = probe.send(lane_goal(["P-3", "P-4", "P-5"]))
     assert wait_until(lambda: fake.v == 0.0 and fake.pose[1] > 1.6, 5.0)
@@ -138,6 +139,35 @@ def test_obstacle_ahead_reports_blocked_and_resumes(harness):
     res = probe.result(h, timeout=10.0)
     assert res.result.success is True
     assert len(fake.goals) >= 2  # 비킨 뒤 남은 경로를 다시 보냈다
+
+
+def test_obstacle_ahead_backs_up_twice_then_reports_blocked(harness):
+    """핑키_계약 3절 7번(2026-11-09 제안): 물러나고 지도를 비운 뒤 다시 가 보기를 두 번까지
+    하고, 그동안 RECOVERING으로 보고한다. 그래도 막히면 4절의 BLOCKED로 넘긴다."""
+    fake, probe = start(harness)
+    fake.obstacle = (0.35, 1.95)  # P-4 위. FakeNav는 0.25 m 앞(y 1.70)에서 선다
+    h = probe.send(lane_goal(["P-3", "P-4", "P-5"]))
+    assert wait_until(lambda: probe.last_state().state == RobotState.STATE_RECOVERING, 5.0)
+    assert wait_until(lambda: probe.last_state().state == RobotState.STATE_BLOCKED, 12.0)
+    # s = 0.15 m: min(0.15, 0.15 - 0.08 - 0.03) = 0.04 m
+    assert [d for _, d, _ in fake.backups] == [pytest.approx(0.04, abs=0.015)] * 2
+    assert all(v == pytest.approx(0.08) for _, _, v in fake.backups)
+    assert len(fake.clears) == 2
+    assert not h.get_result_async().done()  # 목표는 열어 둔다(4절)
+    fake.obstacle = None
+    res = probe.result(h, timeout=10.0)
+    assert res.result.success is True
+
+
+def test_something_behind_stops_the_backup_and_the_path_is_tried_again(harness):
+    fake, probe = start(harness)
+    fake.obstacle = (0.35, 1.95)
+    fake.wall_behind_m = 0.01  # Nav2 BackUp: COLLISION_AHEAD로 끝난다
+    probe.send(lane_goal(["P-3", "P-4", "P-5"]))
+    assert wait_until(lambda: len(fake.clears) >= 1, 6.0)
+    assert fake.backup_ends[0] == ("collision", 714)
+    assert wait_until(lambda: len(fake.goals) >= 2, 1.0)  # 남은 경로를 다시 보냈다
+    assert probe.last_state().state == RobotState.STATE_RECOVERING
 
 
 def test_dock_fails_honestly_while_pinky_dock_is_missing(harness):
