@@ -124,6 +124,29 @@ def test_a_normal_run_never_sends_a_path_that_misses_the_robot(site, mode, seed)
     assert sent and all(bool(c.path) == (mode == "path") for c in sent)
 
 
+def test_a_fleet_path_that_misses_the_robot_breaks_the_world_invariant():
+    """SimWorld는 보고가 바로 가는 세계라 첫 점(보고 위치)은 로봇에서 잡음만큼만 떨어진다.
+    주입하지 않은 path를 거절하면 관제 결함이므로 재시도로 가리지 않고 멈춘다(Codex)."""
+    world = SimWorld(seed=1)
+    r = world.virtual[ROBOT]
+    far = MoveCmd(ROBOT, 99, "x", r.x + 0.9, r.y + 0.5, 0.0,
+                  path=((r.x + 0.5, r.y + 0.5, 0.0), (r.x + 0.9, r.y + 0.5, 0.0)))
+    with pytest.raises(AssertionError, match="does not pass the robot"):
+        world._refuses_path(r, far)
+    assert world.path_refusals == []
+
+
+def test_an_injected_bad_path_is_a_refusal_not_an_invariant_break():
+    world = SimWorld(seed=1)
+    r = world.virtual[ROBOT]
+    r.bad_paths, r.bad_path_offset = 1, 0.4
+    near = MoveCmd(ROBOT, 99, "x", r.x + 0.3, r.y, 0.0,
+                   path=((r.x, r.y, 0.0), (r.x + 0.3, r.y, 0.0)))
+    assert world._refuses_path(r, near) is True
+    assert [(robot, goal) for _, robot, goal in world.path_refusals] == [(ROBOT, 99)]
+    assert r.bad_paths == 0 and world._refuses_path(r, near) is False
+
+
 def test_path_gap_measures_the_robot_against_the_path_it_got():
     assert path_gap(0.5, 0.1, [(0.0, 0.0), (1.0, 0.0)]) == pytest.approx(0.1)
     assert path_gap(1.0, 0.4, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]) == pytest.approx(0.0)

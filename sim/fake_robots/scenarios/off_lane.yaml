@@ -32,6 +32,9 @@ expect:
   released_without_position_check: 0
   unheld_zone_pose: 0
   released_while_off_lane: 0
+  # drift가 막 시작된 순간 옛 보고로 만든 path는 로봇이 거절할 수 있다(로봇은 밀린 자리를
+  # 제 자리로 안다, 지시서 7.5). 관제는 실패 한 번으로 세고 새 보고로 다시 만든다. 세지 않는다.
+  path_not_connected: null
   events_include: [LANE_ERROR, BACK_ON_LANE]
   event_counts: {LANE_ERROR: 1, BACK_ON_LANE: 1, OFF_LANE: 0, GOAL_FAILED: 0, ROBOT_NOT_REPORTING: 0}
   order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED}

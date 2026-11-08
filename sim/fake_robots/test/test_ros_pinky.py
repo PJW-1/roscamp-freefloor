@@ -489,6 +489,10 @@ def test_the_heartbeat_is_heard_with_the_reliable_profile_of_the_contract(harnes
     qos = mine()[0].qos_profile
     assert (qos.reliability, qos.durability) == (ReliabilityPolicy.RELIABLE,
                                                  DurabilityPolicy.VOLATILE)
+    # depth는 탐색 정보에 실리지 않으므로 구독 객체에서 본다
+    depths = [s.qos_profile.depth for s in harness.nodes[0].subscriptions
+              if s.topic_name == topic]
+    assert depths == [1]
 
 
 # ---- path connection (지시서 7.5) -------------------------------------------------------

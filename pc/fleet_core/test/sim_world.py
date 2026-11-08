@@ -509,16 +509,23 @@ class SimWorld:
 
     def _refuses_path(self, r, cmd) -> bool:
         """핑키의 연결 검사(지시서 7.5). 받은 path가 로봇이 아는 제 자리(보고 자리에서 잡음을
-        뺀 것)에서 lane_error_warn_m보다 멀면 따라가지 않는다. 이전 목표는 끝나고 로봇은 선다."""
+        뺀 것)에서 lane_error_warn_m보다 멀면 따라가지 않는다. 이전 목표는 끝나고 로봇은 선다.
+
+        이 세계는 보고가 바로 가므로 관제가 만든 path의 첫 점은 로봇에서 잡음만큼만 떨어진다.
+        주입하지 않은 path가 멀면 관제 결함이라 거절로 가리지 않고 불변식 위반으로 멈춘다.
+        """
         path = [tuple(p[:2]) for p in cmd.path]
         if not path:
             return False
-        if r.bad_paths:  # 오는 길에 path가 틀렸다(옛 path, 중간이 빠진 path를 흉내)
+        injected = r.bad_paths > 0
+        if injected:  # 오는 길에 path가 틀렸다(옛 path, 중간이 빠진 path를 흉내)
             r.bad_paths -= 1
             path = [(x + r.bad_path_offset, y + r.bad_path_offset) for x, y in path]
         here = (r.x - math.sin(r.heading) * r.drift, r.y + math.cos(r.heading) * r.drift)
-        if path_gap(*here, path) <= self.params.lane_error_warn_m:
+        gap = path_gap(*here, path)
+        if gap <= self.params.lane_error_warn_m:
             return False
+        assert injected, f"{cmd} does not pass the robot at {here}: {gap:.3f} m away"
         self._preempt(r)
         r.target, r.via = None, []
         self.path_refusals.append((self.t, r.name, cmd.goal_id))

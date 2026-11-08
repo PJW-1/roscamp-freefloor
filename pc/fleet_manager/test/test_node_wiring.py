@@ -466,6 +466,9 @@ def test_the_heartbeat_goes_out_with_the_reliable_profile_of_the_contract(graph)
     qos = mine()[0].qos_profile
     assert (qos.reliability, qos.durability) == (ReliabilityPolicy.RELIABLE,
                                                  DurabilityPolicy.VOLATILE)
+    # depth는 탐색 정보에 실리지 않으므로 발행자 객체에서 본다
+    depths = [p.qos_profile.depth for p in graph.fms.publishers if p.topic_name == topic]
+    assert depths == [1]
 
 
 def test_stop_cancels_the_fill_on_its_server_and_run_sends_what_remains(graph):

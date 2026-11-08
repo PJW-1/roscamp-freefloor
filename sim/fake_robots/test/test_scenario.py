@@ -244,6 +244,15 @@ def test_a_scenario_can_choose_a_map_from_the_maps_folder():
     assert load_scenario(SCENARIOS / "feature_blocked_lane.yaml").robots["pinky1"].start
 
 
+def test_only_the_drift_scenario_leaves_path_not_connected_unchecked(site):
+    """지시서 7.5: 정상이면 PATH_NOT_CONNECTED는 0이다. drift가 막 시작된 순간 옛 보고로 만든
+    path는 로봇이 거절할 수 있다(로봇은 밀린 자리를 제 자리로 안다). 그 시나리오만 세지 않는다."""
+    expected = {name: load_scenario(f, site_of(f, site)).expect.path_not_connected
+                for name, f in shipped().items()}
+    assert expected.pop("off_lane") is None
+    assert set(expected.values()) == {0}
+
+
 def test_the_feature_block_scenario_expects_a_detour():
     sc = load_scenario(SCENARIOS / "feature_blocked_lane.yaml")
     assert "DETOUR" in sc.expect.events_include
