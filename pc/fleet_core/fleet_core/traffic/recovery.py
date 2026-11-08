@@ -7,7 +7,13 @@ from __future__ import annotations
 
 from fleet_core.common.commands import DispatchResult
 from fleet_core.common.validate import checked, clear_problem, text
-from fleet_core.traffic.deadlock import choose_retreat, find_cycle, priority, wait_graph
+from fleet_core.traffic.deadlock import (
+    choose_retreat,
+    cycle_members,
+    find_cycle,
+    priority,
+    wait_graph,
+)
 from fleet_core.traffic.mission import (
     AT_STATION,
     COMM_LOST,
@@ -152,23 +158,26 @@ class TrafficRecovery:
         return priority(self.params, m.phase == AT_STATION, m.dispatch is not None)
 
     def _check_deadlock(self, now: float) -> frozenset[str]:
-        """The robots of a wait cycle, empty when there is none (work order H1).
+        """The robots on any wait cycle, empty when there is none (work order H1).
 
-        Only these robots get no new moves while the cycle lasts; robots outside it go on, and
-        the zone locks keep them apart. A cycle with other members is a new episode. When the
-        retreat could not break the cycle (DEADLOCK_UNRESOLVED) and the same cycle lasts
-        deadlock_unresolved_s more, the robot choose_retreat picks is isolated (part 5.5).
+        Only these robots get no new moves while a cycle lasts; robots outside go on, and the
+        zone locks keep them apart. One cycle is handled at a time (the first find_cycle gives);
+        another cycle's robots stand still until it comes up. A cycle with other wait edges,
+        even among the same robots, is a new episode. When the retreat could not break the
+        cycle (DEADLOCK_UNRESOLVED) and the same cycle lasts deadlock_unresolved_s more, the
+        robot choose_retreat picks is isolated (part 5.5).
         """
-        cycle = find_cycle(wait_graph(self.zones))
-        members = frozenset(cycle or ())
-        if members != self._deadlock_cycle:
-            self._deadlock_cycle = members
+        graph = wait_graph(self.zones)
+        cycle = find_cycle(graph)
+        edges = frozenset(zip(cycle, cycle[1:] + cycle[:1], strict=True)) if cycle else frozenset()
+        if edges != self._deadlock_cycle:
+            self._deadlock_cycle = edges
             self._deadlock_since = None
             self._deadlock_acted = False
             self._retreating = None
             self._unresolved_at = None
         if not cycle:
-            return members
+            return frozenset()
         if self._deadlock_since is None:
             self._deadlock_since = now
             self._event("ERROR", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
@@ -184,7 +193,7 @@ class TrafficRecovery:
             # _fail cancels the robot's zone requests, so the cycle is gone by the next tick.
             self._fail(self._missions[choose_retreat(cycle, self._priority)],
                        "DEADLOCK_UNRESOLVED")
-        return members
+        return cycle_members(graph)
 
     def _retreat(self, robot: str, cycle: list[str]) -> None:
         """아직 들어가지 않은 구역 예약을 내놓는다. 실제 후진은 아직 없다."""

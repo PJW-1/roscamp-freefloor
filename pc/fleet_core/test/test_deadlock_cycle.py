@@ -12,7 +12,7 @@ import yaml
 from fleet_core.common.commands import CancelCmd, DispatchResult, DockCmd, MoveCmd, RobotIsolated
 from fleet_core.common.params import load_params
 from fleet_core.traffic.controller import TrafficController
-from fleet_core.traffic.deadlock import find_cycle, wait_graph
+from fleet_core.traffic.deadlock import cycle_members, find_cycle, wait_graph
 from fleet_core.traffic.lane_map import load_lane_map
 from sim_world import SimWorld
 
@@ -207,13 +207,83 @@ def test_the_fleet_builds_a_cycle_itself_on_crossing_lanes():
     cycle = set(find_cycle(wait_graph(world.core.zones)))
     [outside] = set(world.robots) - cycle
 
-    wait = PARAMS.deadlock_grace_s + PARAMS.deadlock_unresolved_s
-    assert world.run_until(lambda: "ROBOT_ISOLATED" in world.event_codes(), timeout_s=wait + 5.0)
+    assert world.run_until(lambda: "DEADLOCK_UNRESOLVED" in world.event_codes(),
+                           timeout_s=PARAMS.deadlock_grace_s + 5.0)
+    unresolved_at = world.t
+    assert unresolved_at - detected_at >= PARAMS.deadlock_grace_s - 1e-6
+    assert world.run_until(lambda: "ROBOT_ISOLATED" in world.event_codes(),
+                           timeout_s=PARAMS.deadlock_unresolved_s + 5.0)
     isolated_at = world.t
-    assert isolated_at - detected_at >= wait - 1e-6
+    assert isolated_at - unresolved_at >= PARAMS.deadlock_unresolved_s - 1e-6
     [isolated] = [e.robot for e in world.events if e.code == "ROBOT_ISOLATED"]
     assert isolated in cycle
     assert world.event_codes().count("DEADLOCK_UNRESOLVED") == 1
     moved = [c for t, c in world.commands
              if detected_at < t < isolated_at and isinstance(c, MoveCmd) and c.robot == outside]
     assert moved, f"{outside} is outside the cycle {sorted(cycle)}"
+
+
+def held_zone(drive, robot):
+    """The zone of the waypoint the robot stands on (it holds it from the start)."""
+    zone = drive.core._zone(drive.site.nearest_waypoint(*drive.pose[robot]))
+    assert drive.core.zones.holder(zone) == robot
+    return zone
+
+
+def standing(starts):
+    """Robots on the map that get no new moves (PAUSE), so only the forced requests count."""
+    drive = Drive(starts)
+    drive.core.on_run_mode("PAUSE")
+    drive.run(DT)
+    assert not drive.moves("r1") and not drive.moves("r2")
+    return drive
+
+
+def force_waits(drive, waits):
+    """Each robot waits for the zone another one stands in."""
+    zones = drive.core.zones
+    for robot in waits:
+        zones.cancel_all_requests(robot)
+    for robot, other in waits.items():
+        assert not zones.request(robot, held_zone(drive, other))
+
+
+def test_every_robot_of_every_cycle_is_found():
+    """A second cycle, or one sharing a robot with the first, is not missed (Codex eca660e)."""
+    two = {"a": {"b"}, "b": {"a"}, "c": {"d"}, "d": {"c"}, "e": {"a"}}
+    assert cycle_members(two) == {"a", "b", "c", "d"}
+    eight = {"a": {"b", "c"}, "b": {"a"}, "c": {"a"}}
+    assert cycle_members(eight) == {"a", "b", "c"}
+    assert cycle_members({"a": {"b"}, "b": {"c"}}) == frozenset()
+
+
+def test_two_cycles_at_once_stop_all_their_robots():
+    drive = standing({"r1": "T1", "r2": "T2", "r3": "E1", "r4": "F2"})
+    force_waits(drive, {"r1": "r2", "r2": "r1", "r3": "r4", "r4": "r3"})
+    assert drive.core.tick_progress(drive.now[0]) == {"r1", "r2", "r3", "r4"}
+
+
+def test_the_same_robots_in_another_cycle_are_a_new_episode():
+    """r1->r2->r3->r1 becomes r1->r3->r2->r1: the new cycle gets its own grace and retreat."""
+    drive = standing({"r1": "T1", "r2": "T2", "r3": "E1"})
+    force_waits(drive, {"r1": "r2", "r2": "r3", "r3": "r1"})
+    drive.run(PARAMS.deadlock_grace_s + 1.0)
+    assert len(drive.events("DEADLOCK_DETECTED")) == 1
+    assert len(drive.events("DEADLOCK_UNRESOLVED")) == 1
+    force_waits(drive, {"r1": "r3", "r3": "r2", "r2": "r1"})
+    drive.run(DT)
+    assert len(drive.events("DEADLOCK_DETECTED")) == 2
+    drive.run(PARAMS.deadlock_grace_s + 1.0)
+    assert len(drive.events("DEADLOCK_UNRESOLVED")) == 2
+    assert not drive.outputs(RobotIsolated), "the new cycle waits its own deadlock_unresolved_s"
+
+
+def test_a_parked_robot_stopped_in_a_cycle_is_not_overtaken():
+    """The parking queue runs one way: P-3 is ahead of P-2. A front robot that stands still in a
+    wait cycle cannot leave, so the robot behind it must not take the open call."""
+    drive = Drive({"r1": "P-3", "r2": "P-2"})
+    drive.run(DT)
+    drive.dispatch(9, "WORK", "")
+    drive.core.tick_pick(frozenset({"r1"}))
+    assert not drive.core._missions["r1"].called
+    assert not drive.core._missions["r2"].called

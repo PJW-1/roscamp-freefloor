@@ -99,7 +99,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         self._deadlock_since: float | None = None
         self._deadlock_acted = False
         self._retreating: tuple[str, list[str], float] | None = None  # 로봇, 구역, 해제 시각
-        self._deadlock_cycle: frozenset[str] = frozenset()  # robots of the current wait cycle
+        # wait edges of the cycle being handled
+        self._deadlock_cycle: frozenset[tuple[str, str]] = frozenset()
         self._unresolved_at: float | None = None  # when DEADLOCK_UNRESOLVED was reported
         self._startup_since: float | None = None
         self._missing_reported = False
@@ -666,7 +667,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             # 재투입 때문에 세운 로봇은 available(robot)이 거짓이라 호출도 앞지르기도 없다
             eligible=(self.available(m.name) and not m.hold and m.dispatch is None
                       and not stopped and (m.called or not self._held_for_block(m))),
-            available=self.available(m.name) and not self._held_for_block(m),
+            # A robot standing still in a wait cycle is not overtaken in the queue either (H1).
+            available=self.available(m.name) and not self._held_for_block(m) and not stopped,
         )
 
     def _committed(self, m: _Mission) -> bool:

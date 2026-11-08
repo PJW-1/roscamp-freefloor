@@ -40,6 +40,22 @@ def find_cycle(graph: dict[str, set[str]]) -> list[str] | None:
     return None
 
 
+def cycle_members(graph: dict[str, set[str]]) -> frozenset[str]:
+    """Every robot that lies on some wait cycle (it can reach itself), across all cycles."""
+    def reaches(start: str, goal: str) -> bool:
+        seen, todo = set(), list(graph.get(start, ()))
+        while todo:
+            robot = todo.pop()
+            if robot == goal:
+                return True
+            if robot not in seen:
+                seen.add(robot)
+                todo.extend(graph.get(robot, ()))
+        return False
+
+    return frozenset(robot for robot in graph if reaches(robot, robot))
+
+
 def priority(params, at_station: bool, carrying: bool) -> int:
     """높을수록 양보할 때 잃는 작업이 많다."""
     score = 0
