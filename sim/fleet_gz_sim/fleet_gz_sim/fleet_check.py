@@ -14,6 +14,7 @@ reports, and the zone holders the fleet publishes. It keeps:
 from __future__ import annotations
 
 import math
+from collections import deque
 
 STILL_MPS = 0.02
 STILL_RADPS = 0.1
@@ -26,7 +27,7 @@ MOVING = "MOVING"
 
 class _Robot:
     def __init__(self):
-        self.pose: tuple[float, float, float] | None = None  # (sim t, x, y)
+        self.recent: deque[tuple[float, float, float]] = deque()  # (sim t, x, y), newest last
         self.state = ""
         self.moved = False  # moved since the last counted stop
         self.still_since: float | None = None
@@ -63,7 +64,9 @@ class FleetCheck:
         me = self.robots.get(robot)
         if me is None:
             return
-        me.pose = (t, x, y)
+        me.recent.append((t, x, y))
+        while me.recent and me.recent[0][0] < t - 2 * self.sync_s:
+            me.recent.popleft()
         if wall is not None:
             self.first = self.first or (t, wall)
             self.last = (t, wall)
@@ -72,12 +75,16 @@ class FleetCheck:
         self._zones(robot, me, x, y)
 
     def _gaps(self, robot: str, t: float, x: float, y: float) -> None:
+        """Every recent sample of the others within sync_s of this one, not only the latest."""
         for other, them in self.robots.items():
-            if other == robot or them.pose is None or abs(them.pose[0] - t) > self.sync_s:
+            if other == robot:
                 continue
-            gap = math.dist((x, y), them.pose[1:])
-            if self.min_gap is None or gap < self.min_gap[0]:
-                self.min_gap = (gap, max(t, them.pose[0]), *sorted((robot, other)))
+            for t_other, ox, oy in them.recent:
+                if abs(t_other - t) > self.sync_s:
+                    continue
+                gap = math.dist((x, y), (ox, oy))
+                if self.min_gap is None or gap < self.min_gap[0]:
+                    self.min_gap = (gap, max(t, t_other), *sorted((robot, other)))
 
     def _stop(self, me: _Robot, t: float, speed: float, turn: float) -> None:
         if speed > MOVING_MPS:

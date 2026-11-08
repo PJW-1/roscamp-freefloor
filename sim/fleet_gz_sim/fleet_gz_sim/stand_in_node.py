@@ -30,12 +30,18 @@ from fleet_core.common.contract import to_ros_qos
 from fleet_interfaces.action import Dock
 from fleet_interfaces.msg import RobotState
 from nav_msgs.msg import Odometry
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
-from fleet_gz_sim.dock_stand_in import dock_outcome, dock_phase, require_dock_stub_allowed
+from fleet_gz_sim.dock_stand_in import (
+    dock_outcome,
+    dock_phase,
+    require_dock_stub_allowed,
+    stub_may_answer,
+)
 from fleet_gz_sim.ready import everyone_idle
 
 READY_HOLD_S = 1.0
@@ -55,6 +61,7 @@ class SimStandIn(Node):
             require_dock_stub_allowed(bool(self.get_parameter("use_sim_time").value),
                                       os.environ, rmw=rclpy.get_rmw_implementation_identifier(),
                                       workdir=Path.cwd())
+            self.add_on_set_parameters_callback(self._keep_sim_time)
         contract = load_contract_param(self)
         self._site = load_lane_map_param(self)
         self._duration = load_scenario_param(self, self._site).dock.duration_s if stub else 0.0
@@ -80,6 +87,14 @@ class SimStandIn(Node):
         what = "SIM DOCK STUB and truth" if stub else "truth (dock left to pinky_fsm)"
         self.get_logger().info(f"sim stand-in: {what} for {robots}")
 
+    @staticmethod
+    def _keep_sim_time(params) -> SetParametersResult:
+        for param in params:
+            if param.name == "use_sim_time" and param.value is not True:
+                return SetParametersResult(successful=False,
+                                           reason="the dock stub runs only on Gazebo time")
+        return SetParametersResult(successful=True)
+
     def _on_truth(self, robot: str, pub, msg: Odometry) -> None:
         p = msg.pose.pose
         pose = (p.position.x, p.position.y, _yaw(p.orientation))
@@ -95,6 +110,10 @@ class SimStandIn(Node):
     def _dock(self, robot: str, handle):
         with self._lock:
             turn = self._turn[robot] = self._turn.get(robot, 0) + 1
+        if not stub_may_answer(self.get_clock().ros_time_is_active, self._now()):
+            self.get_logger().warn(f"{robot}: no Gazebo time, dock fails")
+            handle.abort()
+            return Dock.Result(success=False)
         station = self._site.stations.get(handle.request.dock_id)
         if station is None:
             self.get_logger().warn(f"{robot}: dock {handle.request.dock_id!r} is not a station")

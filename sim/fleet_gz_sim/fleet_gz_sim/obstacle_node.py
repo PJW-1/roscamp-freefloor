@@ -48,8 +48,11 @@ class ObstacleNode(Node):
         path = self.declare_parameter("obstacles_file", "").value
         lane_map_path = self.declare_parameter("lane_map", "").value
         self.world = self.declare_parameter("world", "lane_arena").value
-        self.clearance_m = float(self.declare_parameter("clearance_m", 0.35).value)
+        self.clearance_m = obstacles.check_clearance(
+            float(self.declare_parameter("clearance_m", 0.35).value))
         self.max_delay_s = float(self.declare_parameter("max_delay_s", 20.0).value)
+        if not math.isfinite(self.max_delay_s) or self.max_delay_s < 0:  # same rule as Planner
+            raise ValueError(f"max_delay_s must be a finite number >= 0, got {self.max_delay_s}")
         if not path:
             path = f"{get_package_share_directory('fleet_gz_sim')}/obstacles/roam.yaml"
         self.schedule = obstacles.load_schedule(path, load_lane_map(lane_map_path or None))
@@ -129,7 +132,8 @@ class ObstacleNode(Node):
         one = occ.obstacle
         argv = obstacles.spawn_argv(self.world, occ.name, one, self.schedule.size_m)
         outcome = obstacles.try_spawn(occ, self._positions, self.clearance_m,
-                                      lambda: self._call(argv))
+                                      lambda: self._call(argv),
+                                      lambda: self.planner.too_late(occ, self._now()))
         self.outcomes.put(("spawn", occ, self._now(), outcome))
         if outcome == obstacles.PLACED:
             with self.live_lock:
@@ -138,7 +142,8 @@ class ObstacleNode(Node):
             self.get_logger().info(f"{occ.name} on {one.label} at ({one.x:.2f}, {one.y:.2f}) "
                                    f"placed for {one.duration_s:g} s")
         elif outcome == obstacles.SKIPPED:
-            self.get_logger().info(f"{occ.name} on {one.label}: a robot came close, waits")
+            self.get_logger().info(f"{occ.name} on {one.label}: not placed (a robot came close "
+                                   f"or it is past max_delay_s)")
         else:
             self.get_logger().warn(f"{occ.name} on {one.label}: no clear answer, removing it "
                                    f"in case it landed")

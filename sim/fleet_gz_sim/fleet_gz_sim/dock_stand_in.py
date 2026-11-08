@@ -32,6 +32,11 @@ def dock_outcome(pose, dock_xy, reach_m: float = REACH_M) -> tuple[bool, float, 
     return math.hypot(ex, ey) <= reach_m + 1e-9, ex * 100.0, ey * 100.0, 0.0
 
 
+def stub_may_answer(ros_time_active: bool, now_s: float) -> bool:
+    """Answer a dock goal only while Gazebo time is running (ROS time from /clock, past 0)."""
+    return ros_time_active and now_s > 0.0
+
+
 def dock_stub_problems(use_sim_time: bool, env: Mapping[str, str], *, rmw: str | None = None,
                        workdir: Path | None = None) -> list[str]:
     """Reasons the dock stub must not run. Empty means it may."""

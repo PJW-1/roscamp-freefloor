@@ -182,14 +182,25 @@ def fresh_positions(truth: dict, robots, now: float, max_age_s: float) -> list:
     out = []
     for robot in robots:
         entry = truth.get(robot)
-        out.append(entry[0] if entry is not None and now - entry[1] <= max_age_s else None)
+        ok = (entry is not None and now - entry[1] <= max_age_s
+              and all(math.isfinite(v) for v in entry[0]))
+        out.append(entry[0] if ok else None)
     return out
 
 
-def try_spawn(occ: Occurrence, positions, clearance_m: float, call) -> str:
-    """Check the robots again right before the gz call: the call may wait in the worker queue
-    behind other calls. positions() gives the current positions, call() runs the spawn."""
-    if not clear_of_robots((occ.obstacle.x, occ.obstacle.y), positions(), clearance_m):
+def check_clearance(value: float) -> float:
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"clearance_m must be a finite number >= 0, got {value}")
+    return float(value)
+
+
+def try_spawn(occ: Occurrence, positions, clearance_m: float, call,
+              too_late=lambda: False) -> str:
+    """Check again right before the gz call: the call may wait in the worker queue behind other
+    calls. positions() gives the current positions, call() runs the spawn, too_late() says the
+    entry is past max_delay_s (the planner then gives it up)."""
+    point = (occ.obstacle.x, occ.obstacle.y)
+    if too_late() or not clear_of_robots(point, positions(), clearance_m):
         return SKIPPED
     return PLACED if call() else UNKNOWN
 
@@ -202,6 +213,8 @@ class Planner:
     landed, and a failed remove is tried again up to MAX_REMOVE_TRIES times."""
 
     def __init__(self, schedule: Schedule, start_s: float, max_delay_s: float):
+        if not math.isfinite(max_delay_s) or max_delay_s < 0:
+            raise ValueError(f"max_delay_s must be a finite number >= 0, got {max_delay_s}")
         self._upcoming = occurrences(schedule)
         self._next = next(self._upcoming, None)
         self._start_s = start_s
@@ -223,7 +236,7 @@ class Planner:
         still = []
         for occ in sorted(self._waiting, key=lambda o: o.number):
             point = (occ.obstacle.x, occ.obstacle.y)
-            if now_s - occ.due_s > self._max_delay_s:
+            if self.too_late(occ, now_s):
                 out.give_up.append(occ)
             elif clear_of_robots(point, robot_xy_list, clearance_m):
                 out.spawn.append(occ)
@@ -244,6 +257,9 @@ class Planner:
                 del self._retry[number]
         out.lost, self._new_lost = self._new_lost, []
         return out
+
+    def too_late(self, occ: Occurrence, now_s: float) -> bool:
+        return now_s - occ.due_s > self._max_delay_s
 
     def spawned(self, occ: Occurrence, now_s: float, outcome: str) -> None:
         self._spawning.pop(occ.number, None)

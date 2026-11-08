@@ -316,6 +316,44 @@ def test_a_stale_position_counts_as_unknown():
     assert not obstacles.clear_of_robots((1.0, 1.0), got, 0.35)
 
 
+def test_a_non_finite_position_counts_as_unknown():
+    truth = {"pinky1": ((math.inf, 0.0), 100.0), "pinky2": ((0.0, math.nan), 100.0)}
+    assert obstacles.fresh_positions(truth, ["pinky1", "pinky2"], now=100.0,
+                                     max_age_s=1.0) == [None, None]
+
+
+def test_try_spawn_gives_a_late_entry_back_without_calling():
+    """A spawn can wait in the worker queue past max_delay_s; the planner then gives it up."""
+    occ = obstacles.Occurrence(1, parse().obstacles[0], 10.0)
+    calls = []
+    got = obstacles.try_spawn(occ, lambda: [(0.0, 0.0)], 0.35, lambda: calls.append(1) or True,
+                              too_late=lambda: True)
+    assert got == SKIPPED and calls == []
+    planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
+    [occ] = planner.step(10.0, FAR, 0.35).spawn
+    planner.spawned(occ, 31.0, got)
+    assert names(planner.step(31.0, FAR, 0.35).give_up) == ["obstacle_1"]
+
+
+def test_planner_late_check_matches_try_spawn():
+    planner = obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=20.0)
+    occ = obstacles.Occurrence(1, parse().obstacles[0], 10.0)
+    assert not planner.too_late(occ, 30.0)
+    assert planner.too_late(occ, 30.1)
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -1.0])
+def test_planner_refuses_a_bad_delay_limit(bad):
+    with pytest.raises(ValueError, match="max_delay_s"):
+        obstacles.Planner(two_entry_schedule(), start_s=0.0, max_delay_s=bad)
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -0.1])
+def test_bad_clearance_is_refused(bad):
+    with pytest.raises(ValueError, match="clearance_m"):
+        obstacles.check_clearance(bad)
+
+
 # ---- gz service 요청 ------------------------------------------------------------------------
 
 def test_spawn_argv_names_the_world_service_and_a_static_box():

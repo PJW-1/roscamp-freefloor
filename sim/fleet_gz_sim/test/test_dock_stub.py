@@ -148,6 +148,28 @@ def test_the_stand_in_refuses_the_stub_outside_the_sim_domains(ros, monkeypatch)
         stand_in(ros, dock_stub=True, use_sim_time=True)
 
 
+def test_the_stub_answers_only_while_gazebo_time_runs():
+    """No /clock (Gazebo not running): a dock goal fails instead of succeeding."""
+    from fleet_gz_sim.dock_stand_in import stub_may_answer
+    assert stub_may_answer(ros_time_active=True, now_s=12.0)
+    assert not stub_may_answer(ros_time_active=False, now_s=12.0)
+    assert not stub_may_answer(ros_time_active=True, now_s=0.0)
+
+
+def test_the_stub_keeps_gazebo_time_once_started(ros):
+    """Switching use_sim_time off later would put the stub on the wall clock."""
+    from ament_index_python.packages import get_package_share_directory
+    from rclpy.parameter import Parameter
+    scenario = f"{get_package_share_directory('fake_robots')}/scenarios/basic_orders.yaml"
+    node = stand_in(ros, dock_stub=True, use_sim_time=True, scenario_file=scenario)
+    try:
+        [result] = node.set_parameters([Parameter("use_sim_time", value=False)])
+        assert not result.successful
+        assert node.get_parameter("use_sim_time").value is True
+    finally:
+        node.destroy_node()
+
+
 def test_the_stand_in_serves_every_dock_when_allowed(ros):
     from ament_index_python.packages import get_package_share_directory
     scenario = f"{get_package_share_directory('fake_robots')}/scenarios/basic_orders.yaml"

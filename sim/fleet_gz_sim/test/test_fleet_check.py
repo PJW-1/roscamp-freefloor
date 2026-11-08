@@ -29,6 +29,15 @@ def test_min_distance_uses_samples_taken_at_about_the_same_time():
     assert s["min_distance_at_s"] == pytest.approx(1.02)
 
 
+def test_min_distance_compares_every_sample_inside_the_sync_window():
+    """pinky1 sends two samples before pinky2 sends one; the earlier one is the closer pair."""
+    c = check(sync_s=0.1)
+    c.on_truth("pinky1", 1.00, 0.30, 0.0, 0.0, 0.0)
+    c.on_truth("pinky1", 1.03, 0.60, 0.0, 0.0, 0.0)
+    c.on_truth("pinky2", 1.05, 0.0, 0.0, 0.0, 0.0)
+    assert c.summary()["min_distance_m"] == pytest.approx(0.30)
+
+
 def test_no_pair_seen_together_gives_no_distance():
     c = check()
     c.on_truth("pinky1", 1.0, 0.0, 0.0, 0.0, 0.0)
