@@ -182,14 +182,21 @@ def test_t06_a_real_retreat_that_frees_a_zone_off_the_cycle_ends_in_isolation():
     _report(core, cells)
     seen = codes(core.tick())
     assert "Q-WORK-2" not in core.zones.held_by("r1")
+    unresolved_at = None
     for _ in range(3):
         now[0] += 0.1
         _report(core, cells)
-        seen += codes(core.tick())
-    assert seen.count("DEADLOCK_UNRESOLVED") == 1
+        out = codes(core.tick())
+        if "DEADLOCK_UNRESOLVED" in out:
+            unresolved_at = now[0]
+        seen += out
+    assert seen.count("DEADLOCK_UNRESOLVED") == 1 and unresolved_at is not None
     assert sorted(find_cycle(wait_graph(core.zones))) == ["r1", "r2"]
-    assert "ROBOT_ISOLATED" not in seen
-    now[0] += core.params.deadlock_unresolved_s
+    now[0] = unresolved_at + core.params.deadlock_unresolved_s - 0.1
+    _report(core, cells)
+    seen += codes(core.tick())
+    assert "ROBOT_ISOLATED" not in seen, "not before deadlock_unresolved_s"
+    now[0] = unresolved_at + core.params.deadlock_unresolved_s
     _report(core, cells)
     seen += codes(core.tick())
     assert "ROBOT_ISOLATED" in seen
