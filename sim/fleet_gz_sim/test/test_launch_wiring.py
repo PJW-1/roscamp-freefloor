@@ -286,3 +286,23 @@ def test_an_unknown_obstacle_schedule_stops_the_launch_before_anything_starts(ma
     from fleet_gz_sim.obstacles import ScheduleError
     with pytest.raises(ScheduleError, match="no_such_schedule"):
         run(made, obstacles="no_such_schedule")
+
+
+def test_one_rviz_shows_the_whole_fleet_by_default(made):
+    """로봇마다 TF가 /pinkyN/tf로 나뉘어 RViz 하나는 한 대만 그린다. 기본은 3대 표시 노드 + RViz."""
+    actions = run(made)
+    [view] = nodes(actions, "fleet_view")
+    assert params(view)["robots"] == ROBOTS and params(view)["use_sim_time"] is True
+    [rviz] = nodes(actions, "rviz2")
+    assert rviz.kw.get("namespace") in (None, "")
+    assert rviz.kw["arguments"][-1].endswith("fleet_view.rviz")
+    assert params(rviz)["use_sim_time"] is True
+
+
+def test_rviz_can_follow_one_pinky_or_stay_closed(made):
+    actions = run(made, rviz="pinky2")
+    assert not nodes(actions, "fleet_view")
+    [rviz] = nodes(actions, "rviz2")
+    assert rviz.kw["namespace"] == "pinky2"
+    closed = run(made, rviz="none")
+    assert not nodes(closed, "fleet_view") and not nodes(closed, "rviz2")

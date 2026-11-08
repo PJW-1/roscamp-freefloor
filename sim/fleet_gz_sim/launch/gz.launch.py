@@ -1,6 +1,6 @@
 """Gazebo 핑키 3대 + 진짜 관제(안내 4절 3번: 관제·pinky_fsm·Nav2는 진짜, central·팔은 가짜).
 
-    ros2 launch fleet_gz_sim gz.launch.py                       # Gazebo 화면 + pinky1 RViz
+    ros2 launch fleet_gz_sim gz.launch.py                       # Gazebo 화면 + 3대 RViz
     ros2 launch fleet_gz_sim gz.launch.py gui:=false rviz:=none   # 화면 없이
 
 - 핑키는 시나리오(fake_robots/scenarios, 기본 basic_orders)의 시작 지점에 놓는다(fleet_setup).
@@ -36,7 +36,8 @@ ARGS = {
     "scenario": ("basic_orders", "시나리오 이름(fleet_gz_sim, fake_robots 순서로 찾음)이나 파일."
                                   " 기본 지도, 로봇 고장 없음. gz_roam은 24분 순환 운행"),
     "gui": ("true", "Gazebo 화면"),
-    "rviz": ("pinky1", "RViz로 볼 로봇. none이면 띄우지 않는다"),
+    "rviz": ("fleet", "fleet이면 3대를 한 RViz에(fleet_view), 로봇 이름이면 그 로봇의 Nav2 화면,"
+                      " none이면 띄우지 않는다"),
     "heartbeat_timeout_s": ("1.5", "pinky_fsm heartbeat 끊김 판정"),
     "nav_log_level": ("warn", "Nav2 노드 로그 수준"),
     "nav_composition": ("true", "로봇마다 Nav2 노드 9개를 프로세스 하나로. false면 9개"
@@ -86,6 +87,16 @@ def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
     return actions
 
 
+def fleet_rviz(robots: list[str], lane_map: str = "") -> list:
+    """3대를 한 RViz에. 로봇 TF는 namespace로 나뉘므로 위치는 fleet_view가 마커로 그린다."""
+    config = launch_parts.share("fleet_gz_sim") / "rviz" / "fleet_view.rviz"
+    return [Node(package="fleet_gz_sim", executable="fleet_view", name="fleet_view",
+                 output="screen",
+                 parameters=[{"use_sim_time": True, "robots": robots, "lane_map": lane_map}]),
+            Node(package="rviz2", executable="rviz2", name="fleet_rviz", output="log",
+                 arguments=["-d", str(config)], parameters=[{"use_sim_time": True}])]
+
+
 def _start(context):
     # 노드는 launch의 작업 폴더를 물려받는다. 노드에 cwd를 따로 주면 그 폴더도 봐야 한다.
     require_isolated(os.environ, rmw=get_rmw_implementation_identifier(), workdir=Path.cwd())
@@ -112,6 +123,8 @@ def _start(context):
                                       nav_log_level=value("nav_log_level"),
                                       rviz=robot == value("rviz"), dock_aside=True,
                                       nav_composition=composed)
+    if value("rviz") == "fleet":
+        actions += fleet_rviz(robots)
     actions.append(Node(package="fleet_gz_sim", executable="sim_stand_in", name="sim_stand_in",
                         output="screen",
                         parameters=[{"use_sim_time": True, "robots": robots,
