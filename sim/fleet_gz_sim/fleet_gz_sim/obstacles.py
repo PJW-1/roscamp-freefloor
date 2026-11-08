@@ -252,3 +252,24 @@ def remove_argv(world: str, name: str, timeout_ms: int = GZ_TIMEOUT_MS) -> list[
 
 def reply_ok(stdout: str) -> bool:
     return "data: true" in stdout
+
+
+MARKER_COLOUR = (0.95, 0.45, 0.05, 1.0)  # 주황
+LABEL_COLOUR = (1.0, 1.0, 1.0, 1.0)
+LABEL_HEIGHT_M = 0.08
+
+
+def marker_specs(placed, size: tuple[float, float, float]) -> list[dict]:
+    """RViz 표시: 모두 지운 뒤 놓인 상자마다 상자와 이름표. id는 장애물 번호."""
+    specs: list[dict] = [{"action": "deleteall"}]
+    for occ in placed:
+        one = occ.obstacle
+        specs.append({"ns": "obstacles", "id": occ.number, "type": "cube", "action": "add",
+                      "x": one.x, "y": one.y, "z": size[2] / 2, "yaw": one.yaw,
+                      "scale": tuple(size), "color": MARKER_COLOUR})
+        specs.append({"ns": "obstacle_labels", "id": occ.number, "type": "text",
+                      "action": "add", "x": one.x, "y": one.y,
+                      "z": size[2] + LABEL_HEIGHT_M, "yaw": 0.0,
+                      "scale": (LABEL_HEIGHT_M, LABEL_HEIGHT_M, LABEL_HEIGHT_M),
+                      "color": LABEL_COLOUR, "text": occ.name})
+    return specs

@@ -246,3 +246,28 @@ def test_default_roam_schedule_fits_the_default_map_and_the_blocked_timeout():
     assert schedule.repeat_every_s == 300.0
     assert len(schedule.obstacles) >= 3
     assert all(o.duration_s < 60.0 for o in schedule.obstacles)
+
+
+# ---- RViz 표시 --------------------------------------------------------------------------------
+
+def test_marker_specs_clear_everything_then_draw_a_box_and_label_per_placed_obstacle():
+    one = parse(size_m=[0.12, 0.12, 0.25]).obstacles[0]
+    placed = [obstacles.Occurrence(3, one, 10.0), obstacles.Occurrence(7, one, 20.0)]
+    specs = obstacles.marker_specs(placed, (0.12, 0.12, 0.25))
+    assert specs[0] == {"action": "deleteall"}
+    cubes = [s for s in specs if s.get("type") == "cube"]
+    texts = [s for s in specs if s.get("type") == "text"]
+    assert [c["id"] for c in cubes] == [3, 7] and [t["id"] for t in texts] == [3, 7]
+    cube, text = cubes[0], texts[0]
+    assert cube["action"] == "add" and cube["ns"] != text["ns"]
+    assert (cube["x"], cube["y"], cube["z"]) == pytest.approx((1.25, 1.35, 0.125))
+    assert cube["yaw"] == pytest.approx(-math.pi / 4)
+    assert cube["scale"] == (0.12, 0.12, 0.25)
+    r, g, b, a = cube["color"]
+    assert r > 0.8 and 0.3 < g < 0.6 and b < 0.2 and a == 1.0
+    assert text["text"] == "obstacle_3" and text["action"] == "add"
+    assert text["z"] > 0.25 and (text["x"], text["y"]) == pytest.approx((1.25, 1.35))
+
+
+def test_marker_specs_with_nothing_placed_only_clear():
+    assert obstacles.marker_specs([], obstacles.DEFAULT_SIZE_M) == [{"action": "deleteall"}]

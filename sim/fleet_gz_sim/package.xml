@@ -15,6 +15,7 @@
   <exec_depend>fake_robots</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>pinky_description</exec_depend>
   <exec_depend>pinky_nav_config</exec_depend>

@@ -5,11 +5,14 @@
 
 로봇이 clearance_m 안에 있으면 놓지 않고 기다린다(실제 위치 /<robot>/sim/truth로 본다).
 gz service 호출은 작업 스레드 하나에서 차례로 돌린다. 끝날 때 놓은 상자를 모두 치운다.
+놓인 상자는 /sim/obstacle_markers(map 틀)로 RViz에 보인다. 바뀔 때와 1초마다 낸다.
 Gazebo 통신 설정(GZ_IP, GZ_PARTITION)은 launch에서 물려받는다.
 """
 from __future__ import annotations
 
+import math
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import rclpy
@@ -18,13 +21,18 @@ from fleet_core.traffic.lane_map import load_lane_map
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+from visualization_msgs.msg import Marker, MarkerArray
 
 from fleet_gz_sim import obstacles
 
 TICK_S = 0.2
 CALL_LIMIT_S = 5.0  # gz service 자체 한도(3 s)에 여유를 둔다
 SHUTDOWN_TIMEOUT_MS = 1000  # 끝낼 때는 launch가 기다려 주는 동안 다 치우도록 짧게
+MARKER_PERIOD_S = 1.0
+MARKER_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                        durability=DurabilityPolicy.TRANSIENT_LOCAL)
+MARKER_TYPES = {"cube": Marker.CUBE, "text": Marker.TEXT_VIEW_FACING}
 
 
 class ObstacleNode(Node):
@@ -47,9 +55,13 @@ class ObstacleNode(Node):
                                      qos_profile_sensor_data)
         self.planner: obstacles.Planner | None = None
         self.told_waiting: set[int] = set()
-        self.live: set[str] = set()  # Gazebo에 놓인 상자. 작업 스레드에서만 바꾼다
+        # Gazebo에 놓인 상자(이름 → 장애물). 작업 스레드에서만 바꾸고, 표시는 잠금으로 읽는다
+        self.live: dict[str, obstacles.Occurrence] = {}
+        self.live_lock = threading.Lock()
+        self.markers = self.create_publisher(MarkerArray, "/sim/obstacle_markers", MARKER_QOS)
         self.worker = ThreadPoolExecutor(max_workers=1)
         self.create_timer(TICK_S, self._tick)
+        self.create_timer(MARKER_PERIOD_S, self._publish_markers)
         self.get_logger().info(f"{len(self.schedule.obstacles)} obstacles from {path}, "
                                f"repeat every {self.schedule.repeat_every_s} s")
 
@@ -93,7 +105,9 @@ class ObstacleNode(Node):
     def _spawn(self, occ: obstacles.Occurrence):
         one = occ.obstacle
         if self._call(obstacles.spawn_argv(self.world, occ.name, one, self.schedule.size_m)):
-            self.live.add(occ.name)
+            with self.live_lock:
+                self.live[occ.name] = occ
+            self._publish_markers()
             self.get_logger().info(f"{occ.name} on {one.label} at ({one.x:.2f}, {one.y:.2f}) "
                                    f"placed for {one.duration_s:g} s")
 
@@ -101,19 +115,51 @@ class ObstacleNode(Node):
         if occ.name not in self.live:
             return  # 놓지 못했다
         if self._call(obstacles.remove_argv(self.world, occ.name)):
-            self.live.discard(occ.name)
+            with self.live_lock:
+                del self.live[occ.name]
+            self._publish_markers()
             self.get_logger().info(f"{occ.name} on {occ.obstacle.label} removed")
+
+    def _publish_markers(self):
+        with self.live_lock:
+            placed = sorted(self.live.values(), key=lambda occ: occ.number)
+        stamp = self.get_clock().now().to_msg()
+        out = MarkerArray()
+        for spec in obstacles.marker_specs(placed, self.schedule.size_m):
+            marker = Marker()
+            marker.header.frame_id = "map"
+            marker.header.stamp = stamp
+            if spec["action"] == "deleteall":
+                marker.action = Marker.DELETEALL
+                out.markers.append(marker)
+                continue
+            marker.ns, marker.id = spec["ns"], spec["id"]
+            marker.type, marker.action = MARKER_TYPES[spec["type"]], Marker.ADD
+            marker.pose.position.x, marker.pose.position.y = spec["x"], spec["y"]
+            marker.pose.position.z = spec["z"]
+            marker.pose.orientation.z = math.sin(spec["yaw"] / 2)
+            marker.pose.orientation.w = math.cos(spec["yaw"] / 2)
+            marker.scale.x, marker.scale.y, marker.scale.z = spec["scale"]
+            (marker.color.r, marker.color.g, marker.color.b,
+             marker.color.a) = spec["color"]
+            marker.text = spec.get("text", "")
+            out.markers.append(marker)
+        self.markers.publish(out)
 
     def remove_all(self):
         """작업 스레드를 멈춘 뒤 남은 상자를 치운다(될 수 있는 만큼)."""
         self.worker.shutdown(wait=True, cancel_futures=True)
-        for name in sorted(self.live):
+        for name in sorted(self.live):  # 작업 스레드가 멈췄으니 잠금 없이 읽는다
             argv = obstacles.remove_argv(self.world, name, SHUTDOWN_TIMEOUT_MS)
             try:
                 subprocess.run(argv, capture_output=True, timeout=CALL_LIMIT_S)
             except (OSError, subprocess.TimeoutExpired):
                 pass
         self.live.clear()
+        try:
+            self._publish_markers()  # RViz에 남은 상자도 지운다
+        except Exception:  # noqa: BLE001 - 이미 ROS가 내려갔으면 그만이다
+            pass
 
 
 def main(args=None):
