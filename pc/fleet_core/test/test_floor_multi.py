@@ -292,3 +292,23 @@ def test_only_the_robot_found_unresolved_is_isolated(monkeypatch):
     assert failed
     for name, found_before in failed:
         assert name in found_before[1:], (name, found_before)
+
+
+def test_a_robot_told_to_wait_where_it_stands_stops_its_old_goal():
+    """A robot already in a good wait spot gets no new MoveTo; the goal of its previous leg must
+    end, or it drives on to the old target (here, onto the approach line) while 'waiting'."""
+    from fleet_core.common.commands import CancelCmd
+    traffic = two_robot_floor()
+    a, b = traffic._missions["a"], traffic._missions["b"]
+    traffic._start_leg(a, "TO_WORK", None, "W")  # a has the line
+    for _ in range(3):
+        traffic.on_robot_state("b", 0.9, 2.05, 0.0, "IDLE")
+    traffic._start_leg(b, "TO_PARK", None, "P-3")
+    traffic._drive(b)
+    assert b.goal is not None
+    traffic.take_output()
+    traffic._start_leg(b, "TO_WORK", None, "W")  # b waits where it is
+    leg = traffic._legs["b"]
+    assert leg.waiting and leg.route.length == 0.0
+    assert b.goal is None
+    assert any(isinstance(c, CancelCmd) for c in traffic.take_output())

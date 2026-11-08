@@ -36,6 +36,10 @@ class FloorWorld(SimWorld):
                               floor=self.floor)
         self.frames: list[dict] = []
         self.cell_violations = 0
+        # robots whose true body stuck out of their cells before their first MoveTo: the report
+        # it was placed from was off by more than the cell margin (localisation noise)
+        self.placement_outside: set[str] = set()
+        self._moved: set[str] = set()
         self.min_gap = math.inf
         self._steps = 0
 
@@ -77,6 +81,7 @@ class FloorWorld(SimWorld):
         if not r.comm_up or r.removed:
             return
         assert cmd.path, f"{cmd} has no path"
+        self._moved.add(r.name)
         assert tuple(cmd.path[-1][:2]) == (cmd.x, cmd.y), f"{cmd} path ends off the target"
         held = self.core.zones.held_set(cmd.robot)
         body = self.params.robot_radius_m
@@ -141,8 +146,17 @@ class FloorWorld(SimWorld):
             if self.t < r.localizing_until:
                 continue
             body = {self.floor.cell_id(c) for c in disk_cells(self.floor, r.x, r.y, radius)}
+            if not self.core.traffic._missions[r.name].placed:
+                # not on the map yet (its reported cells were taken): it gets no goal, and no
+                # one else may hold the cells it stands on
+                taken = {c for c in body if zones.holder(c) not in (None, r.name)}
+                assert not taken, f"{r.name} unplaced on cells others hold at {self.t}: {taken}"
+                continue
             held = zones.held_set(r.name)
             outside = body - held
+            if outside and r.name not in self._moved:
+                self.placement_outside.add(r.name)  # counted apart; it has not driven yet
+                continue
             if outside:
                 self.cell_violations += 1
             assert not outside, f"{r.name} at ({r.x:.3f}, {r.y:.3f}) is on cells it does not " \

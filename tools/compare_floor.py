@@ -21,6 +21,8 @@ invariants instead of lane checks. Extra columns, filled for both modes:
     deadlocks       DEADLOCK_DETECTED events; unresolved: DEADLOCK_UNRESOLVED events
     isolations      ROBOT_ISOLATED events
     violations      1 when an invariant broke (the run stops there), else 0
+    placement_outside  freefloor: robots whose true body stuck out of their cells before their
+                    first MoveTo (placed from a report off by more than the cell margin)
 """
 from __future__ import annotations
 
@@ -46,7 +48,8 @@ from floor_world import FloorWorld  # noqa: E402
 FLOORS = {"lane_map": "floor_map", "feature_map": "feature_floor_map"}
 MODES = ("lanes", "freefloor")
 EXTRA = ["min_gap_m", "path_m", "tick_ms_mean", "tick_ms_max", "slowdowns", "replans",
-         "sidesteps", "deadlocks", "unresolved", "isolations", "violations"]
+         "sidesteps", "deadlocks", "unresolved", "isolations", "violations",
+         "placement_outside"]
 
 
 def build(data, map_, seed, traffic_mode):
@@ -149,6 +152,7 @@ def run(map_, scenario, seed, traffic_mode, timeout_s=None, frame_every=0):
         unresolved=codes.count("DEADLOCK_UNRESOLVED"),
         isolations=codes.count("ROBOT_ISOLATED"),
         violations=1 if row["error"].startswith("invariant") else 0,
+        placement_outside=len(getattr(world, "placement_outside", ())) if metrics else "",
     )
     row.update({f"wait_{r}_s": round(s, 3) for r, s in meter.wait.items()})
     if any(f["type"] == "blocked" for f in data.get("faults") or []):

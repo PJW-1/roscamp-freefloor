@@ -405,7 +405,9 @@ class FloorController(TrafficController):
         if not out_line and self._standing_cells(*start).isdisjoint(banned) and \
                 near <= math.dist(start, line_start) <= far:
             leg.route = Route([start])  # already standing in a good place
-            leg.done = m.goal is None
+            if m.goal:
+                self._cancel_goal(m)  # stop here, not at the old leg's target
+            leg.done = True
             leg.s = leg.s_lock = leg.s_sent = 0.0
             return
         spots = sorted((c for c in self.floor.clear
