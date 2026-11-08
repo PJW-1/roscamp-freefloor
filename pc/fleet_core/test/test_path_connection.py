@@ -124,16 +124,29 @@ def test_a_normal_run_never_sends_a_path_that_misses_the_robot(site, mode, seed)
     assert sent and all(bool(c.path) == (mode == "path") for c in sent)
 
 
-def test_a_fleet_path_that_misses_the_robot_breaks_the_world_invariant():
-    """SimWorld는 보고가 바로 가는 세계라 첫 점(보고 위치)은 로봇에서 잡음만큼만 떨어진다.
-    주입하지 않은 path를 거절하면 관제 결함이므로 재시도로 가리지 않고 멈춘다(Codex)."""
+def test_a_fleet_path_that_misses_the_last_report_breaks_the_world_invariant():
+    """SimWorld는 보고하고 같은 step에 명령을 받으므로 관제가 만든 path는 마지막 보고를 지난다.
+    주입하지 않은 path가 그 보고를 지나지 않으면 관제 결함이므로 재시도로 가리지 않고
+    멈춘다(Codex)."""
     world = SimWorld(seed=1)
     r = world.virtual[ROBOT]
+    world.reported[ROBOT] = (r.x, r.y)
     far = MoveCmd(ROBOT, 99, "x", r.x + 0.9, r.y + 0.5, 0.0,
                   path=((r.x + 0.5, r.y + 0.5, 0.0), (r.x + 0.9, r.y + 0.5, 0.0)))
-    with pytest.raises(AssertionError, match="does not pass the robot"):
+    with pytest.raises(AssertionError, match="does not pass the last report"):
         world._refuses_path(r, far)
     assert world.path_refusals == []
+
+
+def test_a_report_that_the_noise_threw_far_is_a_refusal_not_an_invariant_break():
+    """한계 없는 잡음(gaussian_noise)은 드물게 보고를 0.15 m 넘게 튀게 한다. 관제가 그 보고에서
+    시작한 path는 맞게 만든 것이고, 로봇이 거절하는 것도 맞다(Codex 재검수)."""
+    world = SimWorld(seed=1, gaussian_noise=True)
+    r = world.virtual[ROBOT]
+    x, y = world.reported[ROBOT] = (r.x, r.y + 0.3)
+    thrown = MoveCmd(ROBOT, 99, "x", x + 0.5, y, 0.0, path=((x, y, 0.0), (x + 0.5, y, 0.0)))
+    assert world._refuses_path(r, thrown) is True
+    assert [(robot, goal) for _, robot, goal in world.path_refusals] == [(ROBOT, 99)]
 
 
 def test_an_injected_bad_path_is_a_refusal_not_an_invariant_break():
