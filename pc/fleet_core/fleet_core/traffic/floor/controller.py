@@ -346,6 +346,9 @@ class FloorController(TrafficController):
         if self._plan_budget <= 0:
             leg.route = None  # planned on the next tick
             leg.planned_at = self._clock() - self.params.floor_replan_s
+            leg.waiting = bool(leg.in_line)  # no claim on an approach line before a plan
+            if m.goal:
+                self._cancel_goal(m)  # stop meanwhile, not on to the old target
             return
         self._plan_budget -= 1
         leg.planned_at = self._clock()

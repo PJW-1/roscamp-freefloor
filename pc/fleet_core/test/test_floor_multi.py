@@ -329,3 +329,18 @@ def test_one_route_is_planned_per_tick():
     traffic.tick_progress(clock())
     traffic._drive(b)
     assert traffic._legs["b"].route is not None
+
+
+def test_a_deferred_plan_stops_the_old_goal_and_claims_no_line():
+    traffic = two_robot_floor()
+    a, b = traffic._missions["a"], traffic._missions["b"]
+    traffic._start_leg(b, "TO_PARK", None, "P-3")
+    traffic._drive(b)
+    assert b.goal is not None
+    traffic.tick_progress(traffic._clock())  # budget 1
+    traffic._start_leg(a, "TO_PARK", None, "B")  # uses it
+    traffic._start_leg(b, "TO_WORK", None, "W")  # deferred
+    leg = traffic._legs["b"]
+    assert leg.route is None
+    assert b.goal is None  # not driving on to the old target meanwhile
+    assert leg.waiting  # and not counted as going up the approach line
