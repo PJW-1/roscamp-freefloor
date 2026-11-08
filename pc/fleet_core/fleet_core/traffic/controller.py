@@ -102,6 +102,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         self._deadlock_acted = False
         self._retreating: tuple[str, list[str], float] | None = None  # 로봇, 구역, 해제 시각
         self._deadlock_cycle: tuple[str, ...] = ()  # the cycle being handled, in wait order
+        # robots on any wait cycle at the last check; the idle watch (H2) skips them
+        self._deadlock_members: frozenset[str] = frozenset()
         self._unresolved_at: float | None = None  # when DEADLOCK_UNRESOLVED was reported
         self._startup_since: float | None = None
         self._missing_reported = False

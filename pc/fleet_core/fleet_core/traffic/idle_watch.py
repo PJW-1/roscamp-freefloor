@@ -31,7 +31,7 @@ class TrafficIdleWatch:
                 and self.zones.waiting_for(m.name) is None
                 and not m.block and m.block_cancel is None
                 and m.arrival_by is None and now >= m.retry_at
-                and self._deadlock_since is None)
+                and m.name not in self._deadlock_members)
 
     def _idle_spot(self, m: _Mission) -> tuple:
         """정체 자리: (지금 지점, 쥔 구역). 바뀌면 나아간 것이다."""

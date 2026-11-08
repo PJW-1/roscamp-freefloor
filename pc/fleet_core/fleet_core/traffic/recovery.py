@@ -179,8 +179,9 @@ class TrafficRecovery:
             self._deadlock_acted = False
             self._retreating = None
             self._unresolved_at = None
+        self._deadlock_members = cycle_members(graph) if cycle else frozenset()
         if not cycle:
-            return frozenset()
+            return self._deadlock_members
         if self._deadlock_since is None:
             self._deadlock_since = now
             self._event("ERROR", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
@@ -196,7 +197,7 @@ class TrafficRecovery:
             # _fail cancels the robot's zone requests, so the cycle is gone by the next tick.
             self._fail(self._missions[choose_retreat(cycle, self._priority)],
                        "DEADLOCK_UNRESOLVED")
-        return cycle_members(graph)
+        return self._deadlock_members
 
     def _retreat(self, robot: str, cycle: list[str]) -> None:
         """아직 들어가지 않은 구역 예약을 내놓는다. 실제 후진은 아직 없다."""

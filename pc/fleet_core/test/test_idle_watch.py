@@ -226,10 +226,27 @@ def test_a_parked_robot_or_one_at_a_station_is_not_idle():
     assert not drive.events("ROBOT_IDLE")
 
 
-def test_a_robot_in_a_deadlock_halt_is_not_watched():
-    """교착 멈춤 동안은 교착 처리 몫이다(H1에서 순환에 든 로봇만으로 좁힌다)."""
+def test_a_robot_in_a_wait_cycle_is_not_watched():
+    """A robot on a wait cycle belongs to the deadlock handling (H1 stops only those robots)."""
     drive, stopped = short_of_f0()
-    drive.core._deadlock_since = drive.now[0]
-    drive.core._check_deadlock = lambda now: True
+
+    def r1_in_a_cycle(now):
+        drive.core._deadlock_members = frozenset({"r1"})
+        return drive.core._deadlock_members
+
+    drive.core._check_deadlock = r1_in_a_cycle
     drive.run(30.0)
     assert not drive.events("ROBOT_IDLE")
+
+
+def test_a_wait_cycle_elsewhere_does_not_hide_a_quiet_robot():
+    """H1 stops only the robots of a wait cycle, so the watch skips only them, not everyone
+    while some cycle exists (merge of H1 and H2)."""
+    drive, _ = short_of_f0()
+    core, m, now = drive.core, drive.core._missions["r1"], drive.now[0]
+    assert core._idle_watch_applies(m, now)
+    core._deadlock_since = now  # a cycle of two other robots is being handled
+    core._deadlock_members = frozenset({"r2", "r3"})
+    assert core._idle_watch_applies(m, now)
+    core._deadlock_members = frozenset({"r1", "r2"})
+    assert not core._idle_watch_applies(m, now)
