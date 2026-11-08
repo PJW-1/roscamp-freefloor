@@ -94,6 +94,35 @@ def test_recovering_past_the_limit_is_taken_as_blocked():
     assert [t for t, _ in pilot.sent("CancelCmd") if t >= start]
 
 
+def test_a_robot_still_recovering_after_the_cancel_keeps_the_zone_ahead():
+    """상한을 넘긴 RECOVERING은 막힘으로 보지만 선 것을 확인하는 보고로는 세지 않는다. 취소 결과가
+    온 뒤에도 복구 중이라면 아직 움직일 수 있다."""
+    pilot = Pilot()
+    goal = on_the_way(pilot)
+    pilot.state["pinky1"] = SELF_RECOVERING
+    pilot.run(PARAMS.self_recovery_limit_s + MARK_S + 0.5)
+    assert pilot.events("LANE_BLOCKED")
+    pilot.core.on_move_result("pinky1", goal, False, "CANCELED")
+    pilot.run(2.0)
+    assert pilot.held() == {"N", "S"}
+
+
+def test_a_comm_loss_ends_the_recovery_and_its_clock():
+    pilot = Pilot()
+    on_the_way(pilot)
+    pilot.state["pinky1"] = SELF_RECOVERING
+    pilot.run(2.0)
+    pilot.silent.add("pinky1")
+    pilot.run(PARAMS.self_recovery_limit_s + 1.0)
+    assert pilot.events("COMM_LOST")
+    ends = pilot.events("SELF_RECOVERY_END")
+    assert len(ends) == 1 and "COMM_LOST" in ends[0][1].detail
+    pilot.silent.clear()
+    pilot.run(1.0)
+    assert not pilot.events("SELF_RECOVERY_TOO_LONG")
+    assert len(pilot.events("SELF_RECOVERY")) == 2  # 다시 들은 RECOVERING은 새 복구다
+
+
 def test_the_limit_starts_again_with_each_recovery():
     pilot = Pilot()
     on_the_way(pilot)

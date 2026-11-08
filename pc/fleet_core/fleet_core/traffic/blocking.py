@@ -53,7 +53,9 @@ class TrafficBlocking:
             b.clear_n = b.still_n = 0
             return
         if b.marked and m.block_cancel is None:
-            b.still_n = 0 if m.robot_state in ON_A_GOAL else b.still_n + 1
+            # 상한을 넘겨 BLOCKED로 본 RECOVERING(self_recovery_since가 있음)도 선 것은 아니다
+            moving = m.robot_state in ON_A_GOAL or m.self_recovery_since is not None
+            b.still_n = 0 if moving else b.still_n + 1
         # 자가 복구 중은 아직 막혀 있을 수 있다. 연속 수를 처음부터 다시 센다
         b.clear_n = 0 if m.robot_state in (BLOCKED, SELF_RECOVERING) else b.clear_n + 1
         if b.clear_n >= self.params.release_confirm_samples:

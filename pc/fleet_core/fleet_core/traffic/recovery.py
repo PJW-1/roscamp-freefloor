@@ -95,6 +95,8 @@ class TrafficRecovery:
                 what = "pose, LOCALIZING" if m.robot_state == LOCALIZING else "state"
                 self._event("WARN", "COMM_LOST", f"no {what} for {now - m.last_seen:.1f} s",
                             m.name)
+                # 두절 동안 자가 복구를 이었는지 모른다. 다시 들은 RECOVERING은 새로 잰다
+                self._note_self_recovery(m, COMM_LOST)
 
     def _begin_recovery(self, m: _Mission) -> None:
         m.comm = RECOVERING
