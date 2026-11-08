@@ -38,6 +38,15 @@ def test_min_distance_compares_every_sample_inside_the_sync_window():
     assert c.summary()["min_distance_m"] == pytest.approx(0.30)
 
 
+def test_a_late_sample_still_meets_the_samples_of_its_time():
+    """Topics are handled with some delay; pinky2's 0.05 s sample may come after pinky1's 0.30 s."""
+    c = check(sync_s=0.1)
+    c.on_truth("pinky1", 0.00, 0.20, 0.0, 0.0, 0.0)
+    c.on_truth("pinky1", 0.30, 0.90, 0.0, 0.0, 0.0)
+    c.on_truth("pinky2", 0.05, 0.0, 0.0, 0.0, 0.0)
+    assert c.summary()["min_distance_m"] == pytest.approx(0.20)
+
+
 def test_no_pair_seen_together_gives_no_distance():
     c = check()
     c.on_truth("pinky1", 1.0, 0.0, 0.0, 0.0, 0.0)

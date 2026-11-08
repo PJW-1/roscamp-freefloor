@@ -135,10 +135,10 @@ def _start(context):
         load_schedule(obstacles_file, site)  # 틀린 일정이면 Gazebo를 띄우기 전에 멈춘다
     poses = start_poses(site, scenario)
     robots = list(poses)
-    composed = value("nav_composition").lower() in ("true", "1")
+    composed = flag(value("nav_composition"), "nav_composition")
     stub = flag(value("sim_dock_stub"), "sim_dock_stub")
     check = flag(value("fleet_check"), "fleet_check")
-    actions = [*launch_parts.world(value("gui").lower() in ("true", "1")),
+    actions = [*launch_parts.world(flag(value("gui"), "gui")),
                launch_parts.bridge(robots)]
     for robot, (x, y, yaw) in poses.items():
         actions += launch_parts.pinky(robot, x, y, yaw,
@@ -154,7 +154,7 @@ def _start(context):
                                      "scenario_file": scenario_file, "dock_stub": stub}]))
     wait = Node(package="fleet_gz_sim", executable="wait_ready", name="wait_ready",
                 output="screen", parameters=[{"robots": robots}])
-    monitor = value("monitor").lower() in ("true", "1")
+    monitor = flag(value("monitor"), "monitor")
 
     def after_wait(event, _context):
         if event.returncode != 0:

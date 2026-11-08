@@ -156,6 +156,17 @@ def test_the_stub_answers_only_while_gazebo_time_runs():
     assert not stub_may_answer(ros_time_active=True, now_s=0.0)
 
 
+def test_a_stalled_clock_counts_as_stopped():
+    """/clock that ran once and then stopped keeps its last value; the stub must notice."""
+    from fleet_gz_sim.dock_stand_in import ClockWatch
+    watch = ClockWatch(limit_s=5.0)
+    assert not watch.stalled(sim_now=10.0, wall_now=100.0)
+    assert not watch.stalled(sim_now=10.5, wall_now=104.0)
+    assert not watch.stalled(sim_now=10.5, wall_now=108.9)
+    assert watch.stalled(sim_now=10.5, wall_now=109.1)
+    assert not watch.stalled(sim_now=10.6, wall_now=109.2)  # runs again
+
+
 def test_the_stub_keeps_gazebo_time_once_started(ros):
     """Switching use_sim_time off later would put the stub on the wall clock."""
     from ament_index_python.packages import get_package_share_directory

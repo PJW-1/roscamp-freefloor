@@ -252,7 +252,8 @@ def test_sim_dock_stub_still_needs_an_isolated_network(made, monkeypatch):
         run(made, sim_dock_stub="true")
 
 
-@pytest.mark.parametrize("name", ["sim_dock_stub", "fleet_check"])
+@pytest.mark.parametrize("name", ["sim_dock_stub", "fleet_check", "gui", "monitor",
+                                  "nav_composition"])
 def test_a_misspelt_switch_stops_the_launch(made, name):
     with pytest.raises(ValueError, match=name):
         run(made, **{name: "ture"})

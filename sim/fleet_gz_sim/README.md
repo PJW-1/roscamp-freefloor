@@ -103,7 +103,7 @@ pgrep -af "gz sim|ruby|component_container|pinky_fsm_node|fleet_manager_node"   
 
 - 기본(`sim_dock_stub:=false`): 진짜 `pinky_fsm`이 `/pinkyN/dock`을 받고 `DOCK_UNAVAILABLE`로 실패시킨다(`pinky_dock`이 아직 없다). 임무가 도크에서 멈추고 관제가 모두 세 번 시도한 뒤(`move_retry_limit`) 그 로봇을 격리한다. 주행 확인에는 이대로 충분하다.
 - `sim_dock_stub:=true`: 임무를 끝까지 돌려 보고 싶을 때. `pinky_fsm`의 dock 서버를 `/pinkyN/dock_fsm`으로 비켜 두고 `sim_stand_in`이 `/pinkyN/dock`을 받는다. 로봇을 움직이지 않고, 관제가 데려다 놓은 로봇의 실제 위치가 도크 지점 0.15 m 안이면 시나리오의 `dock.duration_s` 뒤 성공, 아니면 실패로 끝낸다.
-- 대역은 `use_sim_time`이 켜져 있고 격리 검사를 통과했을 때만 뜬다. Gazebo 시계(`/clock`)가 돌지 않으면 도킹을 실패로 끝내고, 뜬 뒤 `use_sim_time`을 끄는 것도 거부한다. 실물 bringup(`iponic_bringup`, `pinky_fsm.launch.py`)에는 이 옵션이 없고, `pc.launch.py`에 `sim_dock_stub:=true`를 줘도 아무것도 바뀌지 않는다(`test/test_dock_stub.py`가 고정한다).
+- 대역은 `use_sim_time`이 켜져 있고 격리 검사를 통과했을 때만 뜬다. Gazebo 시계(`/clock`)가 없거나 5 s(벽시계) 넘게 멈추면 도킹을 실패로 끝내고, 뜬 뒤 `use_sim_time`을 끄는 것도 거부한다. 실물 bringup(`iponic_bringup`, `pinky_fsm.launch.py`)에는 이 옵션이 없고, `pc.launch.py`에 `sim_dock_stub:=true`를 줘도 아무것도 바뀌지 않는다(`test/test_dock_stub.py`가 고정한다).
 
 ### 결과 확인
 

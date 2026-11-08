@@ -32,6 +32,22 @@ def dock_outcome(pose, dock_xy, reach_m: float = REACH_M) -> tuple[bool, float, 
     return math.hypot(ex, ey) <= reach_m + 1e-9, ex * 100.0, ey * 100.0, 0.0
 
 
+class ClockWatch:
+    """Says when Gazebo time has not advanced for limit_s wall seconds (a stalled /clock keeps
+    its last value, so ROS time stays active and positive)."""
+
+    def __init__(self, limit_s: float):
+        self.limit_s = limit_s
+        self._sim: float | None = None
+        self._since = 0.0
+
+    def stalled(self, sim_now: float, wall_now: float) -> bool:
+        if self._sim is None or sim_now != self._sim:
+            self._sim, self._since = sim_now, wall_now
+            return False
+        return wall_now - self._since > self.limit_s
+
+
 def stub_may_answer(ros_time_active: bool, now_s: float) -> bool:
     """Answer a dock goal only while Gazebo time is running (ROS time from /clock, past 0)."""
     return ros_time_active and now_s > 0.0

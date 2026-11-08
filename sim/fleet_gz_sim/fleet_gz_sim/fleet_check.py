@@ -22,6 +22,7 @@ STILL_RADPS = 0.1
 MOVING_MPS = 0.05
 STOP_MIN_S = 0.5
 SYNC_S = 0.1
+KEEP_S = 1.0  # keep this much history so a sample handled late still meets its peers
 MARGIN_M = 0.0
 MOVING = "MOVING"
 
@@ -67,7 +68,7 @@ class FleetCheck:
         if me is None:
             return
         me.recent.append((t, x, y))
-        while me.recent and me.recent[0][0] < t - 2 * self.sync_s:
+        while me.recent and me.recent[0][0] < me.recent[-1][0] - KEEP_S - self.sync_s:
             me.recent.popleft()
         if wall is not None:
             self.first = self.first or (t, wall)

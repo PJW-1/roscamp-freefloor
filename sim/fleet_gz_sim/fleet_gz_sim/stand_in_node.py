@@ -37,6 +37,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from fleet_gz_sim.dock_stand_in import (
+    ClockWatch,
     dock_outcome,
     dock_phase,
     require_dock_stub_allowed,
@@ -46,6 +47,7 @@ from fleet_gz_sim.ready import everyone_idle
 
 READY_HOLD_S = 1.0
 REPORT_FRESH_S = 0.5  # pinky_fsm은 state를 10 Hz로 낸다
+CLOCK_STALL_S = 5.0  # wall seconds without Gazebo time moving: the dock fails
 
 
 def _yaw(q) -> float:
@@ -121,6 +123,7 @@ class SimStandIn(Node):
             return Dock.Result(success=False)
         target = self._site.waypoint_pose(station.dock)
         start, phase = self._now(), ""
+        watch = ClockWatch(CLOCK_STALL_S)
         while rclpy.ok():
             with self._lock:
                 replaced = self._turn[robot] != turn
@@ -128,6 +131,10 @@ class SimStandIn(Node):
                 handle.canceled()
                 return Dock.Result(success=False)
             if replaced:  # FakePinky처럼 새 목표가 오면 이전 목표는 실패로 끝난다
+                handle.abort()
+                return Dock.Result(success=False)
+            if watch.stalled(self._now(), time.monotonic()):
+                self.get_logger().warn(f"{robot}: Gazebo time stopped, dock fails")
                 handle.abort()
                 return Dock.Result(success=False)
             elapsed = self._now() - start
