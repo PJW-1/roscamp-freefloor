@@ -56,7 +56,7 @@ class _Goal:
         self.end_at = 0.0
         self.start_at = 0.0
         self.error = (0.0, 0.0, 0.0)
-        self.target_id = ""
+        self.target_id = ""  # target_id of a move, dock_id of a dock (current_goal)
 
     def finish(self, success: bool, reason: str = "") -> None:
         if not self.done.is_set():
@@ -200,6 +200,7 @@ class FakePinkyNode(Node):
                         goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
                         goal.abort_from = self._faults.last_taken
             else:
+                goal.target_id = handle.request.dock_id
                 self._motion.clear_target()
                 goal.end_at = t + self._dock_cfg.duration_s
             self._goals[bytes(handle.goal_id.uuid)] = goal
@@ -371,7 +372,7 @@ class FakePinkyNode(Node):
         self._reports.push(t, RobotState(
             robot_id=self.robot_id, pose=Pose2D(x=x, y=y, theta=self._motion.yaw),
             battery=90.0, state=state,
-            current_goal=goal.target_id if busy and goal.kind == "move" else "",
+            current_goal=goal.target_id if busy else "",  # Pinky contract section 2
             stamp=self.get_clock().now().to_msg()))
 
 

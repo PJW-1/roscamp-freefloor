@@ -291,6 +291,15 @@ def test_dock_reports_phase_and_error(harness, tmp_path):
     assert p.states[-1][1].state == RobotState.STATE_DOCKED
 
 
+def test_a_dock_reports_its_dock_id_as_the_current_goal(harness, tmp_path):
+    """Pinky contract section 2: current_goal is the target_id or dock_id of the running goal."""
+    p = start(harness, tmp_path, dock={"duration_s": 30.0, "error_cm": 1.0})
+    fut = p.dock.send_goal_async(Dock.Goal(dock_id="WORK"))
+    assert wait_until(fut.done, 5.0) and fut.result().accepted
+    assert wait_until(lambda: any(s.state == RobotState.STATE_DOCKING for _, s in p.states), 5.0)
+    assert {s.current_goal for _, s in p.states if s.state == RobotState.STATE_DOCKING} == {"WORK"}
+
+
 # ---- the heartbeat ----------------------------------------------------------------------
 
 SLOW = {"pinky1": {"start": "P-6", "speed_mps": 0.1, "pose_noise_m": 0.0}}
