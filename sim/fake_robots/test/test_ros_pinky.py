@@ -46,12 +46,12 @@ class Probe:
         return fut.result()
 
 
-def start(harness, tmp_path, heartbeat_timeout_s=0.0, **scenario):
-    """여기엔 FMS가 없으니 기본적으로 로봇은 FMS 소식을 기다리지 않는다."""
+def start(harness, tmp_path, heartbeat_timeout_s=0.0, node=None, **scenario):
+    """여기엔 FMS가 없으니 기본적으로 로봇은 FMS 소식을 기다리지 않는다. node: 노드 파라미터."""
     from fake_robots.fake_pinky_node import FakePinkyNode
     harness.add(FakePinkyNode(parameter_overrides=harness.params(
         robot_id="pinky1", scenario_file=write_scenario(tmp_path, **scenario),
-        state_rate_hz=20.0, heartbeat_timeout_s=heartbeat_timeout_s)))
+        state_rate_hz=20.0, heartbeat_timeout_s=heartbeat_timeout_s, **(node or {}))))
     return Probe(harness)
 
 
@@ -398,6 +398,7 @@ def test_a_robot_with_nothing_to_do_does_not_mind_the_silence(harness, tmp_path)
 # ---- 앞 물체와 위치 잡기(계약 3절 6번, 4절) -----------------------------------------------
 
 ONE = {"pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}}
+NO_RECOVERY = {"recovery_attempts": 0}  # 자기 복구 없이 BLOCKED로 바로 가는 동작(계약 4절)
 
 
 def states_since(p, mark=0.0):
@@ -406,7 +407,7 @@ def states_since(p, mark=0.0):
 
 def test_an_obstacle_holds_a_move_that_says_blocked_and_then_goes_on(harness, tmp_path):
     """1초 서면 BLOCKED. 목표는 끝내지 않고, 물체가 1초 안 보이면 이어 가서 도착한다."""
-    p = start(harness, tmp_path, robots=ONE, faults=[
+    p = start(harness, tmp_path, robots=ONE, node=NO_RECOVERY, faults=[
         {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 3.0}])
     truth = watch_truth(p)
     assert wait_until(lambda: p.states, 5.0)
@@ -423,7 +424,7 @@ def test_an_obstacle_holds_a_move_that_says_blocked_and_then_goes_on(harness, tm
 
 
 def test_blocked_lasts_past_a_cancel_while_the_obstacle_is_there(harness, tmp_path):
-    p = start(harness, tmp_path, robots=ONE, faults=[
+    p = start(harness, tmp_path, robots=ONE, node=NO_RECOVERY, faults=[
         {"at_s": 1.0, "robot": "pinky1", "type": "blocked", "duration_s": 5.0}])
     assert wait_until(lambda: p.states, 5.0)
     handle = p.goal("N")
@@ -441,7 +442,7 @@ def test_blocked_lasts_past_a_cancel_while_the_obstacle_is_there(harness, tmp_pa
 def test_a_robot_put_back_does_not_keep_saying_blocked(harness, tmp_path):
     """막혀 선 로봇을 치웠다 다른 곳에 놓으면 앞 막힘을 잊는다(병합 리뷰 2번)."""
     began = time.monotonic()
-    p = start(harness, tmp_path, robots=ONE, faults=[
+    p = start(harness, tmp_path, robots=ONE, node=NO_RECOVERY, faults=[
         {"at_s": 1.0, "robot": "pinky1", "type": "blocked", "duration_s": 20.0},
         {"at_s": 3.0, "robot": "pinky1", "type": "operator_remove"},
         {"at_s": 4.0, "robot": "pinky1", "type": "operator_reinstate", "start": "P-5"}])
@@ -562,3 +563,210 @@ def test_a_refused_path_ends_the_old_goal_and_a_path_from_here_arrives(harness, 
             if math.dist((here.x, here.y), SITE.waypoint_pose(w)) > 1e-3]
     again = send_path(p, [(here.x, here.y), *lane_points(*rest)], "S")
     assert result_of(again).result.success is True
+
+
+# ---- 자기 복구(제안, 2026-11-09 공유 명세 '로봇 쪽') ----------------------------------------
+
+RECOVERING = RobotState.STATE_RECOVERING
+LONG = {"pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}}  # QO까지 2.3 m
+
+
+def runs(states):
+    """연달아 같은 상태를 하나로."""
+    out = []
+    for s in states:
+        if not out or out[-1] != s:
+            out.append(s)
+    return out
+
+
+def along(truth, start="P-6", end="QO"):
+    """시작점에서 목표 쪽으로 간 거리(진실 자세)."""
+    (x0, y0), (x1, y1) = SITE.waypoint_pose(start), SITE.waypoint_pose(end)
+    n = math.dist((x0, y0), (x1, y1))
+    return [((x - x0) * (x1 - x0) + (y - y0) * (y1 - y0)) / n for _, x, y in truth]
+
+
+def back_ups(distances, eps=1e-4):
+    """앞으로 가다 뒤로 가기 시작한 횟수."""
+    count, going = 0, 1
+    for a, b in zip(distances, distances[1:], strict=False):
+        if b - a < -eps and going > 0:
+            count, going = count + 1, -1
+        elif b - a > eps:
+            going = 1
+    return count
+
+
+def ended(handle):
+    fut = handle.get_result_async()
+    time.sleep(0.2)
+    return fut.done()
+
+
+def test_a_persistent_obstacle_gives_two_recovering_attempts_then_blocked(harness, tmp_path):
+    """명세 3~5번: 1 s 서면 RECOVERING, 0.15 m 후진 뒤 다시 가서 또 서면 두 번째 시도,
+    그래도 서면 BLOCKED. 목표는 끝내지 않는다."""
+    p = start(harness, tmp_path, robots=LONG, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 60.0}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    handle = p.goal("QO")
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 20.0)
+    seen = runs(states_since(p))
+    assert seen[seen.index(RobotState.STATE_MOVING):] == [
+        RobotState.STATE_MOVING, RECOVERING, RobotState.STATE_BLOCKED]
+    d = along(truth)
+    assert back_ups(d) == 2
+    assert max(d) > 0.4, "too near the start: it would back up less than 0.15 m"
+    assert max(d) - min(d[d.index(max(d)):]) == pytest.approx(0.15, abs=0.02)
+    span = [w for w, s in p.states if s.state == RECOVERING]
+    # 후진 0.15 m(0.08 m/s), 되돌아가기(0.2 m/s), 1 s 서기를 두 번
+    assert span[-1] - span[0] == pytest.approx(2 * (0.15 / 0.08 + 0.15 / 0.2 + 1.0), abs=0.8)
+    assert not ended(handle), "the goal is held, not ended"
+
+
+def test_an_obstacle_at_the_path_start_gives_no_back_up(harness, tmp_path):
+    """명세 3번 d < 0.02: 처음부터 물체가 앞에 있으면 후진하지 않고 RECOVERING 두 번 뒤 BLOCKED.
+    pinky_fsm 비교 시험(물체 0.2 m 앞)과 같은 순서다."""
+    p = start(harness, tmp_path, robots=LONG, faults=[
+        {"at_s": 0.0, "robot": "pinky1", "type": "blocked", "duration_s": 60.0}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    sent = time.monotonic()
+    p.goal("QO")
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 8.0)
+    assert time.monotonic() - sent == pytest.approx(3.0, abs=0.6)
+    assert runs(states_since(p, sent)) == [
+        RobotState.STATE_MOVING, RECOVERING, RobotState.STATE_BLOCKED]
+    assert {(x, y) for _, x, y in truth} == {SITE.waypoint_pose("P-6")}
+
+
+def stood(p, truth, still_s=0.3, timeout=10.0):
+    """물체 앞에 서기를 기다린다. 선 자리를 돌려준다."""
+    def standing():
+        recent = [(x, y) for w, x, y in list(truth) if w >= time.monotonic() - still_s]
+        return len(recent) > 3 and len(set(recent)) == 1 and recent[0] != SITE.waypoint_pose("P-6")
+    assert wait_until(standing, timeout), "it never stood"
+    return truth[-1][1], truth[-1][2]
+
+
+def test_no_back_up_into_a_robot_behind(harness, tmp_path):
+    """명세 3번: 다른 로봇이 뒤로 후진 거리 + 반지름 안에 있으면 후진하지 않는다. 시도는 센다."""
+    from fake_robots.common import TRUTH_TOPIC
+    robots = {**LONG, "pinky2": {"start": "P-5"}}  # 시나리오의 다른 로봇만 본다
+    p = start(harness, tmp_path, robots=robots, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 60.0}])
+    truth = watch_truth(p)
+    other = p.node.create_publisher(RobotState, TRUTH_TOPIC.format(robot="pinky2"),
+                                    to_ros_qos(CONTRACT_OBJ.qos("robot_state")))
+    assert wait_until(lambda: p.states, 5.0)
+    p.goal("QO")
+    x, y = stood(p, truth)
+    assert p.states[-1][1].state == RobotState.STATE_MOVING, "too late: already recovering"
+    assert max(along(truth)) > 0.4, "too near the start: it would back up less than 0.15 m"
+    (x0, y0), (x1, y1) = SITE.waypoint_pose("P-6"), SITE.waypoint_pose("QO")
+    n = math.dist((x0, y0), (x1, y1))
+    bx, by = x - 0.25 * (x1 - x0) / n, y - 0.25 * (y1 - y0) / n  # 후진 끝에서 0.10 m
+    p.node.create_timer(0.05, lambda: other.publish(RobotState(
+        robot_id="pinky2", pose=Pose2D(x=bx, y=by))))
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 10.0)
+    assert RECOVERING in states_since(p)
+    assert back_ups(along(truth)) == 0, "it backed up into the robot behind"
+
+
+def test_no_back_up_into_an_obstacle_behind(harness, tmp_path):
+    p = start(harness, tmp_path, robots=LONG, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 60.0},
+        {"at_s": 0.0, "robot": "pinky1", "type": "obstacle_behind", "duration_s": 60.0,
+         "distance_m": 0.1}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    p.goal("QO")
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 10.0)
+    assert RECOVERING in states_since(p)
+    assert max(along(truth)) > 0.4, "too near the start: it would back up less than 0.15 m"
+    assert back_ups(along(truth)) == 0
+
+
+def test_after_the_obstacle_goes_it_resumes_says_moving_and_arrives(harness, tmp_path):
+    p = start(harness, tmp_path, robots=LONG, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 2.0}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    res = result_of(p.goal("QO"), 30.0).result
+    assert res.success is True
+    seen = runs(states_since(p))
+    assert seen[seen.index(RobotState.STATE_MOVING):] == [
+        RobotState.STATE_MOVING, RECOVERING, RobotState.STATE_MOVING, RobotState.STATE_IDLE]
+    assert back_ups(along(truth)) == 1
+
+
+def test_attempts_reset_after_the_robot_gets_three_tenths_of_a_metre_on(harness, tmp_path):
+    """두 시도를 쓴 뒤 0.3 m 넘게 가면 다음 물체에서 다시 RECOVERING부터 한다(명세 6번)."""
+    p = start(harness, tmp_path, robots=LONG, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 5.0},
+        {"at_s": 13.0, "robot": "pinky1", "type": "blocked", "duration_s": 2.0}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    assert result_of(p.goal("QO"), 40.0).result.success is True
+    seen = runs(states_since(p))
+    assert RobotState.STATE_BLOCKED not in seen
+    assert seen[seen.index(RobotState.STATE_MOVING):] == [
+        RobotState.STATE_MOVING, RECOVERING, RobotState.STATE_MOVING, RECOVERING,
+        RobotState.STATE_MOVING, RobotState.STATE_IDLE]
+    assert back_ups(along(truth)) == 3, "two in the first episode, one after the reset"
+
+
+def test_cancel_during_recovering_ends_canceled_and_idle(harness, tmp_path):
+    """명세 7번: 후진을 멈추고 CANCELED, 상태는 IDLE(물체가 아직 있어도)."""
+    p = start(harness, tmp_path, robots=LONG, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 60.0}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    handle = p.goal("QO")
+    assert wait_until(lambda: p.states[-1][1].state == RECOVERING, 10.0)
+    time.sleep(0.5)  # 후진하는 중
+    cancel = handle.cancel_goal_async()
+    assert wait_until(cancel.done, 5.0)
+    res = result_of(handle).result
+    assert res.success is False and res.reason == MoveTo.Result.REASON_CANCELED
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_IDLE, 2.0)
+    mark = time.monotonic()
+    time.sleep(1.5)
+    assert set(states_since(p, mark)) == {RobotState.STATE_IDLE}
+    assert len({(x, y) for w, x, y in truth if w >= mark}) == 1, "it kept backing up"
+
+
+def test_a_replacing_goal_during_recovering_cancels_the_old_one(harness, tmp_path):
+    """명세 7번: 이전 목표는 CANCELED, 후진은 멈추고 새 목표를 간다. 시도 수는 이어진다."""
+    p = start(harness, tmp_path, robots=LONG, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 60.0}])
+    assert wait_until(lambda: p.states, 5.0)
+    first = p.goal("QO")
+    assert wait_until(lambda: p.states[-1][1].state == RECOVERING, 10.0)
+    second = p.goal("QO")
+    old = result_of(first).result
+    assert (old.success, old.reason) == (False, MoveTo.Result.REASON_CANCELED)
+    mark = time.monotonic()
+    # 첫 목표에서 시도 하나를 썼다. 새 목표에서 하나 더 쓰고 BLOCKED다
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 10.0)
+    assert runs(states_since(p, mark))[-2:] == [RECOVERING, RobotState.STATE_BLOCKED]
+    assert not ended(second)
+
+
+def test_heartbeat_loss_during_recovering_stops_everything(harness, tmp_path):
+    p = start(harness, tmp_path, heartbeat_timeout_s=BEAT_TIMEOUT_S, robots=LONG, faults=[
+        {"at_s": 3.0, "robot": "pinky1", "type": "blocked", "duration_s": 60.0}])
+    truth = watch_truth(p)
+    timer = beat(p)
+    assert wait_until(lambda: p.states, 5.0)
+    handle = p.goal("QO")
+    assert wait_until(lambda: p.states[-1][1].state == RECOVERING, 10.0)
+    timer.cancel()
+    res = result_of(handle, 5.0).result
+    assert (res.success, res.reason) == (False, MoveTo.Result.REASON_HEARTBEAT_LOST)
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_IDLE, 2.0)
+    mark = time.monotonic()
+    time.sleep(0.8)
+    assert len({(x, y) for w, x, y in truth if w >= mark}) == 1, "it kept moving"

@@ -8,7 +8,7 @@ import yaml
 
 ORDER_RESULTS = ("SHIPPED", "PARTIAL", "HELD")
 ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "blocked", "drift",
-                "operator_reinstate")
+                "operator_reinstate", "obstacle_behind")
 ARM_FAULTS = ("arm_fail", "swap_partial")
 FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
 # 이 고장이 난 로봇은 돌아오지 않으므로 주차를 기다리지 않는다.
@@ -104,6 +104,7 @@ class Fault:
     basket: str = "EMPTY"  # operator_reinstate: 관리자가 알리는 바구니
     target: str = ""  # nav_abort: 이 지점으로 가는 목표만 중단. 비면 모든 목표
     offset_m: float = 0.0  # drift: 보고 위치를 진행 방향 왼쪽으로 미는 거리(음수면 오른쪽)
+    distance_m: float = 0.0  # obstacle_behind: 로봇 뒤 물체까지(path를 따라). 후진을 막는다
 
 
 @dataclass(frozen=True)
@@ -257,6 +258,9 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
         raise ScenarioError(f"fault has no at_s: {raw}")
     if kind == "blocked":
         _positive(raw, "duration_s")  # 물체가 있는 시간
+    if kind == "obstacle_behind":
+        _positive(raw, "duration_s")
+        _positive(raw, "distance_m")
     start, basket = None, str(raw.get("basket", "EMPTY"))
     if kind == "operator_reinstate":
         if "start" not in raw:
@@ -273,7 +277,8 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
                  float(raw.get("duration_s", 0.0)), int(raw.get("count", 1)),
                  raw.get("arm", ""), int(raw.get("after_items", 0)),
                  start=start, basket=basket, target=target,
-                 offset_m=float(raw.get("offset_m", 0.0)))
+                 offset_m=float(raw.get("offset_m", 0.0)),
+                 distance_m=float(raw.get("distance_m", 0.0)))
 
 
 def _check_reinstates(faults: list) -> None:

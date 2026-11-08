@@ -110,6 +110,10 @@ def test_multi_cell_zone_is_not_a_valid_start(site):
      "expect": {"orders_shipped_min": 1}},
     {"faults": [{"at_s": 5, "robot": "pinky1", "type": "blocked"}],
      "expect": {"orders_shipped_min": 1}},
+    {"faults": [{"at_s": 5, "robot": "pinky1", "type": "obstacle_behind", "duration_s": 5}],
+     "expect": {"orders_shipped_min": 1}},
+    {"faults": [{"at_s": 5, "robot": "pinky1", "type": "obstacle_behind", "distance_m": 0.2}],
+     "expect": {"orders_shipped_min": 1}},
     {"robots": {"pinky1": {"start": "P-6", "localizing_s": -1.0}}},
     {"faults": [{"at_s": 5, "robot": "pinky1", "type": "drift", "offset_m": 0.3}],
      "expect": {"orders_shipped_min": 1}},
@@ -452,6 +456,15 @@ def test_blocked_and_localizing_are_read(site):
     assert sc.robots["pinky1"].localizing_s == 2.0
     assert not sc.gone_robots, "a blocked robot goes on"
     assert parse_scenario(minimal(), site).robots["pinky1"].localizing_s == 0.0
+
+
+def test_an_obstacle_behind_is_read(site):
+    sc = parse_scenario(minimal(expect={"orders_shipped_min": 1}, faults=[
+        {"at_s": 8, "robot": "pinky1", "type": "obstacle_behind", "duration_s": 15,
+         "distance_m": 0.2}]), site)
+    (behind,) = sc.faults
+    assert (behind.type, behind.duration_s, behind.distance_m) == ("obstacle_behind", 15.0, 0.2)
+    assert not sc.gone_robots
 
 
 def test_blocked_lane_blocks_one_robot_long_enough_to_mark_the_lane(site):
