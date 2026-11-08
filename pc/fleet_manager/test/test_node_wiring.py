@@ -454,6 +454,20 @@ def test_the_heartbeat_comes_twice_a_second(graph):
     assert 0.3 <= sum(gaps) / len(gaps) <= 0.8, gaps
 
 
+def test_the_heartbeat_goes_out_with_the_reliable_profile_of_the_contract(graph):
+    """지시서 1.5: 노드는 heartbeat QoS를 계약에서 읽는다. 계약이 reliable이면 그렇게 나간다."""
+    from rclpy.qos import DurabilityPolicy, ReliabilityPolicy
+    topic, me = graph.fms.contract.name("heartbeat"), graph.fms.get_name()
+
+    def mine():
+        return [i for i in graph.get_publishers_info_by_topic(topic) if i.node_name == me]
+
+    assert wait_for(mine, 10.0), "the node has no heartbeat publisher"
+    qos = mine()[0].qos_profile
+    assert (qos.reliability, qos.durability) == (ReliabilityPolicy.RELIABLE,
+                                                 DurabilityPolicy.VOLATILE)
+
+
 def test_stop_cancels_the_fill_on_its_server_and_run_sends_what_remains(graph):
     graph.hold_fill.set()
     publish(graph, "RUN", {"A": 1, "C": 2})
