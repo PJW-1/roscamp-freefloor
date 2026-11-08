@@ -87,7 +87,7 @@ class ObstacleRecovery:
               wall_behind_m: float | None = None) -> None:
         """이동 목표 한 틱. others: 다른 로봇 (x, y, 반지름). wall_behind_m: 뒤 물체 거리."""
         if self._backup is not None:
-            self._back_step(t, dt, motion, others)
+            self._back_step(t, dt, motion, others, wall_behind_m)
             return
         limit = math.inf if self._hold is None else max(0.0, self._hold - motion.travelled)
         motion.step(dt, speed, limit)
@@ -117,15 +117,15 @@ class ObstacleRecovery:
         d = self.p.backup_distance(motion.travelled)
         if d <= 0.0:
             return
-        fixed = []
-        if wall_behind_m is not None:
-            x, y = motion.way_back(wall_behind_m)[-1]
-            fixed.append((x, y, 0.0))
-        self._backup = _BackUp(d, t + self.p.backup_timeout_s, fixed)
+        self._backup = _BackUp(d, t + self.p.backup_timeout_s, [])
         self._stood_at = None
 
-    def _back_step(self, t: float, dt: float, motion, others) -> None:
+    def _back_step(self, t: float, dt: float, motion, others, wall_behind_m) -> None:
         b = self._backup
+        if wall_behind_m is not None and not b.fixed:
+            # 뒤 물체는 처음 보인 때 그 자리에 놓인다(로봇에서 path를 따라 wall_behind_m 뒤)
+            x, y = motion.way_back(wall_behind_m)[-1]
+            b.fixed.append((x, y, 0.0))
         if (t >= b.until or b.left <= 1e-9
                 or self._something_behind(motion, b.left, [*others, *b.fixed])):
             self._backup = None  # 그 자리에서 멈춘다. 시도는 이어 간다
@@ -137,13 +137,15 @@ class ObstacleRecovery:
             self._backup = None
 
     def _something_behind(self, motion, left: float, objects) -> bool:
-        """남은 후진 길에서 몸(반지름)이 물체에 닿는가. 로봇 앞쪽의 물체는 보지 않는다."""
+        """남은 후진 길에서 몸(반지름)이 물체에 닿는가(Nav2 BackUp처럼 남은 길 전체를 본다).
+
+        지금 자리보다 가까워지지 않는 물체(로봇 바로 앞 등)는 후진을 막지 않는다.
+        """
         way = motion.way_back(left)
-        hx, hy = math.cos(motion.yaw), math.sin(motion.yaw)
         for x, y, radius in objects:
-            if (x - motion.x) * hx + (y - motion.y) * hy > 0.0:
-                continue
-            if path_gap(x, y, way) <= self.p.robot_radius_m + radius:
+            gap = path_gap(x, y, way)
+            if (gap <= self.p.robot_radius_m + radius
+                    and gap < math.dist((x, y), (motion.x, motion.y)) - 1e-9):
                 return True
         return False
 

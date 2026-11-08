@@ -1,4 +1,6 @@
 """핑키 자기 복구(제안, 2026-11-09 공유 명세 '로봇 쪽'): 짧게 후진하고 다시 간다."""
+import math
+
 import pytest
 from fake_robots.motion import Motion
 from fake_robots.recovery import ObstacleRecovery, RecoveryParams
@@ -215,3 +217,43 @@ def test_a_new_goal_while_the_object_is_there_does_not_move():
     r.motion.set_target(3.0, 1.0)
     r.run(0.5, ahead=True)
     assert r.motion.x == pytest.approx(1.0, abs=1e-6) and r.motion.y == 0.0
+
+
+def test_an_obstacle_behind_that_comes_during_the_back_up_stops_it():
+    r = Run()
+    r.drive_to(1.0)
+    r.run(1.5, ahead=True)  # 후진하는 중
+    backed = r.motion.x
+    assert backed < 1.0 and r.rec.backing_up
+    r.run(1.0, ahead=True, wall_behind_m=0.1)
+    assert min(r.xs) == pytest.approx(backed, abs=1e-6), "it kept backing up"
+
+
+def test_a_robot_beside_the_way_back_round_a_corner_stops_the_back_up():
+    """모서리를 막 돌았으면 지나온 선이 지금 방향의 앞쪽 옆에 있을 수 있다(검토 지적)."""
+    m = Motion(0.0, 0.0)
+    m.set_target(0.0, 0.25, via=[(1.0, 0.0), (1.0, 0.25)])  # 동, 북, 서로 되돌아간다
+    rec = ObstacleRecovery()
+    t = 0.0
+    while m.travelled < 1.3 - 1e-9:  # (0.95, 0.25), 서쪽을 본다
+        t += DT
+        rec.watch(t, False, True, m)
+        rec.drive(t, DT, m, SPEED)
+    start = (m.x, m.y)
+    other = (0.9, 0.05, 0.08)  # 후진 끝 (1.0, 0.15)에서 0.14 m. 지금 방향(서쪽)으로는 앞
+    assert (other[0] - m.x) * math.cos(m.yaw) + (other[1] - m.y) * math.sin(m.yaw) > 0
+    moved = 0.0
+    for _ in range(80):
+        t += DT
+        rec.watch(t, True, True, m)
+        rec.drive(t, DT, m, SPEED, [other])
+        moved = max(moved, math.dist(start, (m.x, m.y)))
+    assert rec.used >= 1
+    assert moved < 1e-6, "it backed towards the robot"
+
+
+def test_a_robot_just_ahead_does_not_stop_the_back_up():
+    r = Run()
+    r.drive_to(1.0)
+    r.run(3.5, ahead=True, others=[(1.1, 0.0, 0.08)])  # 몸은 이미 닿아 있다. 멀어지는 건 된다
+    assert min(r.xs) == pytest.approx(0.85, abs=1e-6)

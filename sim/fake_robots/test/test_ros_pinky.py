@@ -663,6 +663,7 @@ def test_no_back_up_into_a_robot_behind(harness, tmp_path):
     p.goal("QO")
     x, y = stood(p, truth)
     assert p.states[-1][1].state == RobotState.STATE_MOVING, "too late: already recovering"
+    assert max(along(truth)) > 0.3, "too near the start: it would not back up anyway"
     (x0, y0), (x1, y1) = SITE.waypoint_pose("P-6"), SITE.waypoint_pose("QO")
     n = math.dist((x0, y0), (x1, y1))
     bx, by = x - 0.25 * (x1 - x0) / n, y - 0.25 * (y1 - y0) / n  # 후진 끝에서 0.10 m
@@ -683,6 +684,7 @@ def test_no_back_up_into_an_obstacle_behind(harness, tmp_path):
     p.goal("QO")
     assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_BLOCKED, 10.0)
     assert RECOVERING in states_since(p)
+    assert max(along(truth)) > 0.3, "too near the start: it would not back up anyway"
     assert back_ups(along(truth)) == 0
 
 
