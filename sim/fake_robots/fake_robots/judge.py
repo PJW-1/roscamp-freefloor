@@ -109,6 +109,8 @@ class ScenarioJudge:
         # 격리된 로봇(치우기 전)이 쥔 구역을 피한 DETOUR 수. detail의 'held by <로봇>'으로 본다
         self.detours_around_isolated = 0
         self._standing_isolated: set[str] = set()
+        # 지시서 7.5: 이 이유로 실패한 이동 목표. 실패 한 번은 GOAL_RETRY나 GOAL_FAILED 하나다
+        self.path_not_connected = 0
 
     def _station_zones(self, action: str) -> set[str]:
         return {self.site.zone_of[s.dock] for s in self.site.stations.values()
@@ -141,6 +143,8 @@ class ScenarioJudge:
         self.event_rows.append((t, level, source, code, detail))
         if level == "ERROR":
             self.error_codes.append(code)
+        if code in ("GOAL_RETRY", "GOAL_FAILED") and "PATH_NOT_CONNECTED" in detail:
+            self.path_not_connected += 1
         if code == "ROBOT_ISOLATED":
             self._isolated.add(source)
             self._standing_isolated.add(source)
@@ -469,6 +473,7 @@ class ScenarioJudge:
                                                      ex.released_without_position_check),
             "unheld_zone_pose": exact(self.unheld_violations, ex.unheld_zone_pose),
             "released_while_off_lane": exact(self.off_lane_releases, ex.released_while_off_lane),
+            "path_not_connected": exact(self.path_not_connected, ex.path_not_connected),
             "direct_returns_min": at_least(self.direct_returns, ex.direct_returns_min),
             "parked_while_backlog": exact(self.parked_while_backlog, ex.parked_while_backlog),
             "shipped_before_operator": at_least(self.shipped_before_operator,

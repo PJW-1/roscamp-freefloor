@@ -33,6 +33,7 @@ from fake_robots.motion import (
     drifted,
     finish_action,
     noisy_pose,
+    path_gap,
 )
 
 NAV_ABORT_DELAY_S = 0.2  # 해제 거리(0.2 m)를 지나기 전, 관제가 선을 늘리기 전에 중단한다
@@ -94,9 +95,11 @@ class FakePinkyNode(Node):
         self._goals: dict[bytes, _Goal] = {}
         self._rest = RobotState.STATE_IDLE
         self._last_t = self._sc.now()
+        params = load_params_param(self)
         timeout = float(self.get_parameter("heartbeat_timeout_s").value)
-        self._beat_timeout = (timeout if timeout >= 0
-                              else float(load_params_param(self)["heartbeat_timeout_s"]))
+        self._beat_timeout = timeout if timeout >= 0 else float(params["heartbeat_timeout_s"])
+        # 지시서 7.5: path가 로봇 자리에서 이보다 멀면 따라가지 않는다(관제 lane_error_warn_m)
+        self._connect_tolerance = float(params["lane_error_warn_m"])
         self._last_beat = time.monotonic()
 
         self._state_pub = self.create_publisher(
@@ -184,19 +187,32 @@ class FakePinkyNode(Node):
             if kind == "move":
                 pose = handle.request.target_pose
                 goal.target_id = handle.request.target_id
-                # path: 첫 점은 로봇 자리라 건너뛰고, 끝 점은 target_pose다
-                via = [(p.position.x, p.position.y) for p in handle.request.path[1:-1]]
-                self._motion.set_target(*noisy_pose(pose.x, pose.y, self._cfg.stop_error_m,
-                                                    self._rng), via=via)
-                if self._faults.take_nav_abort(t, goal.target_id):
-                    eta = self._motion.remaining() / self._cfg.speed_mps
-                    goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
-                    goal.abort_from = self._faults.last_taken
+                path = [(p.position.x, p.position.y) for p in handle.request.path]
+                if path and self._path_misses_me(t, path):
+                    # 지시서 7.5: 따라가지 않고 실패한다. 이전 목표는 위에서 끝났으니 선다(R6)
+                    self._end(goal, False, MoveTo.Result.REASON_PATH_NOT_CONNECTED)
+                else:
+                    # path: 첫 점은 로봇 자리라 건너뛰고, 끝 점은 target_pose다
+                    self._motion.set_target(*noisy_pose(pose.x, pose.y, self._cfg.stop_error_m,
+                                                        self._rng), via=path[1:-1])
+                    if self._faults.take_nav_abort(t, goal.target_id):
+                        eta = self._motion.remaining() / self._cfg.speed_mps
+                        goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
+                        goal.abort_from = self._faults.last_taken
             else:
                 self._motion.clear_target()
                 goal.end_at = t + self._dock_cfg.duration_s
             self._goals[bytes(handle.goal_id.uuid)] = goal
         handle.execute()
+
+    def _path_misses_me(self, t: float, path) -> bool:
+        """받은 path가 로봇이 아는 제 자리에서 연결 허용 거리보다 먼가(지시서 7.5).
+
+        로봇이 보고하는 자리로 잰다. drift는 들어가고 잡음은 빠진다. 실물 핑키도 제가 아는
+        자리, 곧 보고하는 자리로 잰다. path가 비면(point 모드) 부르지 않는다.
+        """
+        x, y = drifted(self._motion.x, self._motion.y, self._motion.yaw, self._faults.drift(t))
+        return path_gap(x, y, path) > self._connect_tolerance
 
     def _execute(self, handle, action_type):
         goal = self._goals[bytes(handle.goal_id.uuid)]

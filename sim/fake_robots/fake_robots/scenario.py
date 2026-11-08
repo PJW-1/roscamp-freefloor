@@ -37,6 +37,7 @@ EXPECT_DEFAULTS = {
     "shipped_before_operator_min": 0,  # 격리 뒤 confirm_clear 전 출고(지시서 5.5)
     "detours_around_isolated_min": 0,  # 격리된 로봇을 피한 DETOUR(치우기 전)
     "released_while_off_lane": 0,  # drift로 레인 밖이라 보고하는 동안 그 로봇이 놓은 구역 수
+    "path_not_connected": 0,  # PATH_NOT_CONNECTED로 실패한 이동 목표 수(지시서 7.5)
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
                   "arm", "dock", "faults", "expect", "map"}
@@ -128,6 +129,7 @@ class Expect:
     shipped_before_operator_min: int = 0
     detours_around_isolated_min: int = 0
     released_while_off_lane: int = 0
+    path_not_connected: int = 0
 
 
 @dataclass(frozen=True)

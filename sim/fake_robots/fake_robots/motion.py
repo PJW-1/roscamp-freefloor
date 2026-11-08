@@ -101,6 +101,20 @@ def noisy_pose(x: float, y: float, sigma: float, rng: random.Random) -> tuple[fl
     return x + rng.gauss(0.0, sigma), y + rng.gauss(0.0, sigma)
 
 
+def path_gap(x: float, y: float, points) -> float:
+    """(x, y)에서 꺾은선 points까지의 가장 짧은 거리. 점이 하나면 그 점까지(지시서 7.5)."""
+    if len(points) == 1:
+        return math.dist((x, y), points[0])
+    return min(_segment_gap(x, y, a, b) for a, b in zip(points, points[1:], strict=False))
+
+
+def _segment_gap(x: float, y: float, a, b) -> float:
+    vx, vy = b[0] - a[0], b[1] - a[1]
+    length2 = vx * vx + vy * vy
+    t = max(0.0, min(1.0, ((x - a[0]) * vx + (y - a[1]) * vy) / length2)) if length2 else 0.0
+    return math.hypot(x - (a[0] + t * vx), y - (a[1] + t * vy))
+
+
 def drifted(x: float, y: float, yaw: float, offset: float) -> tuple[float, float]:
     """진행 방향 왼쪽으로 offset만큼 민 위치. 레인 옆으로 밀린 보고를 흉내 낸다."""
     if offset == 0.0:

@@ -2,7 +2,8 @@
 
 로봇은 직선으로 달리며 잡음 섞인 자세를 보고한다. 가짜 중앙 서버가 주문판을 관리한다.
 장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 앞 물체(막힘), 보고 밀림,
-팔 실패와 무응답을 넣는다.
+로봇에서 떨어진 path(bad_path), 팔 실패와 무응답을 넣는다.
+로봇은 핑키처럼 받은 path가 제 자리를 지나는지 본다(지시서 7.5). 멀면 PATH_NOT_CONNECTED.
 매 단계 안전 불변식을 검사하므로 이 세계를 쓰는 테스트는 모두 불변식도 검증한다.
 """
 from __future__ import annotations
@@ -43,6 +44,13 @@ DEFAULT_ROBOTS = {
 DEFAULT_STOCK = {"A": 20, "B": 20, "C": 20, "D": 20}
 
 
+def path_gap(x, y, points):
+    """(x, y)에서 꺾은선 points까지의 가장 짧은 거리. 점이 하나면 그 점까지."""
+    if len(points) == 1:
+        return math.dist((x, y), points[0])
+    return min(_point_segment(x, y, *a, *b) for a, b in zip(points, points[1:], strict=False))
+
+
 def six_orders(at_s=0.0):
     return [{"at_s": at_s, "id": f"O-{i:03d}", "items": {"AB"[i % 2]: 1, "CD"[i % 2]: 1}}
             for i in range(1, 7)]
@@ -77,6 +85,8 @@ class VirtualRobot:
     via: list = field(default_factory=list)  # 목표 전에 거칠 점(path 모드)
     heading: float = 0.0  # 마지막 진행 방향
     drift: float = 0.0  # 보고를 진행 방향 왼쪽으로 미는 거리, 실제 위치는 그대로
+    bad_paths: int = 0  # 다음 path 목표 몇 개를 옆으로 밀린 채 받는다
+    bad_path_offset: float = 0.0
 
 
 @dataclass
@@ -141,6 +151,7 @@ class SimWorld:
         self._last_cell: dict[str, tuple[int, int]] = {}
         self._queued_results: list = []
         self.min_true_release_distance = float("inf")
+        self.path_refusals: list[tuple[float, str, int]] = []  # (시각, 로봇, goal_id)
 
     # ---- public helpers for tests -------------------------------------------------------
 
@@ -229,6 +240,9 @@ class SimWorld:
                 self.pending_faults.sort(key=lambda f: f["at_s"])
             elif kind == "drift_end":
                 robot.drift = 0.0
+            elif kind == "bad_path":
+                robot.bad_paths = fault.get("count", 1)
+                robot.bad_path_offset = fault["offset_m"]
             elif kind == "nav_abort":
                 robot.nav_aborts = fault["count"]
             elif kind == "dock_fail":
@@ -465,6 +479,8 @@ class SimWorld:
         zone = self.site.zone_of[cell]
         assert zone in self.core.zones.held_by(cmd.robot), f"{cmd} targets an ungranted zone"
         assert (cmd.x, cmd.y) == self.site.waypoint_pose(cell), f"{cmd} pose is not the cell centre"
+        if self._refuses_path(r, cmd):
+            return
         # path 모드: 첫 점은 보고 위치라 건너뛰고 실제 위치에서 다음 점들을 잇는다
         via = [tuple(p[:2]) for p in cmd.path[1:-1]]
         if cmd.path:
@@ -490,6 +506,25 @@ class SimWorld:
         r.target = (cmd.x, cmd.y)
         r.via = via
         r.goal_elapsed = 0.0
+
+    def _refuses_path(self, r, cmd) -> bool:
+        """핑키의 연결 검사(지시서 7.5). 받은 path가 로봇이 아는 제 자리(보고 자리에서 잡음을
+        뺀 것)에서 lane_error_warn_m보다 멀면 따라가지 않는다. 이전 목표는 끝나고 로봇은 선다."""
+        path = [tuple(p[:2]) for p in cmd.path]
+        if not path:
+            return False
+        if r.bad_paths:  # 오는 길에 path가 틀렸다(옛 path, 중간이 빠진 path를 흉내)
+            r.bad_paths -= 1
+            path = [(x + r.bad_path_offset, y + r.bad_path_offset) for x, y in path]
+        here = (r.x - math.sin(r.heading) * r.drift, r.y + math.cos(r.heading) * r.drift)
+        if path_gap(*here, path) <= self.params.lane_error_warn_m:
+            return False
+        self._preempt(r)
+        r.target, r.via = None, []
+        self.path_refusals.append((self.t, r.name, cmd.goal_id))
+        self._queued_results.append((r.name, self.core.on_move_result,
+                                     (r.name, cmd.goal_id, False, "PATH_NOT_CONNECTED")))
+        return True
 
     def _start_dock(self, cmd):
         r = self.virtual[cmd.robot]

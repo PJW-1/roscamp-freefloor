@@ -12,6 +12,7 @@ from fake_robots.motion import (
     drifted,
     finish_action,
     noisy_pose,
+    path_gap,
 )
 from fake_robots.scenario import Fault
 
@@ -299,3 +300,11 @@ def test_a_drifted_report_is_to_the_left_of_the_heading():
     assert drifted(1.0, 2.0, 0.0, 0.3) == pytest.approx((1.0, 2.3))
     assert drifted(1.0, 2.0, math.pi / 2, 0.3) == pytest.approx((0.7, 2.0))
     assert drifted(1.0, 2.0, 1.0, 0.0) == (1.0, 2.0)
+
+
+def test_path_gap_is_the_distance_to_the_nearest_segment_of_the_path():
+    """지시서 7.5의 연결 검사: 로봇 자리에서 받은 path까지의 수직 거리."""
+    assert path_gap(0.5, 0.1, [(0.0, 0.0), (1.0, 0.0)]) == pytest.approx(0.1)
+    assert path_gap(1.0, 0.5, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]) == pytest.approx(0.0)
+    assert path_gap(2.0, 0.0, [(0.0, 0.0), (1.0, 0.0)]) == pytest.approx(1.0)  # 끝을 지남
+    assert path_gap(0.0, 0.3, [(0.0, 0.0)]) == pytest.approx(0.3)  # 점 하나

@@ -1129,3 +1129,24 @@ def test_detours_around_isolated_see_every_holder_once_per_event():
                "avoids F1 held by pinky3, standing inf s; "
                "F2 held by pinky1, standing inf s; new path")
     assert check(j, "detours_around_isolated")["value"] == 2
+
+
+
+# ---- 경로 연결 확인(지시서 7.5) ----------------------------------------------------------
+
+
+def test_a_path_not_connected_failure_is_counted_and_none_is_expected_by_default():
+    j = judge()
+    assert check(j, "path_not_connected") == {"value": 0, "expected": 0, "ok": True}
+    j.on_event(2.0, "WARN", "pinky1", "GOAL_RETRY", "attempt 1 failed: PATH_NOT_CONNECTED")
+    j.on_event(3.0, "WARN", "pinky1", "GOAL_RETRY", "attempt 1 failed: NAV_ABORTED")
+    j.on_event(9.0, "ERROR", "pinky2", "GOAL_FAILED",
+               "gave up after 4 attempts: PATH_NOT_CONNECTED")
+    result = check(j, "path_not_connected")
+    assert (result["value"], result["ok"]) == (2, False)
+
+
+def test_a_scenario_can_expect_path_not_connected_failures():
+    j = judge(path_not_connected=1)
+    j.on_event(2.0, "WARN", "pinky1", "GOAL_RETRY", "attempt 1 failed: PATH_NOT_CONNECTED")
+    assert check(j, "path_not_connected")["ok"] is True

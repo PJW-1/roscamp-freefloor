@@ -1,4 +1,5 @@
 """실제 액션과 토픽 인터페이스로 FakePinky를 시험한다."""
+import math
 import time
 
 import pytest
@@ -473,3 +474,78 @@ def test_a_robot_says_localizing_until_it_has_a_pose(harness, tmp_path):
     assert {s.state for s in seen[:first]} == {RobotState.STATE_LOCALIZING}
     x, y = SITE.waypoint_pose("P-6")
     assert (seen[first].pose.x, seen[first].pose.y) == pytest.approx((x, y), abs=1e-9)
+
+
+def test_the_heartbeat_is_heard_with_the_reliable_profile_of_the_contract(harness, tmp_path):
+    """지시서 1.5: FakePinky도 heartbeat QoS를 계약에서 읽는다."""
+    from rclpy.qos import DurabilityPolicy, ReliabilityPolicy
+    p = start(harness, tmp_path)
+    topic, fake = CONTRACT_OBJ.name("heartbeat"), harness.nodes[0].get_name()
+
+    def mine():
+        return [i for i in p.node.get_subscriptions_info_by_topic(topic) if i.node_name == fake]
+
+    assert wait_until(mine, 5.0), "FakePinky has no heartbeat subscription"
+    qos = mine()[0].qos_profile
+    assert (qos.reliability, qos.durability) == (ReliabilityPolicy.RELIABLE,
+                                                 DurabilityPolicy.VOLATILE)
+
+
+# ---- path connection (지시서 7.5) -------------------------------------------------------
+
+def send_path(p, points, target_id):
+    tx, ty = points[-1]
+    msg = MoveTo.Goal(target_id=target_id, target_pose=Pose2D(x=tx, y=ty))
+    msg.path = [Pose(position=Point(x=x, y=y)) for x, y in points]
+    fut = p.move.send_goal_async(msg)
+    assert wait_until(fut.done, 5.0) and fut.result().accepted
+    return fut.result()
+
+
+def lane_points(*waypoints, shift=0.0):
+    return [(x + shift, y + shift) for x, y in (SITE.waypoint_pose(w) for w in waypoints)]
+
+
+def test_a_path_that_misses_the_robot_is_refused_and_the_robot_stays(harness, tmp_path):
+    """path가 로봇 자리에서 lane_error_warn_m(0.15 m)보다 멀면 따라가지 않는다."""
+    p = start(harness, tmp_path, robots=SLOW)
+    assert wait_until(lambda: p.states, 5.0)
+    truth = watch_truth(p)
+    res = result_of(send_path(p, lane_points("P-6", "N", "S", shift=0.2), "S")).result
+    assert (res.success, res.reason) == (False, MoveTo.Result.REASON_PATH_NOT_CONNECTED)
+    time.sleep(0.5)
+    assert truth and {(x, y) for _, x, y in truth} == {SITE.waypoint_pose("P-6")}
+
+
+def test_a_path_within_the_tolerance_is_followed(harness, tmp_path):
+    """0.15 m 안이면 연결된 것이다. 위치 잡음과 보고 지연만큼은 받아 준다."""
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.5, "pose_noise_m": 0.0}})
+    assert wait_until(lambda: p.states, 5.0)
+    res = result_of(send_path(p, lane_points("P-6", "N", "S", shift=0.07), "S")).result
+    assert res.success is True
+
+
+def test_a_refused_path_ends_the_old_goal_and_a_path_from_here_arrives(harness, tmp_path):
+    """이전 목표는 새 목표를 받는 순간 끝나므로(R6) 로봇은 선다. 지금 자리에서 다시 만든 path로
+    도착한다. 관제는 이 실패를 한 번으로 세고 move_retry_wait_s 뒤 그렇게 다시 보낸다."""
+    p = start(harness, tmp_path, robots={
+        "pinky1": {"start": "P-6", "speed_mps": 0.2, "pose_noise_m": 0.0}})
+    assert wait_until(lambda: p.states, 5.0)
+    first = send_path(p, lane_points("P-6", "N", "S"), "S")
+    assert wait_until(lambda: p.states[-1][1].state == RobotState.STATE_MOVING, 5.0)
+    time.sleep(0.5)
+    truth = watch_truth(p)
+    bad = send_path(p, lane_points("P-6", "N", "S", shift=0.3), "S")
+    old, res = result_of(first).result, result_of(bad).result
+    assert (old.success, old.reason) == (False, MoveTo.Result.REASON_CANCELED)
+    assert (res.success, res.reason) == (False, MoveTo.Result.REASON_PATH_NOT_CONNECTED)
+    time.sleep(0.3)
+    mark = len(truth)
+    time.sleep(0.5)
+    assert len(truth) > mark and len({(x, y) for _, x, y in truth[mark - 1:]}) == 1, "it moved"
+    here = p.states[-1][1].pose
+    rest = [w for w in ("N", "S")
+            if math.dist((here.x, here.y), SITE.waypoint_pose(w)) > 1e-3]
+    again = send_path(p, [(here.x, here.y), *lane_points(*rest)], "S")
+    assert result_of(again).result.success is True
