@@ -41,7 +41,7 @@ ARGS = {
     "nav_composition": ("true", "로봇마다 Nav2 노드 9개를 프로세스 하나로. false면 9개"
                                 "(3대면 DDS 참여자가 LOCALHOST 탐색 한도 32개를 넘는다)"),
     "result_dir": ("gz_result", "시나리오 모니터 결과 폴더"),
-    "params_file": ("", "관제 파라미터 파일. 비우면 설치된 fleet_params.yaml"),
+    "fleet_params_file": ("", "관제 파라미터 파일. 비우면 설치된 fleet_params.yaml"),
     "monitor": ("true", "시나리오 판정. 끝나면 launch를 끝낸다"),
 }
 ARMS = "arm1 arm2 arm3"
@@ -109,7 +109,8 @@ def _start(context):
     def after_wait(event, _context):
         if event.returncode != 0:
             return [LogInfo(msg="fleet_gz_sim: 로봇이 IDLE이 되지 않아 끝낸다"), Shutdown()]
-        return fleet(scenario_file, robots, value("result_dir"), monitor, value("params_file"))
+        return fleet(scenario_file, robots, value("result_dir"), monitor,
+                     value("fleet_params_file"))
 
     actions += [wait, RegisterEventHandler(OnProcessExit(target_action=wait, on_exit=after_wait))]
     return actions

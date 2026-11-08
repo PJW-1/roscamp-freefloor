@@ -149,7 +149,7 @@ def test_three_pinkys_start_where_the_scenario_puts_them(made):
 
 def test_gazebo_time_and_every_pinky_share_one_bridge(made):
     """/clock을 브리지 여럿이 같이 내면 표본 순서가 섞여 시간이 뒤로 갈 수 있다.
-    브리지를 로봇마다 두면 DDS 참여자도 그만큼 는다(test_ros_processes_fit_...)."""
+    브리지를 로봇마다 두면 DDS 참여자도 그만큼 는다(test_ros_process_budget_...)."""
     [bridge] = nodes(run(made), "parameter_bridge")
     topics = [str(x).split("@")[0] for x in bridge.kw["arguments"]]
     assert topics.count("/clock") == 1
@@ -159,6 +159,26 @@ def test_gazebo_time_and_every_pinky_share_one_bridge(made):
     remaps = dict(bridge.kw["remappings"])
     assert remaps["/model/pinky2/cmd_vel"] == "/pinky2/cmd_vel"
     assert remaps["/model/pinky3/truth"] == "/pinky3/sim/truth"
+
+
+def declared(launch_file) -> set:
+    from ament_index_python.packages import get_package_share_directory
+    package = {"nav2.launch.py": "pinky_nav_config", "pinky_fsm.launch.py": "pinky_fsm"}
+    path = Path(get_package_share_directory(package[launch_file])) / "launch" / launch_file
+    spec = importlib.util.spec_from_file_location(launch_file.replace(".", "_"), path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {a.name for a in module.generate_launch_description().entities
+            if type(a).__name__ == "DeclareLaunchArgument"}
+
+
+def test_arguments_do_not_leak_into_the_robot_launches(gz):
+    """include는 인자 범위를 나누지 않는다. gz.launch.py의 params_file(빈 값)이 Nav2의
+    params_file 기본값을 덮어 launch가 바로 끝났다. 같은 뜻으로 넘기는 값만 겹쳐도 된다."""
+    need("pinky_nav_config", "pinky_fsm")
+    shared = {"heartbeat_timeout_s"}  # pinky_fsm에 같은 값을 그대로 넘긴다
+    for launch_file in ("nav2.launch.py", "pinky_fsm.launch.py"):
+        assert set(gz.ARGS) & declared(launch_file) <= shared, launch_file
 
 
 def test_nav2_runs_composed_unless_asked_not_to(made):
@@ -183,8 +203,11 @@ def ros_processes(actions, fleet_actions) -> int:
     return count + len(includes(actions, "pinky_fsm.launch.py"))
 
 
-def test_ros_processes_fit_the_localhost_discovery_limit(made):
-    """3대를 처음 띄웠을 때 참여자가 32개를 넘어 pinky3의 토픽이 보이지 않았다."""
+def test_ros_process_budget_leaves_room_under_the_localhost_limit(made):
+    """3대를 처음 띄웠을 때 참여자가 32개를 넘어 pinky3의 토픽이 보이지 않았다.
+
+    launch가 만드는 프로세스를 세는 예산 계산이다. 실제로 서로 보이는지는 Gazebo를 띄워
+    확인해야 한다(README). 잠깐 돌고 끝나는 create와 wait_ready도 넉넉하게 같이 센다."""
     from ament_index_python.packages import get_package_share_directory
     path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
     fleet = made.fleet(str(path), ROBOTS, result_dir="out", monitor=True)

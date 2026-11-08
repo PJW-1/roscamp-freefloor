@@ -5,8 +5,8 @@ sim_stand_in: 로봇마다
     dock 서버를 /{pinky}/dock_fsm으로 비켜 둔다.
   - 실제 위치 중계: /{pinky}/sim/truth(Odometry, map 좌표) → /sim/truth/{pinky}(RobotState).
     시나리오 모니터(fake_robots)가 구역 판정에 쓰는 잡음 없는 자세다.
-wait_ready: 모든 로봇의 /{pinky}/state가 IDLE로 1 s 이어지면 0으로 끝난다. gz.launch.py가 그때
-  관제와 가짜 central·팔을 띄운다. timeout_s(벽시계) 안에 안 되면 1로 끝난다.
+wait_ready: 모든 로봇의 최근 /{pinky}/state가 IDLE인 채로 1 s 이어지면 0으로 끝난다(ready.py).
+  gz.launch.py가 그때 관제와 가짜 central·팔을 띄운다. timeout_s(벽시계) 안에 안 되면 1로 끝난다.
 """
 from __future__ import annotations
 
@@ -32,8 +32,10 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from fleet_gz_sim.dock_stand_in import dock_outcome, dock_phase
+from fleet_gz_sim.ready import everyone_idle
 
 READY_HOLD_S = 1.0
+REPORT_FRESH_S = 0.5  # pinky_fsm은 state를 10 Hz로 낸다
 
 
 def _yaw(q) -> float:
@@ -140,22 +142,24 @@ def wait_ready(args=None):
     contract = load_contract_param(node)
     robots = list(node.get_parameter("robots").value)
     timeout = float(node.get_parameter("timeout_s").value)
-    states: dict[str, str] = {}
+    last: dict[str, tuple[str, float]] = {}  # 로봇마다 (상태, 받은 벽시계 시각)
     for robot in robots:
-        node.create_subscription(RobotState, contract.name("robot_state", pinky=robot),
-                                 lambda msg, r=robot: states.__setitem__(r, msg.state),
-                                 to_ros_qos(contract.qos("robot_state")))
+        node.create_subscription(
+            RobotState, contract.name("robot_state", pinky=robot),
+            lambda msg, r=robot: last.__setitem__(r, (msg.state, time.monotonic())),
+            to_ros_qos(contract.qos("robot_state")))
     deadline, since, code = time.monotonic() + timeout, None, 1
     try:
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.1)
-            ready = all(states.get(r) == RobotState.STATE_IDLE for r in robots)
+            ready = everyone_idle(last, robots, time.monotonic(), REPORT_FRESH_S)
             since = (since or time.monotonic()) if ready else None
             if since is not None and time.monotonic() - since >= READY_HOLD_S:
                 node.get_logger().info(f"all robots IDLE: {robots}")
                 code = 0
                 break
         else:
+            states = {r: last[r][0] for r in last}
             node.get_logger().error(f"robots not IDLE after {timeout:.0f} s: {states}")
     except KeyboardInterrupt:
         pass
