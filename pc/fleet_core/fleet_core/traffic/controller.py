@@ -753,7 +753,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         spots = self.site.parking
         start = spots.index(from_waypoint) + 1 if from_waypoint in spots else 0
         goal = None
-        for waypoint in spots[start:]:
+        for waypoint in self._usable_parking(m)[start:]:
             zone = self._zone(waypoint)
             holder = self.zones.holder(zone)
             if (holder and holder != m.name) or set(self.zones.queue(zone)) - {m.name}:
@@ -767,7 +767,36 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         if goal is None:
             # 이미 대기 중이고 앞이 막혔으면 그대로, 밖이면 입구를 기다린다.
             goal = anchor_waypoint if anchor_waypoint in self.site.parking else self.site.parking[0]
+            if goal not in self._usable_parking(m):
+                goal = self._wait_outside_queue(anchor_waypoint)
         self._start_leg(m, TO_PARK, None, goal)
+
+    def _usable_parking(self, m: _Mission) -> tuple:
+        """Parking spots a robot can still leave the queue from (work order 1.1, H3).
+
+        The queue is one-way: from a spot the only ways out are the exits of that spot and the
+        spots after it. An exit held by a robot that does not move on its own (isolated,
+        OUT_OF_SERVICE) does not count. Robots already past the last usable spot stay put.
+        """
+        spots = self.site.parking
+        for end in range(len(spots), 0, -1):
+            exits = {lane.b for lane in self.site.lanes.values()
+                     if lane.a == spots[end - 1] and lane.b not in spots}
+            if any(not self._held_indefinitely(self._zone(w), m) for w in exits):
+                return spots[:end]
+        return ()
+
+    def _held_indefinitely(self, zone: str, m: _Mission) -> bool:
+        holders = self.zones.holders_around(zone, m.name).values()
+        return any(self._missions[h].fault in (ERROR, OUT_OF_SERVICE)
+                   for h in holders if h in self._missions)
+
+    def _wait_outside_queue(self, anchor_waypoint):
+        """No usable spot: wait where it is, or off a station dock just before the queue."""
+        if anchor_waypoint not in self.site.docks:
+            return anchor_waypoint
+        way = self.site.plan(anchor_waypoint, self.site.parking[0])
+        return way[-2] if len(way) > 1 else anchor_waypoint
 
     def _next_work(self, m: _Mission) -> None:
         """다음 일을 위해 도크나 대기 지점을 떠난다."""
@@ -829,6 +858,10 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         waypoint = m.path[anchor]
         spots = self.site.parking
         old_tail = m.path[anchor + 1:]
+        if (waypoint not in spots and set(old_tail) & set(spots)
+                and not self._usable_parking(m)):
+            self._start_park_leg(m)  # the exit got held on the way: stop outside the queue
+            return
         if waypoint not in spots and old_tail[:1] != [spots[0]]:
             return
         goal = self._park_goal(m, waypoint)
