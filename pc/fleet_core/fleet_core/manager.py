@@ -96,13 +96,17 @@ class FleetManager:
     def shipped(self) -> int:
         return self.orchestrator.shipped
 
+    def check_recordable(self) -> None:
+        """기록할 수 없으면 ValueError. 기록 파일을 열기 전에 부른다(옛 파일을 지우지 않게)."""
+        if self.params.traffic_mode != LANES:
+            raise ValueError(f"replay knows only lane traffic, not {self.params.traffic_mode}")
+
     def record_to(self, write) -> None:
         """모든 입력과 결과를 한 줄씩 JSON으로 `write`에 넘긴다.
 
         재생은 첫 줄에서 시작하므로 첫 입력보다 먼저 불러야 한다.
         """
-        if self.params.traffic_mode != LANES:
-            raise ValueError(f"replay knows only lane traffic, not {self.params.traffic_mode}")
+        self.check_recordable()
         if self._fed:
             raise RuntimeError("a record has to start before the first input")
         if not self.site.source_text:

@@ -54,3 +54,10 @@ def test_a_freefloor_record_is_refused_until_replay_knows_the_floor():
     floor = manager(traffic_mode="freefloor")
     with pytest.raises(ValueError, match="freefloor"):
         floor.record_to(lambda line: None)
+
+
+def test_the_record_check_runs_before_anything_is_written():
+    """노드는 이 검사를 기록 파일을 열기 전에 부른다. 거부될 기록이 옛 파일을 지우면 안 된다."""
+    manager().check_recordable()  # lanes: fine
+    with pytest.raises(ValueError, match="freefloor"):
+        manager(traffic_mode="freefloor").check_recordable()

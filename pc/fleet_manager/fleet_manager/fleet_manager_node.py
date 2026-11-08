@@ -64,6 +64,7 @@ class FleetManagerNode(Node):
             robots, self._now)
         self._record_file = None
         if record:
+            self.core.check_recordable()  # 거부될 기록이 옛 파일을 지우지 않게 먼저 본다
             # 한 줄씩 써서, 프로세스가 죽어도 기록은 그 자리에서 끝난다.
             self._record_file = open(record, "w", buffering=1, encoding="utf-8")
             self.core.record_to(lambda line: self._record_file.write(line + "\n"))
