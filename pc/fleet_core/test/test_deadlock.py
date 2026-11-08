@@ -162,6 +162,41 @@ def test_t06_core_keeps_the_zone_if_the_robot_entered_it_before_stopping():
     assert "DEADLOCK_UNRESOLVED" in codes(out)
 
 
+def test_t06_a_real_retreat_that_frees_a_zone_off_the_cycle_ends_in_isolation():
+    """The real retreat gives up a reservation the cycle does not wait on, so every wait edge
+    stays. DEADLOCK_UNRESOLVED, then isolation after deadlock_unresolved_s (Codex review of
+    732d991: the cycle test reaches this only through a stand-in _retreat)."""
+    cells = {"r1": (3, 4), "r2": (4, 3), "r3": (3, 5)}
+    core, now = make_core(list(cells))
+    _report(core, cells)
+    core.on_order_board("RUN", ORDERS)
+    core.tick()
+    assert core.zones.held_by("r1") == ["P-6", "Q-WORK-2"]
+    core.zones.request("r1", "Z-WORK")
+    core.zones.request("r2", "P-6")  # the zone r1 stands in, not the one it reserved ahead
+    core.tick()
+    now[0] = core.params.deadlock_grace_s + 0.1
+    _report(core, cells)
+    assert "DEADLOCK_RETREAT" in codes(core.tick())
+    now[0] += core.params.recover_check_s
+    _report(core, cells)
+    seen = codes(core.tick())
+    assert "Q-WORK-2" not in core.zones.held_by("r1")
+    for _ in range(3):
+        now[0] += 0.1
+        _report(core, cells)
+        seen += codes(core.tick())
+    assert seen.count("DEADLOCK_UNRESOLVED") == 1
+    assert sorted(find_cycle(wait_graph(core.zones))) == ["r1", "r2"]
+    assert "ROBOT_ISOLATED" not in seen
+    now[0] += core.params.deadlock_unresolved_s
+    _report(core, cells)
+    seen += codes(core.tick())
+    assert "ROBOT_ISOLATED" in seen
+    assert core._missions["r1"].fault, "equal priority: r1 sorts first"
+    assert find_cycle(wait_graph(core.zones)) is None
+
+
 def test_t06_core_looks_again_when_too_few_reports_arrived_in_time():
     """T-06: 아직 구역 밖인 로봇은 보고로 확인될 때까지 후퇴가 이어진다."""
     cells = {"r1": (3, 4), "r2": (4, 3), "r3": (3, 5)}
