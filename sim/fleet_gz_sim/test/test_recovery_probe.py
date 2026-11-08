@@ -158,6 +158,21 @@ def test_empty_result_dir_means_log_only():
     sink.close()
 
 
+def test_a_localizing_report_has_no_pose_to_compare():
+    """While LOCALIZING the robot has no pose; RobotState.pose is then (0, 0, 0). A recovery that
+    ends because the pose was lost must not count those zeros as an AMCL error."""
+    p = probe()
+    for t in (1.0, 1.5, 3.6):
+        feed_truth(p, t, x=1.0, y=2.0)
+    state(p, 1.0, "RECOVERING", x=1.1)
+    [end] = state(p, 1.5, "LOCALIZING", x=0.0, y=0.0)
+    assert end["event"] == "end" and end["next_state"] == "LOCALIZING"
+    assert end["note"] == "no_pose" and end["err_m"] == "" and end["amcl_x"] == ""
+    assert end["max_err_m"] == pytest.approx(0.1)
+    [settled] = state(p, 3.6, "LOCALIZING", x=0.0, y=0.0)
+    assert settled["note"] == "no_pose" and settled["err_m"] == ""
+
+
 # -- hosted in the fleet_check process ------------------------------------------------------------
 
 def test_a_hosted_probe_ignores_the_arguments_of_its_host(monkeypatch):

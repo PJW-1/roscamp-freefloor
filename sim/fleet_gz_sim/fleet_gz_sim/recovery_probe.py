@@ -16,6 +16,7 @@ import os
 from collections import deque
 
 RECOVERING = "RECOVERING"
+NO_POSE = "LOCALIZING"  # RobotState.pose is (0, 0, 0) then, not an AMCL pose
 MATCH_S = 0.1
 KEEP_S = 5.0  # truth history kept per robot
 COLUMNS = ["sim_time", "robot", "event", "episode", "state", "truth_x", "truth_y", "truth_yaw",
@@ -63,7 +64,11 @@ class RecoveryProbe:
         ep = self.episodes[robot]
         row = dict.fromkeys(COLUMNS, "")
         row.update(sim_time=now, robot=robot, event=event, episode=ep.number, state=state,
-                   amcl_x=pose[0], amcl_y=pose[1], amcl_yaw=pose[2], **extra)
+                   **extra)
+        if state == NO_POSE:
+            row["note"] = "no_pose"
+            return row, None
+        row.update(amcl_x=pose[0], amcl_y=pose[1], amcl_yaw=pose[2])
         truth = self._nearest(robot, stamp)
         if truth is None:
             row["note"] = "no_truth"
