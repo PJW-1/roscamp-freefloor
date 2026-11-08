@@ -54,3 +54,4 @@ release_clear_of_floor: true  # 나가는 레인 s > d에 더해 구역의 다�
 idle_watch_s: 10.0            # 제안: 주행 단계인데 goal도 구역 대기표도 없이 이만큼 서면 ROBOT_IDLE, 그 지점 goal을 다시 보낸다
 dispatch_retry_wait_s: 2.0    # 제안: 출고 호출이 실패하면 이만큼 뒤 다시 보낸다
 dispatch_retry_limit: 3       # 제안: 출고 호출 실패가 이 수를 넘으면 ERROR(DISPATCH_FAILED)
+self_recovery_limit_s: 45.0   # 제안: 로봇이 RECOVERING(자가 복구)을 이만큼 넘게 이어 보내면 BLOCKED로 본다. 핑키 FSM의 두 번 시도는 길어야 약 35 s

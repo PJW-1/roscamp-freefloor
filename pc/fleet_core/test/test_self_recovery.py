@@ -62,18 +62,49 @@ def test_three_moving_reports_after_recovering_still_release_the_block():
     assert pilot.mission().block is None
 
 
-def test_a_long_recovering_never_marks_cancels_stalls_or_fails():
+def test_recovering_within_the_limit_never_marks_cancels_stalls_or_fails():
     pilot = Pilot()
     goal = on_the_way(pilot)
     start = pilot.now[0]
     pilot.state["pinky1"] = SELF_RECOVERING  # 그 자리에 서 있다
-    pilot.run(PARAMS.blocked_timeout_s + 10.0)
-    for code in ("LANE_BLOCKED", "BLOCKED_TOO_LONG", "GOAL_STALLED", "GOAL_RETRY"):
+    pilot.run(PARAMS.self_recovery_limit_s - 1.0)
+    for code in ("LANE_BLOCKED", "BLOCKED_TOO_LONG", "GOAL_STALLED", "GOAL_RETRY",
+                 "SELF_RECOVERY_TOO_LONG"):
         assert not pilot.events(code), code
     assert not [t for t, _ in pilot.sent("CancelCmd") if t >= start]
     assert pilot.mission().goal.id == goal
     assert pilot.mission().block is None
     assert pilot.status()["fault"] == "NONE"
+
+
+def test_recovering_past_the_limit_is_taken_as_blocked():
+    """핑키 FSM의 두 번 시도는 길어야 약 35초다. 그보다 길게 RECOVERING이면 무언가 잘못됐으니
+    막힘으로 보고 5초 표시와 취소를 한다(제안). 막힘 시계와 멈춤 감시가 영원히 쉬지 않는다."""
+    pilot = Pilot()
+    on_the_way(pilot)
+    start = pilot.now[0]
+    pilot.state["pinky1"] = SELF_RECOVERING
+    pilot.run(PARAMS.self_recovery_limit_s + MARK_S + 1.0)
+    long = pilot.events("SELF_RECOVERY_TOO_LONG")
+    assert len(long) == 1
+    assert long[0][0] >= start + PARAMS.self_recovery_limit_s - 0.2
+    marks = pilot.events("LANE_BLOCKED")
+    assert len(marks) == 1
+    assert marks[0][0] >= start + PARAMS.self_recovery_limit_s + MARK_S - 0.3
+    assert [t for t, _ in pilot.sent("CancelCmd") if t >= start]
+
+
+def test_the_limit_starts_again_with_each_recovery():
+    pilot = Pilot()
+    on_the_way(pilot)
+    pilot.state["pinky1"] = SELF_RECOVERING
+    pilot.run(PARAMS.self_recovery_limit_s - 5.0)
+    pilot.state["pinky1"] = "MOVING"
+    pilot.run(1.0)
+    pilot.state["pinky1"] = SELF_RECOVERING
+    pilot.run(PARAMS.self_recovery_limit_s - 5.0)
+    assert not pilot.events("SELF_RECOVERY_TOO_LONG")
+    assert not pilot.events("LANE_BLOCKED")
 
 
 # ---- 멈춤 감시 ---------------------------------------------------------------------------

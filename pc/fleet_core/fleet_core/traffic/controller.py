@@ -121,9 +121,10 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         m = self._missions.get(robot)
         if m is None:
             return
+        self._note_self_recovery(m, state)
+        state = self._self_recovery_as_blocked(m, state)
         if state != BLOCKED:
             m.queue_since = None  # 줄 서기 시계는 BLOCKED가 이어지는 동안만 잰다
-        self._note_self_recovery(m, state)
         if state == LOCALIZING:
             # 자세를 믿지 않는다. 보고 시각도 두어 오래 가면 COMM_LOST가 된다.
             m.robot_state, m.battery = state, battery
@@ -153,7 +154,25 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         elif state != SELF_RECOVERING and m.self_recovery_since is not None:
             took = now - m.self_recovery_since
             m.self_recovery_since = None
+            m.self_recovery_long = False
             self._event("INFO", "SELF_RECOVERY_END", f"after {took:.1f} s, now {state}", m.name)
+
+    def _self_recovery_as_blocked(self, m: _Mission, state: str) -> str:
+        """RECOVERING이 self_recovery_limit_s를 넘으면 BLOCKED로 본다(제안).
+
+        핑키 FSM의 두 번 시도는 길어야 약 35초다. 그보다 길면 무언가 잘못됐으니 막힘 시계와
+        멈춤 감시가 영원히 쉬지 않게, 그 뒤의 RECOVERING 보고를 BLOCKED처럼 다룬다.
+        """
+        if state != SELF_RECOVERING or m.self_recovery_since is None:
+            return state
+        limit = self.params.self_recovery_limit_s
+        if self._clock() - m.self_recovery_since < limit:
+            return state
+        if not m.self_recovery_long:
+            m.self_recovery_long = True
+            self._event("WARN", "SELF_RECOVERY_TOO_LONG",
+                        f"RECOVERING for more than {limit:.0f} s, taken as BLOCKED", m.name)
+        return BLOCKED
 
     def on_run_mode(self, run_mode) -> None:
         if run_mode == STOP and self._run_mode != STOP:

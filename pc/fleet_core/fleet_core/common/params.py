@@ -67,6 +67,10 @@ class FleetParams:
     # and failing more than the limit is an ERROR. Records without these values replay with them
     dispatch_retry_wait_s: float = 2.0
     dispatch_retry_limit: int = 3
+    # Proposal (pinky self-recovery, 2026-11-09): a robot that keeps reporting RECOVERING longer
+    # than this is taken as BLOCKED. The pinky FSM's two attempts take about 35 s at most.
+    # Records from before RECOVERING never report it, so the value does not change their replay
+    self_recovery_limit_s: float = 45.0
 
 
 def load_params(path=None) -> FleetParams:
