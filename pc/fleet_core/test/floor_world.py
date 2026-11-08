@@ -80,8 +80,9 @@ class FloorWorld(SimWorld):
         assert tuple(cmd.path[-1][:2]) == (cmd.x, cmd.y), f"{cmd} path ends off the target"
         held = self.core.zones.held_set(cmd.robot)
         body = self.params.robot_radius_m
-        points = [tuple(p[:2]) for p in cmd.path[1:]]
-        for x, y in sample_line(points, self.floor.cell_m / 4):
+        # from the true pose: the robot drives from where it is, not from the reported pose
+        points = [(r.x, r.y)] + [tuple(p[:2]) for p in cmd.path[1:]]
+        for x, y in sample_line(points, self.floor.cell_m / 8):
             cells = {self.floor.cell_id(c) for c in disk_cells(self.floor, x, y, body)}
             assert cells <= held, f"{cmd} drives over cells it does not hold: {cells - held}"
         if self._refuses_path(r, cmd):

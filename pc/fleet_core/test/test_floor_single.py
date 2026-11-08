@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 from fleet_core.common.commands import DockCmd, MoveCmd
-from fleet_core.traffic.floor.cells import swept_cells
+from fleet_core.traffic.floor.cells import disk_cells, swept_cells
 from fleet_core.traffic.floor.controller import FloorController
+from fleet_core.traffic.floor.floor_map import load_floor_map
 from floor_world import FloorWorld
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
@@ -105,3 +106,115 @@ def test_more_seeds_finish_without_breaking_a_cell_invariant(seed):
     world, meter, finished = run_one(seed=seed)
     assert finished and world.cell_violations == 0
     assert meter.stops == 0
+
+
+# ---- Codex P2 review --------------------------------------------------------------------
+
+
+def bare_floor(robots=("a",)):
+    from dataclasses import replace
+
+    from fleet_core.common.params import load_params
+    from fleet_core.manager import FleetManager
+    from fleet_core.traffic.lane_map import load_lane_map
+
+    now = [0.0]
+    core = FleetManager(load_lane_map(), replace(load_params(), traffic_mode="freefloor"),
+                        list(robots), lambda: now[0])
+    core.on_order_board("RUN", [])
+    return core, now
+
+
+def report(core, robot, x, y, state="IDLE", times=3):
+    for _ in range(times):
+        core.on_robot_state(robot, x, y, 0.0, state)
+
+
+def moves_of(out):
+    return [c for c in out if isinstance(c, MoveCmd)]
+
+
+def drive_cells(core, path):
+    floor = core.traffic.floor
+    body = floor.robot_radius_m + floor.cell_margin_m
+    return {floor.cell_id(c) for c in swept_cells(floor, [tuple(p[:2]) for p in path], body)}
+
+
+def test_the_whole_sent_path_is_locked_even_from_a_pose_off_the_route():
+    core, now = bare_floor()
+    report(core, "a", 1.0, 1.15)
+    traffic = core.traffic
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "B")
+    traffic.step("a")
+    first = moves_of(traffic.take_output())
+    assert first
+    report(core, "a", 1.10, 1.24, state="MOVING")  # noisy report, 9 cm off the line
+    traffic.on_move_result("a", first[-1].goal_id, True, "")
+    traffic.step("a")
+    second = moves_of(traffic.take_output())
+    assert second
+    assert drive_cells(core, second[-1].path) <= core.zones.held_set("a")
+
+
+def test_an_old_goal_keeps_its_cells_until_its_result_comes():
+    core, now = bare_floor()
+    report(core, "a", 1.0, 1.15)
+    traffic = core.traffic
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "B")  # east
+    traffic.step("a")
+    east = moves_of(traffic.take_output())[-1]
+    ahead = drive_cells(core, east.path)
+    traffic._start_leg(m, "TO_PARK", None, "P-3")  # west, while the east goal still runs
+    traffic.step("a")
+    west = moves_of(traffic.take_output())[-1]
+    traffic.on_goal_rejected("a", west.goal_id)  # the new goal never starts
+    for _ in range(5):
+        now[0] += 0.1
+        report(core, "a", 1.0, 1.15, state="MOVING", times=1)
+        traffic.tick_progress(now[0])
+    assert ahead <= core.zones.held_set("a")
+
+
+def test_a_report_on_cells_it_does_not_hold_takes_them_or_stops_the_robot():
+    core, now = bare_floor()
+    report(core, "a", 1.0, 1.15)
+    traffic = core.traffic
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")
+    traffic.step("a")
+    traffic.take_output()
+    report(core, "a", 1.0, 1.45, state="MOVING")  # 30 cm off: none of these cells were locked
+    out = traffic.take_output()
+    floor = traffic.floor
+    body = {floor.cell_id(c) for c in
+            disk_cells(floor, 1.0, 1.45, floor.robot_radius_m + floor.cell_margin_m)}
+    stopped = any(type(c).__name__ == "CancelCmd" for c in out)
+    assert body <= core.zones.held_set("a") or stopped
+
+
+def test_a_robot_that_loses_its_link_resumes_on_its_cells():
+    faults = [{"at_s": 12.0, "type": "comm_loss", "robot": "pinky1", "duration_s": 5.0}]
+    world, meter, finished = run_one(seed=1, faults=faults)
+    assert finished and world.cell_violations == 0
+    assert "COMM_LOST" in world.event_codes()
+
+
+def test_rounded_corners_do_not_cut_into_fixed_lines():
+    from fleet_core.traffic.floor.cells import line_cells
+    from fleet_core.traffic.floor.planner import FloorPlanner
+
+    floor = load_floor_map()
+    planner = FloorPlanner(floor)
+    starts = [(0.4 + 0.3 * i, 0.5 + 0.3 * j) for i in range(10) for j in range(6)]
+    starts = [p for p in starts if floor.cell_of(*p) in floor.clear]
+    for a in starts[::3]:
+        for b in starts[1::4]:
+            raw_cells = planner.astar(floor.cell_of(*a), floor.cell_of(*b), floor.clear)
+            if raw_cells is None:
+                continue
+            raw = [a] + [floor.centre(c) for c in raw_cells[1:-1]] + [b]
+            straight = planner.shortcut(raw, floor.clear | {floor.cell_of(*a), floor.cell_of(*b)})
+            rounded = planner.plan(a, b)
+            new = (line_cells(floor, rounded) - line_cells(floor, straight)) & planner.line_cells
+            assert not new, (a, b, sorted(new))

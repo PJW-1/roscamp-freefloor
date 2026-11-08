@@ -33,7 +33,9 @@ from fleet_core.traffic.mission import (
     PARKED,
     PLACEMENT_CONFLICT,
     RUN,
+    TO_OUTBOUND,
     TO_PARK,
+    TO_WORK,
     _Goal,
     _Mission,
 )
@@ -67,7 +69,9 @@ class FloorController(TrafficController):
         self.planner = FloorPlanner(self.floor)
         self._body = self.floor.robot_radius_m + self.floor.cell_margin_m
         self._legs: dict[str, _Leg] = {}
-        self._active: dict[str, Route] = {}  # path of the MoveTo the robot may still follow
+        # robot -> goal id -> path of every MoveTo the robot may still follow (until its result)
+        self._active: dict[str, dict[int, Route]] = {name: {} for name in robots}
+        self._off_cells: dict[str, int] = {name: 0 for name in robots}
         self._wp_cell: dict = {}
         self.metrics = {"slowdowns": 0, "replans": 0, "sidesteps": 0, "no_path": 0}
 
@@ -126,7 +130,20 @@ class FloorController(TrafficController):
                 m.outside.pop(cell_id, None)
 
     def _watch_lane_error(self, m: _Mission) -> None:
-        pass  # no lanes; the cell check keeps the body inside its cells
+        """보고 자리의 몸 칸을 쥐었나 본다. 아니면 한꺼번에 잡고, 못 잡는 보고가
+        release_confirm_samples번 이어지면 세운다(레인 이탈 감시 대신)."""
+        if not m.available:
+            return
+        need = self._body_cells(m.x, m.y)
+        if need <= self.zones.held_set(m.name) or self.zones.acquire_all(m.name, need):
+            self._off_cells[m.name] = 0
+            return
+        self._off_cells[m.name] += 1
+        if self._off_cells[m.name] == self.params.release_confirm_samples and m.goal:
+            self._cancel_goal(m)
+            self._event("WARN", "FLOOR_OFF_CELLS",
+                        f"reported at ({m.x:.2f}, {m.y:.2f}) on cells held by others, stopped",
+                        m.name)
 
     def _note_block_report(self, m: _Mission) -> None:
         pass  # P3
@@ -151,7 +168,7 @@ class FloorController(TrafficController):
     def _follow(self, m: _Mission) -> None:
         """경로 위 진행 s를 보고 자세로 넘긴다. 뒤로는 가지 않고 보낸 끝을 넘지 않는다."""
         if m.goal is None and m.robot_state not in ON_A_GOAL:
-            self._active.pop(m.name, None)  # it stands: nothing old is followed any more
+            self._active[m.name].clear()  # it stands: nothing old is followed any more
         leg = self._legs.get(m.name)
         if leg is None or leg.route is None:
             return
@@ -170,8 +187,7 @@ class FloorController(TrafficController):
         leg = self._legs.get(m.name)
         if leg and leg.route and leg.s_lock > leg.s:
             keep |= self._swept(leg.route.between(leg.s, leg.s_lock))
-        active = self._active.get(m.name)
-        if active:
+        for active in self._active[m.name].values():
             s, _ = active.project(m.x, m.y)
             keep |= self._swept(active.between(s, active.length))
         for cell_id in list(self.zones.held_set(m.name)):
@@ -276,7 +292,8 @@ class FloorController(TrafficController):
 
     def _extend(self, m: _Mission, leg: _Leg) -> bool:
         for end in self._candidates(leg):
-            cells = self._swept(leg.route.between(leg.s, end)) | self._body_cells(m.x, m.y)
+            cells = (self._swept(leg.route.between(leg.s, end)) | self._body_cells(m.x, m.y)
+                     | self._swept(self._drive_path(m, leg, end)))
             if self.zones.acquire_all(m.name, cells):
                 leg.s_lock = end
                 return True
@@ -297,11 +314,9 @@ class FloorController(TrafficController):
         elif end - leg.s_sent < self.params.floor_extend_step_m - 1e-9 and not (
                 final and leg.s_sent < end - AT_END_M):
             return
-        ahead = route.between(min(leg.s + 0.05, end), end) if end - leg.s > 0.05 else [
-            route.at(end)]
-        points = [(m.x, m.y)] + [p for p in ahead if math.dist(p, (m.x, m.y)) > 1e-9]
-        if len(points) == 1:
-            points.append(route.at(end))
+        points = self._drive_path(m, leg, end)
+        if not self.zones.acquire_all(m.name, self._swept(points) | self._body_cells(m.x, m.y)):
+            return  # the first stretch from the reported pose is not free: wait
         poses = []
         for k, (x, y) in enumerate(points):
             a, b = (points[k], points[k + 1]) if k + 1 < len(points) else (points[k - 1],
@@ -312,9 +327,20 @@ class FloorController(TrafficController):
         m.goal = _Goal(MOVE, goal_id, 1 if final else 0)
         m.stall_hold = False
         leg.s_sent = end
-        self._active[m.name] = Route(points)
+        self._active[m.name][goal_id] = Route(points)
         x, y, yaw = poses[-1]
         self._out.append(MoveCmd(m.name, goal_id, target, x, y, yaw, tuple(poses)))
+
+    @staticmethod
+    def _drive_path(m: _Mission, leg: _Leg, end: float) -> list:
+        """보낼 꺾은선: 보고 자리에서 경로 위 조금 앞(되돌아가지 않게)을 지나 end까지."""
+        route = leg.route
+        ahead = route.between(min(leg.s + 0.05, end), end) if end - leg.s > 0.05 else [
+            route.at(end)]
+        points = [(m.x, m.y)] + [p for p in ahead if math.dist(p, (m.x, m.y)) > 1e-9]
+        if len(points) == 1:
+            points.append(route.at(end))
+        return points
 
     def _step_parked(self, m: _Mission) -> None:
         """대기 입구가 비도록 빈 지점으로 계속 앞으로 간다."""
@@ -327,13 +353,13 @@ class FloorController(TrafficController):
         m = self._missions.get(robot)
         if m:
             self._cancel_finished(m, goal_id)
+            self._active[robot].pop(goal_id, None)  # any goal, old ones too: it has ended
         goal = m.goal if m else None
         if goal is None or goal.id != goal_id or goal.kind != MOVE:
             return
         m.goal = None
         m.not_sent_warned = False
         m.last_result = "SUCCEEDED" if success else reason
-        self._active.pop(robot, None)
         leg = self._legs.get(robot)
         if success:
             m.attempts = 0
@@ -346,10 +372,35 @@ class FloorController(TrafficController):
 
     def on_goal_rejected(self, robot, goal_id) -> None:
         super().on_goal_rejected(robot, goal_id)
-        if robot in self._missions and self._missions[robot].goal is None:
-            self._active.pop(robot, None)
+        if robot in self._active:
+            self._active[robot].pop(goal_id, None)
 
     def on_goal_not_sent(self, robot, goal_id) -> None:
         super().on_goal_not_sent(robot, goal_id)
-        if robot in self._missions and self._missions[robot].goal is None:
-            self._active.pop(robot, None)
+        if robot in self._active:
+            self._active[robot].pop(goal_id, None)
+
+    def on_goal_lost(self, robot, goal_id) -> None:
+        super().on_goal_lost(robot, goal_id)
+        if robot in self._active:
+            self._active[robot].pop(goal_id, None)
+
+    # ---- link recovery ------------------------------------------------------------------
+
+    def _finish_recovery(self, m: _Mission) -> None:
+        """통신이 돌아왔고 자세를 확인했다. 지금 몸 칸을 잡고 하던 다리를 그 자리에서 다시 잡는다.
+
+        레인판은 지점 하나의 구역만 다시 잡고 쥔 구역을 레인 규칙으로 놓는다. 여기서는 칸을
+        놓는 일을 보통 해제 규칙(_release_cells)에 맡긴다.
+        """
+        m.comm = ""
+        need = self._body_cells(m.x, m.y)
+        if not self.zones.acquire_all(m.name, need):
+            in_the_way = sorted({self.zones.holder(c) for c in need} - {None, m.name})
+            self._fail(m, "RECOVERY_CONFLICT")
+            self._event("ERROR", "RECOVERY_CONFLICT",
+                        f"{m.name} stands on cells held by {in_the_way}", m.name)
+            return
+        leg = self._legs.get(m.name)
+        if leg is not None and m.phase in (TO_PARK, TO_WORK, TO_OUTBOUND):
+            self._plan(m, leg)  # from where it stands now, same goal

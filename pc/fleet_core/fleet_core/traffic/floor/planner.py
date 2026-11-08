@@ -194,11 +194,11 @@ class FloorPlanner:
             k = far
         return out
 
-    def _enters_lines(self, p, q, original) -> bool:
-        """곧은 선이 원래 경로가 안 지나던 고정 선 칸을 지나는가."""
+    def _enters_lines(self, p, q, original, replacement=None) -> bool:
+        """p-q(또는 replacement 꺾은선)가 원래 경로가 안 지나던 고정 선 칸을 지나는가."""
         if not self.line_cells:
             return False
-        new = line_cells(self.floor, [p, q]) & self.line_cells
+        new = line_cells(self.floor, replacement or [p, q]) & self.line_cells
         return bool(new - line_cells(self.floor, original))
 
     def round_corners(self, points, allowed) -> list:
@@ -209,7 +209,8 @@ class FloorPlanner:
         for k in range(1, len(points) - 1):
             a, b, c = out[-1], points[k], points[k + 1]
             arc = self._arc(a, b, c)
-            if arc and line_cells(self.floor, [a, *arc, c]) <= allowed:
+            if (arc and line_cells(self.floor, [a, *arc, c]) <= allowed
+                    and not self._enters_lines(a, c, [a, b, c], [a, *arc, c])):
                 out.extend(arc)
             else:
                 out.append(b)
