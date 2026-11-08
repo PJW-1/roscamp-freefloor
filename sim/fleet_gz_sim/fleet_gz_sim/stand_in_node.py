@@ -1,19 +1,23 @@
 """Gazebo 3대 시뮬 전용 노드 둘. 실물에서는 쓰지 않는다.
 
 sim_stand_in: 로봇마다
-  - /{pinky}/dock(Dock) 대역. pinky_dock이 아직 없다(dock_stand_in). gz.launch.py는 pinky_fsm의
-    dock 서버를 /{pinky}/dock_fsm으로 비켜 둔다.
   - 실제 위치 중계: /{pinky}/sim/truth(Odometry, map 좌표) → /sim/truth/{pinky}(RobotState).
-    시나리오 모니터(fake_robots)가 구역 판정에 쓰는 잡음 없는 자세다.
+    시나리오 모니터(fake_robots)가 구역 판정에 쓰는 잡음 없는 자세다. 늘 켜져 있다.
+  - dock_stub:=true일 때만 /{pinky}/dock(Dock) 대역(dock_stand_in). 기본은 꺼짐이고 진짜
+    pinky_fsm이 도킹을 DOCK_UNAVAILABLE로 실패시킨다. 켜면 gz.launch.py가 pinky_fsm의 dock
+    서버를 /{pinky}/dock_fsm으로 비켜 둔다. The node refuses to start the stub unless
+    use_sim_time is true and the network passes isolation.py.
 wait_ready: 모든 로봇의 최근 /{pinky}/state가 IDLE인 채로 1 s 이어지면 0으로 끝난다(ready.py).
   gz.launch.py가 그때 관제와 가짜 central·팔을 띄운다. timeout_s(벽시계) 안에 안 되면 1로 끝난다.
 """
 from __future__ import annotations
 
 import math
+import os
 import sys
 import threading
 import time
+from pathlib import Path
 
 import rclpy
 from fake_robots.common import (
@@ -31,7 +35,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
-from fleet_gz_sim.dock_stand_in import dock_outcome, dock_phase
+from fleet_gz_sim.dock_stand_in import dock_outcome, dock_phase, require_dock_stub_allowed
 from fleet_gz_sim.ready import everyone_idle
 
 READY_HOLD_S = 1.0
@@ -43,30 +47,38 @@ def _yaw(q) -> float:
 
 
 class SimStandIn(Node):
-    def __init__(self):
-        super().__init__("sim_stand_in")
+    def __init__(self, **kwargs):
+        super().__init__("sim_stand_in", **kwargs)
         self.declare_parameter("robots", ["pinky1", "pinky2", "pinky3"])
+        stub = bool(self.declare_parameter("dock_stub", False).value)
+        if stub:  # before anything else: never serve a dock outside an isolated Gazebo run
+            require_dock_stub_allowed(bool(self.get_parameter("use_sim_time").value),
+                                      os.environ, rmw=rclpy.get_rmw_implementation_identifier(),
+                                      workdir=Path.cwd())
         contract = load_contract_param(self)
         self._site = load_lane_map_param(self)
-        self._duration = load_scenario_param(self, self._site).dock.duration_s
+        self._duration = load_scenario_param(self, self._site).dock.duration_s if stub else 0.0
         self._lock = threading.Lock()
         self._pose: dict[str, tuple[float, float, float]] = {}
         self._turn: dict[str, int] = {}  # 로봇마다 마지막으로 받은 도크 목표 번호
         qos = to_ros_qos(contract.qos("robot_state"))
         group = ReentrantCallbackGroup()
-        self._servers = []
+        self.dock_servers = []
         for robot in self.get_parameter("robots").value:
             pub = self.create_publisher(RobotState, TRUTH_TOPIC.format(robot=robot), qos)
             self.create_subscription(Odometry, f"/{robot}/sim/truth",
                                      lambda msg, r=robot, p=pub: self._on_truth(r, p, msg), 10)
-            self._servers.append(ActionServer(
+            if not stub:
+                continue
+            self.dock_servers.append(ActionServer(
                 self, Dock, contract.name("dock", pinky=robot),
                 execute_callback=lambda handle, r=robot: self._dock(r, handle),
                 goal_callback=lambda _goal: GoalResponse.ACCEPT,
                 cancel_callback=lambda _handle: CancelResponse.ACCEPT,
                 callback_group=group))
         robots = self.get_parameter("robots").value
-        self.get_logger().info(f"sim stand-in: dock and truth for {robots}")
+        what = "SIM DOCK STUB and truth" if stub else "truth (dock left to pinky_fsm)"
+        self.get_logger().info(f"sim stand-in: {what} for {robots}")
 
     def _on_truth(self, robot: str, pub, msg: Odometry) -> None:
         p = msg.pose.pose

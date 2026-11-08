@@ -216,17 +216,75 @@ def test_ros_process_budget_leaves_room_under_the_localhost_limit(made):
     assert ros_processes(run(made, nav_composition="false"), fleet) > LOCALHOST_PARTICIPANTS
 
 
-def test_pinky_fsm_dock_steps_aside_for_the_sim_stand_in(made):
+def dock_aside_groups(actions, robot):
+    return [a for a in flat(actions) if isinstance(a, Made) and a.kind == "GroupAction"
+            and any(isinstance(c, Made) and c.kind == "SetRemap"
+                    and c.args == (f"/{robot}/dock", f"/{robot}/dock_fsm") for c in a.flat())]
+
+
+def test_the_real_pinky_fsm_answers_dock_by_default(made):
+    """Work order H8: the real pinky_fsm fails docking with DOCK_UNAVAILABLE unless the sim-only
+    stub is asked for. The stand-in still relays the true pose for the scenario monitor."""
     actions = run(made)
+    fsms = {launch_args(i)["namespace"] for i in includes(actions, "pinky_fsm.launch.py")}
+    assert fsms == set(ROBOTS)
     for robot in ROBOTS:
-        [group] = [a for a in flat(actions) if isinstance(a, Made) and a.kind == "GroupAction"
-                   and any(isinstance(c, Made) and c.kind == "SetRemap"
-                           and c.args == (f"/{robot}/dock", f"/{robot}/dock_fsm")
-                           for c in a.flat())]
+        assert dock_aside_groups(actions, robot) == []
+    assert not [a for a in flat(actions) if isinstance(a, Made) and a.kind == "SetRemap"]
+    [stand_in] = nodes(actions, "sim_stand_in")
+    assert params(stand_in)["dock_stub"] is False
+    assert params(stand_in)["robots"] == ROBOTS and params(stand_in)["use_sim_time"] is True
+
+
+def test_sim_dock_stub_moves_the_pinky_fsm_dock_aside_and_turns_the_stub_on(made):
+    actions = run(made, sim_dock_stub="true")
+    for robot in ROBOTS:
+        [group] = dock_aside_groups(actions, robot)
         [fsm] = includes([group], "pinky_fsm.launch.py")
         assert launch_args(fsm)["namespace"] == robot
     [stand_in] = nodes(actions, "sim_stand_in")
-    assert params(stand_in)["robots"] == ROBOTS and params(stand_in)["use_sim_time"] is True
+    assert params(stand_in)["dock_stub"] is True and params(stand_in)["use_sim_time"] is True
+
+
+def test_sim_dock_stub_still_needs_an_isolated_network(made, monkeypatch):
+    monkeypatch.setenv("ROS_AUTOMATIC_DISCOVERY_RANGE", "SUBNET")
+    with pytest.raises(RuntimeError, match="LOCALHOST"):
+        run(made, sim_dock_stub="true")
+
+
+@pytest.mark.parametrize("name", ["sim_dock_stub", "fleet_check"])
+def test_a_misspelt_switch_stops_the_launch(made, name):
+    with pytest.raises(ValueError, match=name):
+        run(made, **{name: "ture"})
+
+
+def test_fleet_check_records_into_the_result_dir_on_gazebo_time(made):
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    [check] = nodes(made.fleet(str(path), ROBOTS, result_dir="out", monitor=True),
+                    "fleet_check")
+    assert params(check) == {"use_sim_time": True, "robots": ROBOTS,
+                             "output": str(Path("out") / "fleet_check.json")}
+    assert not nodes(made.fleet(str(path), ROBOTS, result_dir="out", monitor=True,
+                                check=False), "fleet_check")
+
+
+def test_fleet_check_follows_the_launch_switch(made, monkeypatch):
+    seen = {}
+    real = made.fleet
+
+    def spy(*args, **kw):
+        seen["check"] = args[6] if len(args) > 6 else kw.get("check", True)
+        return real(*args, **kw)
+
+    monkeypatch.setattr(made, "fleet", spy)
+    for value, expected in (("true", True), ("false", False)):
+        actions = run(made, fleet_check=value)
+        [on_exit] = [a.args[0].kw["on_exit"] for a in flat(actions) if isinstance(a, Made)
+                     and a.kind == "RegisterEventHandler"
+                     and callable(a.args[0].kw["on_exit"])]  # the one after wait_ready
+        on_exit(type("Exit", (), {"returncode": 0})(), None)
+        assert seen["check"] is expected
 
 
 def test_the_fleet_waits_until_every_pinky_is_ready(made):

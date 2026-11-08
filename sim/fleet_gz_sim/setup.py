@@ -22,6 +22,7 @@ setup(
     zip_safe=True,
     entry_points={'console_scripts': [
         'drive_check = fleet_gz_sim.drive_check:main',
+        'fleet_check = fleet_gz_sim.fleet_check_node:main',
         'sim_stand_in = fleet_gz_sim.stand_in_node:main',
         'wait_ready = fleet_gz_sim.stand_in_node:wait_ready',
         'sim_obstacles = fleet_gz_sim.obstacle_node:main',

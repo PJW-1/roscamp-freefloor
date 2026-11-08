@@ -8,8 +8,12 @@
   띄운다. 모니터가 기대값을 판정해 result_dir에 summary.json을 쓰고 launch를 끝낸다.
 - 시계는 Gazebo /clock 하나를 모두 쓴다. sim_clock을 띄우지 않으므로 시나리오의 speed_factor는
   쓰지 않는다. 주문 시각(at_s)은 Gazebo 시계 0부터 센다.
-- 도크: pinky_dock이 아직 없어 시뮬 전용 대역(sim_stand_in)이 /{pinky}/dock을 맡고, pinky_fsm의
-  dock 서버는 /{pinky}/dock_fsm으로 비켜 둔다. 실물에서는 쓰지 않는다.
+- 도크: 기본은 진짜 pinky_fsm이 도킹을 DOCK_UNAVAILABLE로 실패시킨다(pinky_dock이 아직 없다).
+  임무가 도크에서 멈추고 관제가 재시도한 뒤 격리한다. sim_dock_stub:=true면 시뮬 전용 대역
+  (sim_stand_in)이 /{pinky}/dock을 맡고 pinky_fsm의 dock 서버는 /{pinky}/dock_fsm으로 비켜 둔다.
+  The stand-in refuses the stub unless use_sim_time is true and isolation.py passes.
+- fleet_check(기본 켜짐)가 로봇 사이 최소 거리, 정지 횟수, 쥔 구역 밖 위치 수를
+  result_dir/fleet_check.json에 쓴다.
 - ROS 프로세스 수: LOCALHOST 탐색에서는 DDS 참여자 32개 정도만 서로 보인다. 그래서 브리지는
   하나로 모으고, 로봇마다 Nav2를 프로세스 하나로 묶는다(nav_composition). 노드를 더하면
   test_launch_wiring의 프로세스 수 시험이 한도를 알려 준다.
@@ -47,12 +51,24 @@ ARGS = {
     "monitor": ("true", "시나리오 판정. 끝나면 launch를 끝낸다"),
     "obstacles": ("", "레인에 상자를 놓았다 치우는 일정(fleet_gz_sim/obstacles의 이름이나 파일)."
                       " 비면 장애물 없음. roam은 300 s마다 4개"),
+    "sim_dock_stub": ("false", "true면 시뮬 전용 도킹 대역: 도크 지점 근처면 몇 초 뒤 성공."
+                               " false면 진짜 pinky_fsm(DOCK_UNAVAILABLE)"),
+    "fleet_check": ("true", "로봇 사이 최소 거리, 정지 횟수, 쥔 구역 밖 위치 수를"
+                            " result_dir/fleet_check.json에"),
 }
 ARMS = "arm1 arm2 arm3"
 
 
+def flag(text: str, name: str) -> bool:
+    """A true/false launch argument. A typo must not quietly mean false."""
+    value = text.strip().lower()
+    if value not in ("true", "false", "1", "0"):
+        raise ValueError(f"{name} must be true or false, got {text!r}")
+    return value in ("true", "1")
+
+
 def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
-          params_file: str = "", obstacles_file: str = "") -> list:
+          params_file: str = "", obstacles_file: str = "", check: bool = True) -> list:
     """진짜 관제와 가짜 작업셀·비전·출고 팔·central·모니터, 장애물(있으면). 모두 Gazebo 시계."""
     from fake_robots.common import split_fake_arms
     from fleet_core.traffic.lane_map import load_lane_map
@@ -78,6 +94,11 @@ def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
                             name="sim_obstacles", output="screen",
                             parameters=[{"use_sim_time": True, "robots": robots,
                                          "obstacles_file": obstacles_file}]))
+    if check:
+        actions.append(Node(package="fleet_gz_sim", executable="fleet_check", name="fleet_check",
+                            output="screen",
+                            parameters=[{"use_sim_time": True, "robots": robots,
+                                         "output": str(Path(result_dir) / "fleet_check.json")}]))
     if monitor:
         node = Node(package="fake_robots", executable="scenario_monitor_node",
                     name="scenario_monitor", output="screen",
@@ -115,20 +136,22 @@ def _start(context):
     poses = start_poses(site, scenario)
     robots = list(poses)
     composed = value("nav_composition").lower() in ("true", "1")
+    stub = flag(value("sim_dock_stub"), "sim_dock_stub")
+    check = flag(value("fleet_check"), "fleet_check")
     actions = [*launch_parts.world(value("gui").lower() in ("true", "1")),
                launch_parts.bridge(robots)]
     for robot, (x, y, yaw) in poses.items():
         actions += launch_parts.pinky(robot, x, y, yaw,
                                       heartbeat_timeout_s=value("heartbeat_timeout_s"),
                                       nav_log_level=value("nav_log_level"),
-                                      rviz=robot == value("rviz"), dock_aside=True,
+                                      rviz=robot == value("rviz"), dock_aside=stub,
                                       nav_composition=composed)
     if value("rviz") == "fleet":
         actions += fleet_rviz(robots)
     actions.append(Node(package="fleet_gz_sim", executable="sim_stand_in", name="sim_stand_in",
                         output="screen",
                         parameters=[{"use_sim_time": True, "robots": robots,
-                                     "scenario_file": scenario_file}]))
+                                     "scenario_file": scenario_file, "dock_stub": stub}]))
     wait = Node(package="fleet_gz_sim", executable="wait_ready", name="wait_ready",
                 output="screen", parameters=[{"robots": robots}])
     monitor = value("monitor").lower() in ("true", "1")
@@ -137,7 +160,7 @@ def _start(context):
         if event.returncode != 0:
             return [LogInfo(msg="fleet_gz_sim: 로봇이 IDLE이 되지 않아 끝낸다"), Shutdown()]
         return fleet(scenario_file, robots, value("result_dir"), monitor,
-                     value("fleet_params_file"), obstacles_file)
+                     value("fleet_params_file"), obstacles_file, check)
 
     actions += [wait, RegisterEventHandler(OnProcessExit(target_action=wait, on_exit=after_wait))]
     return actions
