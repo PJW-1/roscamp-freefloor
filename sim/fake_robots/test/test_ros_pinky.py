@@ -799,9 +799,13 @@ def test_a_nav_abort_recovers_twice_then_ends_nav_aborted(harness, tmp_path):
     took = time.monotonic() - sent
     assert (res.success, res.reason) == (False, MoveTo.Result.REASON_NAV_ABORTED)
     assert RECOVERING in states_since(p, sent)
-    # 중단 세 번(처음, 시도 1, 시도 2), 각 0.2 s. 꼭짓점 곁이라 후진하지 않는다(단위 시험이 본다)
+    # 배선만 본다. 시도 수(두 번)와 후진 깊이는 test_recovery.py의
+    # test_a_nav_abort_gives_two_attempts_then_ends_the_goal이 고정한다. 여기서는 경로 시작점
+    # 곁에서 중단하므로 두 시도 모두 후진하지 않는다.
+    # 걸린 시간은 중단이 적어도 두 번(각 0.2 s)이었다는 것만 보인다.
+    # 지연이 있으면 시도 한 번도 통과한다.
     assert took >= 3 * 0.2 - 0.1, took
-    # 다시 가도 처음 중단한 자리(0.2 s * 0.2 m/s)를 넘지 못한다
+    # 보고 표본으로 본 위치가 처음 중단한 자리(0.2 s * 0.2 m/s) + 0.02 m를 넘지 않는다
     assert max(along(truth)) <= 0.04 + 0.02
     assert result_of(p.goal("QO"), 30.0).result.success is True, "one fault, one goal"
 
