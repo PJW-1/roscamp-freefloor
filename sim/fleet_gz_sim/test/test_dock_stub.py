@@ -167,6 +167,17 @@ def test_a_stalled_clock_counts_as_stopped():
     assert not watch.stalled(sim_now=10.6, wall_now=109.2)  # runs again
 
 
+def test_a_dock_ends_only_after_gazebo_time_moved():
+    """duration_s 0 must not succeed on a clock that stopped before the goal came (Codex 19bd994).
+
+    The loop then keeps waiting until the clock moves or ClockWatch calls it stalled."""
+    from fleet_gz_sim.dock_stand_in import dock_done
+    assert not dock_done(elapsed=0.0, duration=0.0)
+    assert dock_done(elapsed=0.004, duration=0.0)
+    assert not dock_done(elapsed=1.9, duration=2.0)
+    assert dock_done(elapsed=2.0, duration=2.0)
+
+
 def test_the_stub_keeps_gazebo_time_once_started(ros):
     """Switching use_sim_time off later would put the stub on the wall clock."""
     from ament_index_python.packages import get_package_share_directory

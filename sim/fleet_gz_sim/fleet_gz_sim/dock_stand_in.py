@@ -48,6 +48,14 @@ class ClockWatch:
         return wall_now - self._since > self.limit_s
 
 
+def dock_done(elapsed: float, duration: float) -> bool:
+    """The dock goal may end: duration_s has passed and Gazebo time moved since the goal came.
+
+    With duration_s 0 a clock that stopped before the goal would otherwise pass at once; now the
+    goal waits for the clock, and ClockWatch fails it if the clock stays still."""
+    return elapsed > 0.0 and elapsed >= duration
+
+
 def stub_may_answer(ros_time_active: bool, now_s: float) -> bool:
     """Answer a dock goal only while Gazebo time is running (ROS time from /clock, past 0)."""
     return ros_time_active and now_s > 0.0

@@ -38,6 +38,7 @@ from rclpy.node import Node
 
 from fleet_gz_sim.dock_stand_in import (
     ClockWatch,
+    dock_done,
     dock_outcome,
     dock_phase,
     require_dock_stub_allowed,
@@ -142,7 +143,7 @@ class SimStandIn(Node):
             if now_phase != phase:
                 phase = now_phase
                 handle.publish_feedback(Dock.Feedback(phase=phase))
-            if elapsed >= self._duration:
+            if dock_done(elapsed, self._duration):
                 break
             time.sleep(0.02)
         with self._lock:
