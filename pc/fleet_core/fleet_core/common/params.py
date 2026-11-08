@@ -74,6 +74,11 @@ class FleetParams:
     # Free-floor experiment (P0): which traffic layer runs. lanes is the lane control as it was;
     # freefloor is fleet_core/traffic/floor. Records from before this value replay with lanes
     traffic_mode: str = "lanes"
+    # Free-floor traffic only (traffic/floor). Proposals from the experiment order, not measured
+    floor_lock_ahead_m: float = 0.5  # cells locked ahead of the robot along its route
+    floor_extend_step_m: float = 0.1  # a shorter all-or-nothing try when the full one fails
+    floor_replan_s: float = 1.0  # a robot whose lock cannot grow looks for another route
+    floor_plan_window_s: float = 8.0  # reservations of other robots looked at this far ahead
 
 
 def load_params(path=None) -> FleetParams:
