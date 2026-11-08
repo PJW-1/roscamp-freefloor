@@ -19,14 +19,18 @@ input[type=range] { flex: 1; min-width: 160px; }
 <span id="t"></span><span id="legend"></span></div>
 <canvas id="c"></canvas>
 <script>
-const DATA = {"cols":27,"rows":18,"cell":0.1,"x0":0.05,"y0":0.0,"radius":0.08,"blocked":["c0_0","c0_1","c0_10","c0_11","c0_12","c0_13","c0_14","c0_15","c0_16","c0_17","c0_2","c0_3","c0_4","c0_5","c0_6","c0_7","c0_8","c0_9","c10_0","c10_17","c11_0","c11_17","c12_0","c12_17","c13_0","c13_17","c14_0","c14_17","c15_0","c15_17","c16_0","c16_17","c17_0","c17_17","c18_0","c18_17","c19_0","c19_17","c1_0","c1_17","c20_0","c20_17","c21_0","c21_17","c22_0","c22_17","c23_0","c23_17","c24_0","c24_17","c25_0","c25_17","c26_0","c26_1","c26_10","c26_11","c26_12","c26_13","c26_14","c26_15","c26_16","c26_17","c26_2","c26_3","c26_4","c26_5","c26_6","c26_7","c26_8","c26_9","c2_0","c2_17","c3_0","c3_17","c4_0","c4_17","c5_0","c5_17","c6_0","c6_17","c7_0","c7_17","c8_0","c8_17","c9_0","c9_17"],"walls":[],"lines":{"work_in":[[0.6,0.9],[0.7,1.325]],"work_out":[[0.7,1.325],[1.0,1.5]],"outbound_in":[[2.4,0.9],[2.0,1.325]],"outbound_out":[[2.0,1.325],[1.7,1.15]],"tunnel_east":[[1.0,0.6],[2.0,0.4]],"tunnel_west":[[2.0,0.4],[1.0,0.6]]},"frames":[]};
+const DATA = {"cols":27,"rows":18,"cell":0.1,"x0":0.05,"y0":0.0,"radius":0.08,"blocked":["c0_0","c0_1","c0_10","c0_11","c0_12","c0_13","c0_14","c0_15","c0_16","c0_17","c0_2","c0_3","c0_4","c0_5","c0_6","c0_7","c0_8","c0_9","c10_0","c10_1","c10_16","c10_17","c11_0","c11_1","c11_16","c11_17","c12_0","c12_1","c12_16","c12_17","c13_0","c13_1","c13_16","c13_17","c14_0","c14_1","c14_16","c14_17","c15_0","c15_1","c15_16","c15_17","c16_0","c16_1","c16_16","c16_17","c17_0","c17_1","c17_16","c17_17","c18_0","c18_1","c18_16","c18_17","c19_0","c19_1","c19_16","c19_17","c1_0","c1_1","c1_10","c1_11","c1_12","c1_13","c1_14","c1_15","c1_16","c1_17","c1_2","c1_3","c1_4","c1_5","c1_6","c1_7","c1_8","c1_9","c20_0","c20_1","c20_16","c20_17","c21_0","c21_1","c21_16","c21_17","c22_0","c22_1","c22_16","c22_17","c23_0","c23_1","c23_16","c23_17","c24_0","c24_1","c24_16","c24_17","c25_0","c25_1","c25_10","c25_11","c25_12","c25_13","c25_14","c25_15","c25_16","c25_17","c25_2","c25_3","c25_4","c25_5","c25_6","c25_7","c25_8","c25_9","c26_0","c26_1","c26_10","c26_11","c26_12","c26_13","c26_14","c26_15","c26_16","c26_17","c26_2","c26_3","c26_4","c26_5","c26_6","c26_7","c26_8","c26_9","c2_0","c2_1","c2_16","c2_17","c3_0","c3_1","c3_16","c3_17","c4_0","c4_1","c4_16","c4_17","c5_0","c5_1","c5_16","c5_17","c6_0","c6_1","c6_16","c6_17","c7_0","c7_1","c7_16","c7_17","c8_0","c8_1","c8_16","c8_17","c9_0","c9_1","c9_16","c9_17"],"walls":[],"lines":{"work_in":[[0.6,0.9],[0.7,1.325]],"work_out":[[0.7,1.325],[1.0,1.5]],"outbound_in":[[2.4,0.9],[2.0,1.325]],"outbound_out":[[2.0,1.325],[1.7,1.15]],"tunnel_east":[[1.0,0.6],[2.0,0.4]],"tunnel_west":[[2.0,0.4],[1.0,0.6]]},"frames":[]};
 const PX = 18, cv = document.getElementById("c"), cx = cv.getContext("2d");
 cv.width = DATA.cols * PX; cv.height = DATA.rows * PX;
 const COLORS = ["#d1495b", "#2e86ab", "#3f8f3f", "#e0a100", "#8e44ad", "#16a085"];
 const robots = [...new Set(DATA.frames.flatMap(f => Object.keys(f.robots || {})))].sort();
 const color = r => COLORS[robots.indexOf(r) % COLORS.length];
-document.getElementById("legend").innerHTML = robots.map(
-  r => `<span style="color:${color(r)}">&#9632; ${r}</span>`).join(" ");
+for (const r of robots) {
+  const tag = document.createElement("span");
+  tag.style.color = color(r); tag.style.marginRight = "8px";
+  tag.textContent = "■ " + r;
+  document.getElementById("legend").appendChild(tag);
+}
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n);
 const toPx = (x, y) => [(x - DATA.x0) / DATA.cell * PX, cv.height - (y - DATA.y0) / DATA.cell * PX];
 function cellRect(id) {

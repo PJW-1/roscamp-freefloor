@@ -133,3 +133,20 @@ def test_the_table_is_light_for_a_thousand_cells():
     for cell in cells:
         table.release("a", cell)
     assert table.held_by("a") == [] and table.snapshot() == {}
+
+
+# ---- Codex P1 review --------------------------------------------------------------------
+
+
+def test_a_disk_touching_a_cell_edge_takes_that_cell(floor):
+    # x - r lands exactly on the boundary x = 0.4 between cells 3 and 4
+    cells = disk_cells(floor, 0.5, 0.55, 0.1)
+    assert (3, 5) in cells
+
+
+def test_a_generator_of_cells_is_taken_whole():
+    table = locks()
+    assert table.acquire_all("a", (c for c in ["c1_1", "c1_2"]))
+    assert table.held_by("a") == ["c1_1", "c1_2"]
+    assert table.force_acquire("b", (c for c in ["c2_1"]))
+    assert table.held_by("b") == ["c2_1"]

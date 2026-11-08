@@ -2,7 +2,8 @@
 
 칸 (i, j)는 열 i, 행 j다. 칸 원점은 지도 원점(이미지 왼쪽 아래)이고 칸 이름은 "c<i>_<j>"다.
   - free: 칸 전체가 빈 바닥이다.
-  - clear: 로봇 중심이 서도 되는 칸. 칸 중심에서 가장 가까운 막힌 곳까지 반지름 + 여유 이상.
+  - clear: 로봇 중심이 서도 되는 칸. 칸 사각형 어디서든 가장 가까운 막힌 곳까지 반지름 + 여유 이상.
+    계획기는 점이 어느 칸에 드는지만 보므로 칸 중심이 아니라 칸 전체가 안전해야 한다.
 고정 선(fixed_lines)은 좁은 곳·도킹 접근·출고 앞에서 따라야 하는 선과 방향이다. 점 순서가 방향이다.
 """
 from __future__ import annotations
@@ -38,23 +39,30 @@ class FixedLine:
 
 
 def _read_pgm(path: Path) -> tuple[int, int, bytes]:
+    """8비트 binary PGM(P5, maxval 255)만 읽는다."""
     data = path.read_bytes()
     fields, at = [], 0
     while len(fields) < 4:  # magic, width, height, maxval; '#' comments allowed
-        while data[at:at + 1].isspace():
+        while at < len(data) and data[at:at + 1].isspace():
             at += 1
+        if at >= len(data):
+            raise FloorMapError(f"{path.name}: the header ends early")
         if data[at:at + 1] == b"#":
-            at = data.index(b"\n", at)
+            at = data.find(b"\n", at)
+            if at < 0:
+                raise FloorMapError(f"{path.name}: the header ends early")
             continue
         end = at
-        while not data[end:end + 1].isspace():
+        while end < len(data) and not data[end:end + 1].isspace():
             end += 1
         fields.append(data[at:end])
         at = end
     if fields[0] != b"P5":
         raise FloorMapError(f"{path.name}: only binary PGM (P5) is read")
+    if fields[3] != b"255":
+        raise FloorMapError(f"{path.name}: only maxval 255 is read, not {fields[3].decode()}")
     width, height = int(fields[1]), int(fields[2])
-    pixels = data[at + 1:at + 1 + width * height]
+    pixels = data[at + 1:at + 1 + width * height]  # one whitespace byte ends the header
     if len(pixels) != width * height:
         raise FloorMapError(f"{path.name}: {len(pixels)} pixels, expected {width * height}")
     return width, height, pixels
@@ -67,6 +75,10 @@ class FloorMap:
         self.robot_radius_m = float(data["robot_radius_m"])
         self.cell_margin_m = float(data["cell_margin_m"])
         self._occupied_px, self.px_m, self.origin, size = self._read_occupancy(data, base)
+        per = self.cell_m / self.px_m
+        if abs(per - round(per)) > 1e-9 or round(per) < 1:
+            raise FloorMapError(f"cell_m {self.cell_m} must be a whole number of "
+                                f"{self.px_m} m pixels")
         self.cols = int(round(size[0] / self.cell_m, 9))
         self.rows = int(round(size[1] / self.cell_m, 9))
         self.docks = {name: tuple(p) for name, p in (data.get("docks") or {}).items()}
@@ -82,7 +94,7 @@ class FloorMap:
                 self._cells[f"c{i}_{j}"] = (i, j)
         self.free = frozenset(c for c in self._ids if self._cell_free(c))
         body = self.robot_radius_m + self.cell_margin_m
-        self.clear = frozenset(c for c in self.free if self._gap_to_wall(*self.centre(c)) >= body)
+        self.clear = frozenset(c for c in self.free if self._box_gap_to_wall(c) >= body)
         self._check()
 
     # ---- reading ------------------------------------------------------------------------
@@ -116,8 +128,10 @@ class FloorMap:
         occupied = set()
         for col in range(width):
             for row in range(height):
-                cx, cy = x0 + (col + 0.5) * res, y0 + (row + 0.5) * res
-                if any(b[0] <= cx <= b[2] and b[1] <= cy <= b[3] for b in boxes):
+                px0, py0 = x0 + col * res, y0 + row * res
+                # a pixel the box overlaps at all is occupied, so thin boxes are not lost
+                if any(b[0] < px0 + res and px0 < b[2] and b[1] < py0 + res and py0 < b[3]
+                       for b in boxes):
                     occupied.add((col, row))
         return frozenset(occupied), res, (x0, y0), (width * res, height * res)
 
@@ -141,6 +155,25 @@ class FloorMap:
         per = int(round(self.cell_m / self.px_m))
         return not any((i * per + a, j * per + b) in self._occupied_px
                        for a in range(per) for b in range(per))
+
+    def _box_gap_to_wall(self, cell) -> float:
+        """칸 사각형에서 가장 가까운 막힌 픽셀이나 지도 끝까지의 거리."""
+        x0, y0 = self.origin
+        cx0, cy0 = x0 + cell[0] * self.cell_m, y0 + cell[1] * self.cell_m
+        cx1, cy1 = cx0 + self.cell_m, cy0 + self.cell_m
+        best = min(cx0 - x0, cy0 - y0, x0 + self.cols * self.cell_m - cx1,
+                   y0 + self.rows * self.cell_m - cy1)
+        reach = int(math.ceil(best / self.px_m)) + 1
+        per = int(round(self.cell_m / self.px_m))
+        pc, pr = cell[0] * per, cell[1] * per
+        for col in range(pc - reach, pc + per + reach):
+            for row in range(pr - reach, pr + per + reach):
+                if (col, row) in self._occupied_px:
+                    bx, by = x0 + col * self.px_m, y0 + row * self.px_m
+                    dx = max(bx - cx1, 0.0, cx0 - (bx + self.px_m))
+                    dy = max(by - cy1, 0.0, cy0 - (by + self.px_m))
+                    best = min(best, math.hypot(dx, dy))
+        return best
 
     def _gap_to_wall(self, x: float, y: float) -> float:
         """(x, y)에서 가장 가까운 막힌 픽셀이나 지도 끝까지의 거리."""

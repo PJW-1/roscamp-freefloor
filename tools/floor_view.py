@@ -50,8 +50,12 @@ cv.width = DATA.cols * PX; cv.height = DATA.rows * PX;
 const COLORS = ["#d1495b", "#2e86ab", "#3f8f3f", "#e0a100", "#8e44ad", "#16a085"];
 const robots = [...new Set(DATA.frames.flatMap(f => Object.keys(f.robots || {})))].sort();
 const color = r => COLORS[robots.indexOf(r) %% COLORS.length];
-document.getElementById("legend").innerHTML = robots.map(
-  r => `<span style="color:${color(r)}">&#9632; ${r}</span>`).join(" ");
+for (const r of robots) {
+  const tag = document.createElement("span");
+  tag.style.color = color(r); tag.style.marginRight = "8px";
+  tag.textContent = "■ " + r;
+  document.getElementById("legend").appendChild(tag);
+}
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n);
 const toPx = (x, y) => [(x - DATA.x0) / DATA.cell * PX, cv.height - (y - DATA.y0) / DATA.cell * PX];
 function cellRect(id) {
@@ -126,7 +130,9 @@ def render(floor, frames, title="floor") -> str:
                     "robots": f.get("robots", {}), "paths": f.get("paths", {})}
                    for f in frames],
     }
-    return PAGE % {"title": html.escape(title), "data": json.dumps(data, separators=(",", ":"))}
+    # '<' never reaches the page raw, so no name can close the script element
+    text = json.dumps(data, separators=(",", ":")).replace("<", "\\u003c")
+    return PAGE % {"title": html.escape(title), "data": text}
 
 
 def floor_path(name: str) -> Path:

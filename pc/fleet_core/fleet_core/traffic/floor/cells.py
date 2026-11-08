@@ -13,8 +13,10 @@ import math
 
 def disk_cells(floor, x: float, y: float, radius: float) -> set:
     """원이 닿는 지도 안의 칸 (i, j)."""
+    # one cell wider than the box: a disk that just touches a cell edge takes that cell
     i0, j0 = floor.cell_of(x - radius, y - radius)
     i1, j1 = floor.cell_of(x + radius, y + radius)
+    i0, j0, i1, j1 = i0 - 1, j0 - 1, i1 + 1, j1 + 1
     found = set()
     for i in range(i0, i1 + 1):
         for j in range(j0, j1 + 1):
@@ -34,6 +36,46 @@ def sample_line(points, step: float) -> list:
         samples.extend((a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n)
                        for k in range(1, n + 1))
     return samples
+
+
+def segment_cells(floor, a, b) -> set:
+    """선분 a-b가 지나는 모든 칸(Amanatides-Woo 격자 걷기). 모서리를 스치는 칸도 든다."""
+    gx0, gy0 = ((a[0] - floor.origin[0]) / floor.cell_m, (a[1] - floor.origin[1]) / floor.cell_m)
+    gx1, gy1 = ((b[0] - floor.origin[0]) / floor.cell_m, (b[1] - floor.origin[1]) / floor.cell_m)
+    i, j = math.floor(gx0), math.floor(gy0)
+    end = (math.floor(gx1), math.floor(gy1))
+    dx, dy = gx1 - gx0, gy1 - gy0
+    step_i, step_j = (1 if dx > 0 else -1), (1 if dy > 0 else -1)
+    t_dx = abs(1 / dx) if dx else math.inf
+    t_dy = abs(1 / dy) if dy else math.inf
+    t_x = ((i + 1 - gx0) if dx > 0 else (gx0 - i)) * t_dx if dx else math.inf
+    t_y = ((j + 1 - gy0) if dy > 0 else (gy0 - j)) * t_dy if dy else math.inf
+    cells = {(i, j)}
+    for _ in range(4 * (abs(end[0] - i) + abs(end[1] - j)) + 4):
+        if (i, j) == end or min(t_x, t_y) > 1:
+            break
+        if abs(t_x - t_y) < 1e-12:  # through a corner: the two side cells are touched too
+            cells.add((i + step_i, j))
+            cells.add((i, j + step_j))
+            i, j = i + step_i, j + step_j
+            t_x, t_y = t_x + t_dx, t_y + t_dy
+        elif t_x < t_y:
+            i, t_x = i + step_i, t_x + t_dx
+        else:
+            j, t_y = j + step_j, t_y + t_dy
+        cells.add((i, j))
+    cells.add(end)
+    return cells
+
+
+def line_cells(floor, points) -> set:
+    """꺾은선이 지나는 모든 칸."""
+    if len(points) == 1:
+        return {floor.cell_of(*points[0])}
+    cells = set()
+    for a, b in zip(points, points[1:], strict=False):
+        cells |= segment_cells(floor, a, b)
+    return cells
 
 
 def swept_cells(floor, points, radius: float) -> set:
@@ -58,6 +100,7 @@ class CellLocks:
 
     def acquire_all(self, robot: str, cells) -> bool:
         """모두 비었거나 제 것이면 모두 잡고 True. 하나라도 남의 것이면 하나도 안 잡고 False."""
+        cells = set(cells)
         taken = sorted(c for c in cells if self._holder.get(c) not in (None, robot))
         if taken:
             self._waiting[robot] = tuple(taken)
@@ -74,6 +117,7 @@ class CellLocks:
 
     def force_acquire(self, robot: str, cells) -> bool:
         """자리 잡기: 줄을 서지 않는다. 모두 비었거나 제 것이어야 한다."""
+        cells = set(cells)
         if any(self._holder.get(c) not in (None, robot) for c in cells):
             return False
         waiting = self._waiting.get(robot)

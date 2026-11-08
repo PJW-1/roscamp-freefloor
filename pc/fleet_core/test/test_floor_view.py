@@ -53,3 +53,10 @@ def test_the_command_draws_the_bare_map(tmp_path):
     out = tmp_path / "map.html"
     assert floor_view.main(["--map", "floor_map", "--out", str(out)]) == 0
     assert embedded(out.read_text(encoding="utf-8"))["frames"] == []
+
+
+def test_a_robot_name_cannot_close_the_script():
+    frames = [{"t": 0.0, "cells": {}, "robots": {"</script><b>x": [1.0, 1.0]}}]
+    html = floor_view.render(load_floor_map(), frames, title="t")
+    assert "</script><b>" not in html
+    assert "innerHTML" not in html

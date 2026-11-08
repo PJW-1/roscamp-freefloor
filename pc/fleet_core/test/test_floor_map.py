@@ -49,6 +49,16 @@ def test_clear_cells_keep_the_body_and_margin_off_the_walls(floor):
     assert floor.cell_of(0.05, 1.5) not in floor.clear  # 0.05 m from the west wall
 
 
+def test_a_centre_anywhere_in_a_clear_cell_keeps_the_body_off_the_walls(floor):
+    """The planner checks only which cell a point is in, so the whole cell must be safe."""
+    body = floor.robot_radius_m + floor.cell_margin_m
+    for cell in floor.clear:
+        x0, y0 = floor.centre(cell)
+        for dx in (-0.05, 0.0, 0.05):
+            for dy in (-0.05, 0.0, 0.05):
+                assert floor._gap_to_wall(x0 + dx, y0 + dy) >= body - 1e-9, (cell, dx, dy)
+
+
 def test_cell_ids_go_both_ways(floor):
     cell = floor.cell_of(1.05, 1.55)
     assert floor.cell_at(floor.cell_id(cell)) == cell
@@ -106,3 +116,42 @@ def test_the_feature_floor_matches_the_feature_lane_map():
     # the tunnel is one cell set driven both ways
     east, west = floor.fixed_lines["tunnel_east"], floor.fixed_lines["tunnel_west"]
     assert east.points == tuple(reversed(west.points))
+
+
+# ---- Codex P1 review --------------------------------------------------------------------
+
+
+def floor_data(**changes):
+    data = {"bounds": [0, 0, 1, 1], "cell_m": 0.1, "robot_radius_m": 0.08, "cell_margin_m": 0.05}
+    data.update(changes)
+    return data
+
+
+def test_a_cell_that_is_not_whole_pixels_is_refused():
+    with pytest.raises(FloorMapError, match="cell_m"):
+        FloorMap(floor_data(cell_m=0.12))
+
+
+def test_a_thin_box_still_blocks_its_pixels():
+    floor = FloorMap(floor_data(bounds=[0, 0, 2, 1], boxes=[[1.0, 0.0, 1.01, 1.0]]))
+    assert floor.cell_of(1.005, 0.5) not in floor.free
+
+
+def write_pgm(path, header, pixels):
+    path.write_bytes(header + bytes(pixels))
+    (path.parent / "m.yaml").write_bytes(
+        f"image: {path.name}\nresolution: 0.05\norigin: [0, 0, 0]\ncell_m: 0.1\n"
+        "robot_radius_m: 0.08\ncell_margin_m: 0.05\n".encode())
+    return path.parent / "m.yaml"
+
+
+def test_a_pgm_with_another_maxval_is_refused(tmp_path):
+    yaml_path = write_pgm(tmp_path / "m.pgm", b"P5\n4 4\n1000\n", [0] * 32)
+    with pytest.raises(FloorMapError, match="maxval"):
+        load_floor_map(yaml_path)
+
+
+def test_a_cut_pgm_header_is_refused_not_looped(tmp_path):
+    yaml_path = write_pgm(tmp_path / "m.pgm", b"P5\n4", [])
+    with pytest.raises(FloorMapError, match="header"):
+        load_floor_map(yaml_path)
