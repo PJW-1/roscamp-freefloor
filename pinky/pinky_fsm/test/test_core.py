@@ -522,8 +522,17 @@ def test_heartbeat_loss_while_blocked_ends_the_goal():
 
 # ---- 자가 복구 (핑키_계약 3절 7번, 4절; 2026-11-09 제안) ---------------------------------------
 
-STUCK = (0.35, 1.75, NORTH)  # P3(경로 시작)에서 0.20 m. 후진 거리 0.20 - 0.08 - 0.03 = 0.09 m
-BEHIND = (0.35, 1.66, NORTH)  # 0.09 m 물러난 자리
+# 후진 거리 = min(0.15, 마지막으로 지난 꼭짓점(경로 시작 포함)부터 온 거리 - (0.2 + 0.03)).
+# 0.2는 관제 release_distance_m: 꼭짓점에서 이만큼 가면 뒤 레인을 놓고 뒤차가 꼭짓점에 설 수 있다
+STUCK = (0.35, 1.87, NORTH)  # P3(경로 시작)에서 0.32 m. 0.32 - 0.23 = 0.09 m
+BEHIND = (0.35, 1.78, NORTH)  # 0.09 m 물러난 자리
+EAST = math.atan2(P5[1] - P4[1], P5[0] - P4[0])
+
+
+def along(a, b, s):
+    """a에서 b 쪽으로 s m 간 점."""
+    d = math.dist(a, b)
+    return (a[0] + (b[0] - a[0]) * s / d, a[1] + (b[1] - a[1]) * s / d)
 
 
 def stand(fsm, t0, pose, seen=obstacle):
@@ -569,10 +578,10 @@ def test_getting_past_the_stuck_point_ends_the_recovery():
     [b] = backups(stand(fsm, 1.0, STUCK))
     fsm.backup_result(b.seq, "succeeded", 3.0, BEHIND)
     fsm.heartbeat(4.0)
-    fsm.tick(4.0, (0.35, 1.78, NORTH), DRIVING, no_obstacle)  # 0.03 m past
+    fsm.tick(4.0, (0.35, 1.90, NORTH), DRIVING, no_obstacle)  # 0.03 m past
     assert fsm.state() == RECOVERING
     fsm.heartbeat(4.2)
-    fsm.tick(4.2, (0.35, 1.81, NORTH), DRIVING, no_obstacle)  # 0.06 m past
+    fsm.tick(4.2, (0.35, 1.93, NORTH), DRIVING, no_obstacle)  # 0.06 m past
     assert fsm.state() == MOVING
 
 
@@ -619,7 +628,7 @@ def test_a_nav_abort_with_both_attempts_used_fails_with_nav_aborted():
 def test_no_room_behind_only_clears_the_costmap_and_tries_again():
     fsm = ready()
     move(fsm, "g1", 0.0)
-    near_start = (0.35, 1.67, NORTH)  # 0.12 m: 0.12 - 0.11 < backup_min_m 0.02
+    near_start = (0.35, 1.79, NORTH)  # 0.24 m: 0.24 - 0.23 < backup_min_m 0.02
     cmds = stand(fsm, 1.0, near_start)
     assert kinds(cmds) == ["CancelNav", "ClearCostmap", "SendPath"]
     assert fsm.state() == RECOVERING
@@ -627,11 +636,35 @@ def test_no_room_behind_only_clears_the_costmap_and_tries_again():
 
 def test_a_skewed_robot_backs_up_less_to_stay_near_the_lane():
     fsm = ready()
-    move(fsm, "g1", 0.0)
+    far = (0.35, 2.15)
+    move(fsm, "g1", 0.0, path=(P3, far), target=far, target_id="F")
     # 0.05 m right of the lane, facing 30 deg left of it: backing up drifts further right
-    skewed = (0.40, 1.85, NORTH + math.radians(30))
+    skewed = (0.40, 1.95, NORTH + math.radians(30))
     [b] = backups(stand(fsm, 1.0, skewed))
-    assert b.distance_m == pytest.approx(0.10, abs=1e-3)  # not min(0.15, 0.30 - 0.11)
+    assert b.distance_m == pytest.approx(0.10, abs=1e-3)  # not min(0.15, 0.40 - 0.23)
+
+
+def test_past_a_corner_the_distance_counts_from_the_corner():
+    """Back from P4 toward P3 the robot would stand on the lane behind, which the fleet manager
+    releases 0.2 m past P4. A follower may already wait at P4."""
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    for t, pose in ((0.5, (0.35, 1.80, NORTH)), (0.8, (*P4, NORTH))):
+        fsm.heartbeat(t)
+        fsm.tick(t, pose, DRIVING, no_obstacle)
+    [b] = backups(stand(fsm, 1.0, (*along(P4, P5, 0.30), EAST)))
+    assert b.distance_m == pytest.approx(0.07, abs=1e-6)  # 0.30 - 0.23, not 0.15 from P3
+
+
+def test_just_past_a_corner_only_clears_the_costmap():
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    for t, pose in ((0.5, (0.35, 1.80, NORTH)), (0.8, (*P4, NORTH))):
+        fsm.heartbeat(t)
+        fsm.tick(t, pose, DRIVING, no_obstacle)
+    cmds = stand(fsm, 1.0, (*along(P4, P5, 0.10), EAST))  # 0.50 m from P3, 0.10 m from P4
+    assert kinds(cmds) == ["CancelNav", "ClearCostmap", "SendPath"]
+    assert fsm.state() == RECOVERING
 
 
 def test_follow_path_results_are_ignored_while_backing_up():
@@ -709,19 +742,19 @@ def test_attempts_start_again_once_the_robot_drives_on():
     move(fsm, "g1", 0.0)
     [b] = backups(stand(fsm, 1.0, STUCK))
     fsm.backup_result(b.seq, "succeeded", 3.0, BEHIND)
-    east = math.atan2(P5[1] - P4[1], P5[0] - P4[0])
-    for t, pose in ((3.5, (0.35, 1.81, NORTH)), (4.0, (*P4, NORTH)),
-                    (4.5, (0.575, 2.0, east))):  # 0.34 m from where the attempt started
+    later = (*along(P4, P5, 0.35), EAST)  # 0.38 m from where the attempt started
+    for t, pose in ((3.5, (0.35, 1.93, NORTH)), (4.0, (*P4, NORTH)), (4.5, later)):
         fsm.heartbeat(t)
         fsm.tick(t, pose, DRIVING, no_obstacle)
     assert fsm.state() == MOVING
-    [b1] = backups(stand(fsm, 5.0, (0.575, 2.0, east)))
-    fsm.backup_result(b1.seq, "succeeded", 7.0, (0.43, 1.97, east))
-    assert len(backups(stand(fsm, 8.0, (0.575, 2.0, east)))) == 1  # two attempts again
+    [b1] = backups(stand(fsm, 5.0, later))
+    fsm.backup_result(b1.seq, "succeeded", 7.0, (*along(P4, P5, 0.23), EAST))
+    assert len(backups(stand(fsm, 8.0, later))) == 1  # two attempts again
 
 
 def test_a_successful_goal_resets_the_attempts():
-    """P4 is 0.20 m from where the attempt started, so only the success can reset the count."""
+    """P4 is 0.08 m and the second stuck point 0.24 m from where the first attempt started, so
+    only the success can reset the count."""
     fsm = ready()
     move(fsm, "g1", 0.0, path=(P3, P4), target=P4, target_id="P-4")
     [b] = backups(stand(fsm, 1.0, STUCK))
@@ -730,9 +763,9 @@ def test_a_successful_goal_resets_the_attempts():
     assert done == Finish("g1", True, "")
     south = -NORTH
     move(fsm, "g2", 7.0, path=(P4, P3), target=P3, pose=(*P4, south), target_id="P-3")
-    stuck = (*STUCK[:2], south)  # 0.20 m from P4
+    stuck = (0.35, 1.63, south)  # 0.32 m from P4
     [b1] = backups(stand(fsm, 8.0, stuck))
-    fsm.backup_result(b1.seq, "succeeded", 10.0, (0.35, 1.84, south))
+    fsm.backup_result(b1.seq, "succeeded", 10.0, (0.35, 1.72, south))
     assert len(backups(stand(fsm, 11.0, stuck))) == 1  # two attempts again
 
 
@@ -741,7 +774,7 @@ def test_no_progress_for_ten_seconds_counts_as_another_attempt():
     move(fsm, "g1", 0.0)
     [b1] = backups(stand(fsm, 1.0, STUCK))
     fsm.backup_result(b1.seq, "succeeded", 3.0, BEHIND)  # path sent again at 3.0
-    creeping = (0.35, 1.70, NORTH)
+    creeping = (0.35, 1.82, NORTH)  # 0.27 m from P3: room for a 0.04 m back-up
     for t in (5.0, 8.0, 12.9):
         fsm.heartbeat(t)
         assert fsm.tick(t, creeping, DRIVING, no_obstacle) == []

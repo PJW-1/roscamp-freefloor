@@ -18,18 +18,19 @@ from pinky_fsm.backup import (
 
 
 def test_distance_is_capped_at_the_maximum():
-    assert backup_distance(1.0, max_m=0.15, radius_m=0.08, margin_m=0.03) == pytest.approx(0.15)
+    assert backup_distance(1.0, max_m=0.15, keep_m=0.23) == pytest.approx(0.15)
 
 
-def test_distance_keeps_the_body_ahead_of_the_path_start():
-    """The path starts where the fleet manager last saw the robot, inside the zones it holds.
-    Backing up stops a radius plus a margin short of that point."""
-    assert backup_distance(0.20, max_m=0.15, radius_m=0.08, margin_m=0.03) == pytest.approx(0.09)
+def test_distance_keeps_the_centre_clear_of_the_last_vertex():
+    """Distance is counted from the last path vertex the robot passed (the path start counts as
+    one). Once the robot is release_distance_m (0.2) past a vertex the fleet manager may release
+    the lane behind, and a follower may wait at that vertex. The centre stays release + eps."""
+    assert backup_distance(0.32, max_m=0.15, keep_m=0.23) == pytest.approx(0.09)
 
 
-def test_no_distance_close_to_the_path_start():
-    assert backup_distance(0.10, max_m=0.15, radius_m=0.08, margin_m=0.03) == 0.0
-    assert backup_distance(0.0, max_m=0.15, radius_m=0.08, margin_m=0.03) == 0.0
+def test_no_distance_close_to_the_last_vertex():
+    assert backup_distance(0.20, max_m=0.15, keep_m=0.23) == 0.0
+    assert backup_distance(0.0, max_m=0.15, keep_m=0.23) == 0.0
 
 
 def test_lateral_limit_leaves_a_back_up_toward_the_path_alone():

@@ -141,16 +141,26 @@ def test_obstacle_ahead_reports_blocked_and_resumes(harness):
     assert len(fake.goals) >= 2  # 비킨 뒤 남은 경로를 다시 보냈다
 
 
+def test_default_distance_rule_only_clears_the_costmap_close_to_the_path_start(harness):
+    """0.15 m from the path start is inside release + eps (0.23 m): no back-up, only a clear."""
+    fake, probe = start(harness)
+    fake.obstacle = (0.35, 1.95)
+    probe.send(lane_goal(["P-3", "P-4", "P-5"]))
+    assert wait_until(lambda: len(fake.clears) >= 1, 6.0)
+    assert fake.backups == []
+
+
 def test_obstacle_ahead_backs_up_twice_then_reports_blocked(harness):
     """핑키_계약 3절 7번(2026-11-09 제안): 물러나고 지도를 비운 뒤 다시 가 보기를 두 번까지
     하고, 그동안 RECOVERING으로 보고한다. 그래도 막히면 4절의 BLOCKED로 넘긴다."""
-    fake, probe = start(harness)
+    # FakeNav의 레인은 짧다. release_distance_m=0으로 물러날 자리를 만든다(거리 규칙은 test_core)
+    fake, probe = start(harness, release_distance_m=0.0)
     fake.obstacle = (0.35, 1.95)  # P-4 위. FakeNav는 0.25 m 앞(y 1.70)에서 선다
     h = probe.send(lane_goal(["P-3", "P-4", "P-5"]))
     assert wait_until(lambda: probe.last_state().state == RobotState.STATE_RECOVERING, 5.0)
     assert wait_until(lambda: probe.last_state().state == RobotState.STATE_BLOCKED, 12.0)
-    # s = 0.15 m: min(0.15, 0.15 - 0.08 - 0.03) = 0.04 m
-    assert [d for _, d, _ in fake.backups] == [pytest.approx(0.04, abs=0.015)] * 2
+    # s = 0.15 m: min(0.15, 0.15 - (0 + 0.03)) = 0.12 m
+    assert [d for _, d, _ in fake.backups] == [pytest.approx(0.12, abs=0.015)] * 2
     assert all(v == pytest.approx(0.08) for _, _, v in fake.backups)
     assert len(fake.clears) == 2
     assert not h.get_result_async().done()  # 목표는 열어 둔다(4절)
@@ -160,7 +170,7 @@ def test_obstacle_ahead_backs_up_twice_then_reports_blocked(harness):
 
 
 def test_something_behind_stops_the_backup_and_the_path_is_tried_again(harness):
-    fake, probe = start(harness)
+    fake, probe = start(harness, release_distance_m=0.0)
     fake.obstacle = (0.35, 1.95)
     fake.wall_behind_m = 0.01  # Nav2 BackUp: COLLISION_AHEAD로 끝난다
     probe.send(lane_goal(["P-3", "P-4", "P-5"]))

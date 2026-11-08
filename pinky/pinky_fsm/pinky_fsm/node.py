@@ -61,7 +61,7 @@ _FLOAT_PARAMS = (
     "heartbeat_timeout_s", "stopped_speed_mps", "stopped_turn_rps", "block_report_s",
     "block_clear_s", "block_timeout_s", "block_lookahead_m", "path_step_m",
     # 자가 복구
-    "backup_max_m", "robot_radius_m", "backup_margin_m", "backup_min_m",
+    "backup_max_m", "release_distance_m", "backup_margin_m", "backup_min_m",
     "backup_lateral_limit_m", "backup_speed_mps", "backup_time_allowance_s",
     "backup_result_grace_s", "recovery_pass_m", "recovery_timeout_s", "recovery_reset_m")
 _INT_PARAMS = ("recovery_attempts",)

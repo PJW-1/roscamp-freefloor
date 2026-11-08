@@ -62,7 +62,9 @@ class FsmParams:
     # 자가 복구(핑키_계약 3절 7번, 2026-11-09 제안). 숫자는 추정이다
     recovery_attempts: int = 2  # 두 번 실패하면 BLOCKED(물체 앞)나 NAV_ABORTED로 넘긴다
     backup_max_m: float = 0.15
-    robot_radius_m: float = 0.08  # 관제 robot_radius_m
+    # 관제 release_distance_m. 꼭짓점에서 이만큼 가면 뒤 레인이 풀려 뒤차가 꼭짓점에 설 수 있다.
+    # 물러난 중심은 마지막으로 지난 경로 꼭짓점에서 이것 + backup_margin_m 앞에 남는다
+    release_distance_m: float = 0.2
     backup_margin_m: float = 0.03  # 관제가 보는 위치 오차(eps)
     backup_min_m: float = 0.02  # 이보다 짧으면 물러나지 않고 지도만 비운다
     backup_lateral_limit_m: float = 0.10  # 관제 lane_error_warn_m(0.15)보다 안쪽
@@ -383,9 +385,10 @@ class PinkyFsm:
                               self.p.backup_time_allowance_s)]
 
     def _backup_distance(self, g: _Move, pose: Sequence[float]) -> float:
-        """경로 시작에서 온 거리로 정하고, 레인 옆 거리가 커지지 않게 줄인다."""
-        d = backup_distance(g.s, self.p.backup_max_m, self.p.robot_radius_m,
-                            self.p.backup_margin_m)
+        """마지막으로 지난 경로 꼭짓점(경로 시작 포함)에서 온 거리로 정하고(backup_distance),
+        레인 옆 거리가 커지지 않게 줄인다."""
+        d = backup_distance(g.s - g.route.vertex_before(g.s), self.p.backup_max_m,
+                            self.p.release_distance_m + self.p.backup_margin_m)
         qx, qy = g.route.point_at(g.s)
         phi = g.route.heading_at(g.s)
         lateral = -(pose[0] - qx) * math.sin(phi) + (pose[1] - qy) * math.cos(phi)
