@@ -33,7 +33,13 @@ class TrafficIdleWatch:
                 and m.arrival_by is None and now >= m.retry_at
                 and self._deadlock_since is None)
 
+    def _idle_spot(self, m: _Mission) -> tuple:
+        """정체 자리: (지금 지점, 쥔 구역). 바뀌면 나아간 것이다."""
+        return (m.path[m.idx] if m.path else None, tuple(sorted(self.zones.held_by(m.name))))
+
     def _watch_idle(self, m: _Mission, now: float) -> None:
+        if m.idle_spot is not None and m.idle_spot != self._idle_spot(m):
+            m.idle_spot = None  # 나아갔다. 나중에 같은 자리에서 서면 새로 센다
         if not self._idle_watch_applies(m, now):
             m.idle_since = None
             return
@@ -49,7 +55,7 @@ class TrafficIdleWatch:
                     f"no zone request, holding {held}, last goal {m.last_result or 'none'}; "
                     f"sending {waypoint} again", m.name)
         m.idle_since = None
-        spot = (waypoint, tuple(held))
+        spot = self._idle_spot(m)
         if m.idle_spot == spot:
             m.attempts = max(m.attempts, m.idle_attempts)
         m.idle_spot = spot

@@ -62,6 +62,7 @@ def run_seed(seed):
     assert world.bound_order() == world.registration, "orders bound in registration order"
     assert world.shipped_order() == world.registration, "orders shipped in the order bound"
     assert not world.event_codes("ERROR"), world.events
+    assert "ROBOT_IDLE" not in world.event_codes(), "a recoverable fault is no quiet stop (H2)"
     return world
 
 
@@ -82,3 +83,4 @@ def test_random_faults_on_the_default_map_with_its_avenue_and_crossing(seed):
     assert set(world.report_statuses().values()) == {SHIPPED}
     assert world.core.shipped == len(orders)
     assert "DEADLOCK_DETECTED" not in world.event_codes("ERROR")
+    assert "ROBOT_IDLE" not in world.event_codes()

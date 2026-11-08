@@ -160,6 +160,17 @@ def test_a_robot_short_of_f0_is_reported_once_and_sent_on_to_f0_then_parks():
     assert not drive.events("GOAL_FAILED")
 
 
+def test_moving_on_forgets_the_count_so_a_later_stop_on_the_same_spot_starts_afresh():
+    """Codex 검수(11-08): 지난 정체의 수가 나중에 같은 자리의 새 정체에 더해지면 안 된다."""
+    drive, stopped = short_of_f0()
+    m = drive.core._missions["r1"]
+    assert drive.run_until(lambda: drive.events("ROBOT_IDLE"), 30.0)
+    assert m.idle_spot == ("F0", ("F0", "O"))
+    assert drive.run_until(lambda: "O" not in drive.held("r1"), 30.0)
+    drive.run(0.2)
+    assert m.idle_spot is None
+
+
 def test_without_the_watch_the_robot_stands_with_o_and_f0_for_two_minutes():
     """idle_watch_s 0(기록 재생)은 예전대로다. 재현 그대로 120 s 동안 명령이 없다."""
     drive = Drive({"r1": "O"}, short={("r1", "F0"): 0.13}, idle_watch_s=0.0)
