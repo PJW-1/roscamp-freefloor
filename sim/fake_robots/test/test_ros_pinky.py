@@ -598,6 +598,22 @@ def back_ups(distances, eps=1e-4):
     return count
 
 
+def dip_depths(distances, eps=1e-4):
+    """후진마다 깊이: 후진 직전의 꼭대기에서 그 후진의 바닥까지. 다시 선 자리와 무관하다."""
+    depths, peak, bottom = [], distances[0], None
+    for a, b in zip(distances, distances[1:], strict=False):
+        if b - a < -eps and bottom is None:
+            peak, bottom = a, b
+        elif bottom is not None and b < bottom:
+            bottom = b
+        elif bottom is not None and b - bottom > eps:
+            depths.append(peak - bottom)
+            bottom = None
+    if bottom is not None:
+        depths.append(peak - bottom)
+    return depths
+
+
 def ended(handle):
     fut = handle.get_result_async()
     time.sleep(0.2)
@@ -619,7 +635,7 @@ def test_a_persistent_obstacle_gives_two_recovering_attempts_then_blocked(harnes
     d = along(truth)
     assert back_ups(d) == 2
     assert max(d) > 0.4, "too near the start: it would back up less than 0.15 m"
-    assert max(d) - min(d[d.index(max(d)):]) == pytest.approx(0.15, abs=0.02)
+    assert dip_depths(d) == pytest.approx([0.15, 0.15], abs=0.02)
     span = [w for w, s in p.states if s.state == RECOVERING]
     # 후진 0.15 m(0.08 m/s), 되돌아가기(0.2 m/s), 1 s 서기를 두 번
     assert span[-1] - span[0] == pytest.approx(2 * (0.15 / 0.08 + 0.15 / 0.2 + 1.0), abs=0.8)
@@ -770,3 +786,33 @@ def test_heartbeat_loss_during_recovering_stops_everything(harness, tmp_path):
     mark = time.monotonic()
     time.sleep(0.8)
     assert len({(x, y) for w, x, y in truth if w >= mark}) == 1, "it kept moving"
+
+
+def test_a_nav_abort_recovers_twice_then_ends_nav_aborted(harness, tmp_path):
+    """pinky_fsm(core.py nav_result)처럼: FollowPath abort마다 시도를 쓰고, 다 쓰면 NAV_ABORTED."""
+    p = start(harness, tmp_path, robots=LONG, faults=[
+        {"at_s": 0, "robot": "pinky1", "type": "nav_abort", "count": 1}])
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    sent = time.monotonic()
+    res = result_of(p.goal("QO")).result
+    took = time.monotonic() - sent
+    assert (res.success, res.reason) == (False, MoveTo.Result.REASON_NAV_ABORTED)
+    assert RECOVERING in states_since(p, sent)
+    # 중단 세 번(처음, 시도 1, 시도 2), 각 0.2 s. 꼭짓점 곁이라 후진하지 않는다(단위 시험이 본다)
+    assert took >= 3 * 0.2 - 0.1, took
+    # 다시 가도 처음 중단한 자리(0.2 s * 0.2 m/s)를 넘지 못한다
+    assert max(along(truth)) <= 0.04 + 0.02
+    assert result_of(p.goal("QO"), 30.0).result.success is True, "one fault, one goal"
+
+
+def test_without_attempts_a_nav_abort_ends_the_goal_at_once(harness, tmp_path):
+    p = start(harness, tmp_path, robots=LONG, node=NO_RECOVERY, faults=[
+        {"at_s": 0, "robot": "pinky1", "type": "nav_abort", "count": 1}])
+    assert wait_until(lambda: p.states, 5.0)
+    sent = time.monotonic()
+    res = result_of(p.goal("QO")).result
+    assert res.reason == MoveTo.Result.REASON_NAV_ABORTED
+    assert time.monotonic() - sent < 0.6
+    time.sleep(0.3)
+    assert RECOVERING not in states_since(p, sent)

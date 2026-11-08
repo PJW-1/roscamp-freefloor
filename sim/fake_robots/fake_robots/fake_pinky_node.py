@@ -53,6 +53,7 @@ class _Goal:
         self.reason = ""
         self.abort_at: float | None = None
         self.abort_from = None  # 쓴 고장 일정
+        self.aborting = False  # Nav2가 이 목표를 중단하고 있다(자기 복구 중에도 계속)
         self.end_at = 0.0
         self.start_at = 0.0
         self.error = (0.0, 0.0, 0.0)
@@ -293,8 +294,14 @@ class FakePinkyNode(Node):
                 return
             if goal.kind == "move":
                 if goal.abort_at is not None and t >= goal.abort_at:
-                    self._end(goal, False, MoveTo.Result.REASON_NAV_ABORTED)
-                    return
+                    if self._recovery.nav_aborted(t, self._motion, self._faults.behind(t)):
+                        self._end(goal, False, MoveTo.Result.REASON_NAV_ABORTED)
+                        return
+                    # 시도를 시작했다. 고장은 이미 났으니 취소돼도 돌려주지 않는다
+                    goal.abort_at, goal.abort_from, goal.aborting = None, None, True
+                if (goal.aborting and goal.abort_at is None
+                        and not self._recovery.backing_up):
+                    goal.abort_at = t + NAV_ABORT_DELAY_S  # 다시 보낸 FollowPath도 중단된다
                 # 물체가 있으면 선다. 시도가 남았으면 후진하고 다시 가 보고, 없으면 BLOCKED
                 radius = self._recovery.p.robot_radius_m
                 self._recovery.drive(t, dt, self._motion, self._cfg.speed_mps,

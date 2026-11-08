@@ -98,7 +98,7 @@ def test_near_the_path_start_there_is_no_back_up():
     r.drive_to(0.24)  # d = 0.24 - 0.23 < 0.02
     r.run(5.0, ahead=True)
     assert r.states == ["MOVING", "RECOVERING", "BLOCKED"]
-    assert min(r.xs[r.xs.index(max(r.xs)):]) == pytest.approx(max(r.xs)), "it backed up"
+    assert reversals(r.xs) == 0, "it backed up"
 
 
 def test_an_obstacle_at_the_start_gives_recovering_twice_then_blocked_after_three_seconds():
@@ -292,3 +292,31 @@ def test_a_closer_obstacle_behind_during_the_back_up_stops_it():
     backed = r.motion.x
     r.run(1.0, ahead=True, wall_behind_m=0.1)
     assert min(r.xs) == pytest.approx(backed, abs=1e-6), "it kept backing up"
+
+
+def test_a_nav_abort_gives_two_attempts_then_ends_the_goal():
+    """명세 2b: FollowPath abort도 시도를 쓴다. 다 쓰면 목표를 끝낸다(NAV_ABORTED)."""
+    r = Run()
+    r.drive_to(1.0)  # 꼭짓점(시작)에서 1 m: 0.15 m 후진할 자리가 있다
+    assert r.rec.nav_aborted(r.t, r.motion) is False
+    assert r.rec.recovering and r.rec.backing_up and r.rec.used == 1
+    r.run(4.0)
+    assert min(r.xs) == pytest.approx(0.85, abs=1e-6)
+    assert max(r.xs[1:]) <= 1.0 + 1e-9, "the retry does not pass where Nav2 aborted"
+    assert r.rec.recovering
+    assert r.rec.nav_aborted(r.t, r.motion) is False and r.rec.used == 2
+    assert r.rec.nav_aborted(r.t, r.motion) is True
+
+
+def test_a_nav_abort_near_the_vertex_just_retries():
+    r = Run()
+    r.drive_to(0.1)
+    assert r.rec.nav_aborted(r.t, r.motion) is False
+    assert r.rec.recovering and not r.rec.backing_up
+
+
+def test_with_no_attempts_a_nav_abort_ends_the_goal_at_once():
+    r = Run(params=RecoveryParams(recovery_attempts=0))
+    r.drive_to(1.0)
+    assert r.rec.nav_aborted(r.t, r.motion) is True
+    assert not r.rec.recovering

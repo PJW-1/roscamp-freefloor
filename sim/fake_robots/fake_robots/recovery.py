@@ -65,6 +65,7 @@ class ObstacleRecovery:
         self._clear_at: float | None = None
         self._stood_at: float | None = None
         self._attempt_s: float | None = None  # 지금 시도를 시작한 자리(path 위 거리)
+        self._abort_s: float | None = None  # Nav2가 처음 중단한 자리. 다시 가도 넘지 못한다
         self._first_at: tuple[float, float] | None = None
         self._backup: _BackUp | None = None
 
@@ -97,7 +98,8 @@ class ObstacleRecovery:
         if self._backup is not None:
             self._back_step(t, dt, motion, others, wall_behind_m)
             return
-        limit = math.inf if self._hold is None else max(0.0, self._hold - motion.travelled)
+        ends = [s for s in (self._hold, self._abort_s) if s is not None]
+        limit = max(0.0, min(ends) - motion.travelled) if ends else math.inf
         motion.step(dt, speed, limit)
         s = motion.travelled
         if self._attempt_s is not None and s >= self._attempt_s + self.p.recovery_pass_m - 1e-9:
@@ -112,6 +114,20 @@ class ObstacleRecovery:
         if (self._attempt_s is None and self._first_at is not None and math.dist(
                 self._first_at, (motion.x, motion.y)) >= self.p.recovery_reset_m - 1e-9):
             self.used, self._first_at = 0, None
+
+    def nav_aborted(self, t: float, motion, wall_behind_m: float | None = None) -> bool:
+        """FollowPath가 중단됐다(명세 2b, pinky_fsm core.py nav_result). 시도가 남았으면 시도를
+        시작하고 False, 다 썼으면 True(목표를 NAV_ABORTED로 끝낸다).
+
+        FakePinky의 nav_abort는 'Nav2가 계속 중단한다'이다. 다시 가도 처음 중단한 자리를 넘지
+        못하고, 노드가 정한 때 또 중단한다.
+        """
+        if self.used >= self.p.recovery_attempts:
+            return True
+        if self._abort_s is None:
+            self._abort_s = motion.travelled
+        self._trigger(t, motion, wall_behind_m)
+        return False
 
     def _trigger(self, t: float, motion, wall_behind_m: float | None) -> None:
         if self.used >= self.p.recovery_attempts:
@@ -163,7 +179,7 @@ class ObstacleRecovery:
         물체가 아직 보이면 새 목표는 지금 자리에서 서 있는다(path 위 거리 0).
         """
         self._backup = None
-        self._attempt_s = None
+        self._attempt_s = self._abort_s = None
         self._stood_at = None
         if self._hold is not None:
             self._hold = 0.0

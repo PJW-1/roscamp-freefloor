@@ -389,3 +389,20 @@ def test_a_path_that_starts_behind_the_robot_counts_from_its_first_point():
     m.set_target(1.0, 1.0, via=[(1.0, 0.0)], start=(0.0, 0.0))  # 모서리는 이미 지났다
     assert m.since_vertex == pytest.approx(0.2)
     assert m.travelled == pytest.approx(1.2)
+
+
+def test_a_robot_two_vertices_on_starts_on_its_own_segment():
+    """path 위 가장 가까운 점으로 시작한다(pinky_fsm과 같다). 지난 꼭짓점을 되돌아가지 않는다."""
+    m = Motion(1.5, 1.0)
+    m.set_target(2.0, 1.0, via=[(1.0, 0.0), (1.0, 1.0)], start=(0.0, 0.0))
+    assert m.via == []
+    assert m.since_vertex == pytest.approx(0.5)  # 꼭짓점 (1, 1)부터
+    assert m.travelled == pytest.approx(2.5)
+    m.step(1.0, 0.1)
+    assert (m.x, m.y) == pytest.approx((1.6, 1.0))
+
+
+def test_a_robot_on_a_vertex_counts_it_as_passed():
+    m = Motion(1.0, 0.0)
+    m.set_target(1.0, 1.0, via=[(1.0, 0.0)], start=(0.0, 0.0))
+    assert m.via == [] and m.since_vertex == 0.0
