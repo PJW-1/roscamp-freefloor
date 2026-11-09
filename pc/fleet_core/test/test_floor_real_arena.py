@@ -63,8 +63,9 @@ def cells_of(line) -> set:
 
 def test_outbound_is_a_one_way_loop_in_by_the_north_gap_out_by_the_south():
     """The east end has two ways in: the 0.25 m gap north of box_small and the 0.25 m gap
-    between block_long and box_small (south of table_2, then up the middle). Robots go in by
-    the north one and leave by the other, so one leaving never meets one coming in."""
+    between block_long and box_small (south of table_2, then up the middle). The way in takes
+    the north one and the way out the other, so the two station lines share only the dock end.
+    This checks the lines, not two robots driving them (the headless runs below do some)."""
     lines = FLOOR.fixed_lines
     north = {c for c in FLOOR.clear
              if 1.30 < FLOOR.centre(c)[0] < 1.55 and FLOOR.centre(c)[1] > 0.85}
@@ -129,7 +130,7 @@ import compare_floor  # noqa: E402
 
 
 @pytest.mark.parametrize("seed", [1, 2])
-def test_two_pinkys_ship_every_order_on_the_real_arena(tmp_path, monkeypatch, seed):
+def test_two_pinkys_ship_the_first_six_orders_on_the_real_arena(tmp_path, monkeypatch, seed):
     data = yaml.safe_load((REPO / "sim" / "fleet_gz_sim" / "scenarios" / "gz_real_arena.yaml")
                           .read_text(encoding="utf-8"))
     for spec in data["robots"].values():
