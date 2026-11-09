@@ -630,6 +630,18 @@ def test_a_bad_nav_max_speed_stops_the_launch(made, bad):
         run(made, nav_max_speed=bad)
 
 
+def test_the_fsm_slow_down_floor_also_bounds_nav_max_speed(made, monkeypatch):
+    """Either FSM speed may be the larger one."""
+    import types
+    import pinky_fsm.core
+    monkeypatch.setattr(pinky_fsm.core, "FsmParams", lambda: types.SimpleNamespace(
+        backup_speed_mps=0.03, horizon_min_mps=0.06))
+    with pytest.raises(ValueError, match="nav_max_speed"):
+        run(made, nav_max_speed="0.059")
+    fsms = includes(run(made, nav_max_speed="0.06"), "pinky_fsm.launch.py")
+    assert {launch_args(i)["horizon_cap_mps"] for i in fsms} == {"0.06"}
+
+
 def test_the_slowest_nav_max_speed_is_the_fsm_backup_speed(made):
     from pinky_fsm.core import FsmParams
     slowest = FsmParams().backup_speed_mps
