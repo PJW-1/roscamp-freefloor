@@ -24,6 +24,7 @@
   하나로 모으고, 로봇마다 Nav2를 프로세스 하나로 묶는다(nav_composition). 노드를 더하면
   test_launch_wiring의 프로세스 수 시험이 한도를 알려 준다.
 """
+import math
 import os
 from pathlib import Path
 
@@ -53,7 +54,8 @@ ARGS = {
     "nav_composition": ("true", "로봇마다 Nav2 노드 9개를 프로세스 하나로. false면 9개"
                                 "(3대면 DDS 참여자가 LOCALHOST 탐색 한도 32개를 넘는다)"),
     "result_dir": ("gz_result", "시나리오 모니터 결과 폴더"),
-    "fleet_params_file": ("", "관제 파라미터 파일. 비우면 설치된 fleet_params.yaml"),
+    "fleet_params_file": ("", "관제 파라미터 파일. 비우면 설치된 fleet_params.yaml, 경로 없는"
+                              " 이름이면 fleet_core/data/<이름>.yaml(예: fleet_params_real_arena)"),
     "traffic_mode": ("", "lanes 또는 freefloor면 파라미터 파일을 그 방식으로 바꾼 사본"
                          "(result_dir/fleet_params.yaml)으로 돈다. 비우면 파일 그대로"),
     "monitor": ("true", "시나리오 판정. 끝나면 launch를 끝낸다"),
@@ -63,6 +65,8 @@ ARGS = {
                                " false면 진짜 pinky_fsm(DOCK_UNAVAILABLE)"),
     "fleet_check": ("true", "로봇 사이 최소 거리, 정지 횟수, 쥔 구역 밖 위치 수를"
                             " result_dir/fleet_check.json에"),
+    "nav_max_speed": ("", "두 RPP의 최고 속도(m/s). 비면 Nav2 설정 그대로(0.25)."
+                          " real_arena는 0.12"),
     "nav_pass_through": ("true", "잠금 경계에서 끝나는 이동(final_goal 거짓)을 접근 감속 없는 둘째"
                                 " RPP(FollowPathThrough)로. false면 모두 FollowPath(둘 다 뜬다)"),
 }
@@ -75,6 +79,30 @@ def flag(text: str, name: str) -> bool:
     if value not in ("true", "false", "1", "0"):
         raise ValueError(f"{name} must be true or false, got {text!r}")
     return value in ("true", "1")
+
+
+def params_file_of(value: str) -> str:
+    """"" stays "", a path stays as given, a bare name is fleet_core/data/<name>.yaml."""
+    from fleet_core.common.params import DEFAULT_PARAMS
+    if not value or "/" in value or value.endswith(".yaml"):
+        return value
+    path = DEFAULT_PARAMS.parent / f"{value}.yaml"
+    if not path.is_file():
+        raise ValueError(f"fleet_params_file {value!r}: no {path}")
+    return str(path)
+
+
+def speed_of(text: str) -> float | None:
+    """nav_max_speed: "" means the Nav2 file's speed. A typo must not quietly mean full speed."""
+    if not text.strip():
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        raise ValueError(f"nav_max_speed must be a number in m/s, got {text!r}") from None
+    if not (math.isfinite(value) and value > 0):
+        raise ValueError(f"nav_max_speed must be above 0 m/s, got {text!r}")
+    return value
 
 
 def params_for(params_file: str, traffic_mode: str, result_dir: str) -> str:
@@ -202,8 +230,9 @@ def _start(context):
     stub = flag(value("sim_dock_stub"), "sim_dock_stub")
     check = flag(value("fleet_check"), "fleet_check")
     through = flag(value("nav_pass_through"), "nav_pass_through")
-    params_file = params_for(value("fleet_params_file"), value("traffic_mode"),
+    params_file = params_for(params_file_of(value("fleet_params_file")), value("traffic_mode"),
                              value("result_dir"))
+    max_speed = speed_of(value("nav_max_speed"))
     # robots leave the lanes on the free floor: no lanes painted
     floor = traffic_mode_of(value("traffic_mode"), params_file) == "freefloor"
     actions = [*launch_parts.world(flag(value("gui"), "gui"), arena.world, lane_paint=not floor),
@@ -216,7 +245,8 @@ def _start(context):
                                       nav_composition=composed, nav_map=arena.nav_map,
                                       nav_map_fine=arena.nav_map_fine,
                                       through_controller_id=(launch_parts.THROUGH_CONTROLLER
-                                                             if through else ""))
+                                                             if through else ""),
+                                      nav_max_speed=max_speed)
     if value("rviz") == "fleet":
         actions += fleet_rviz(robots, arena.lane_map, params_file=params_file)
     map_file = {"map_file": arena.lane_map} if arena.lane_map else {}

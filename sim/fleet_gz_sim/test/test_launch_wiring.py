@@ -589,6 +589,42 @@ def nav2_files(actions) -> dict:
     return out
 
 
+def test_nav_max_speed_caps_both_rpps_of_every_robot(made, tmp_path):
+    capped = nav2_files(run(made, nav_max_speed="0.12", result_dir=str(tmp_path / "s")))
+    plain = nav2_files(run(made, result_dir=str(tmp_path / "p")))
+    assert set(capped) == set(plain) == set(ROBOTS)
+    for ns in ROBOTS:
+        for name in ("FollowPath", "FollowPathThrough"):
+            assert capped[ns]["controller_server"]["ros__parameters"][name][
+                "desired_linear_vel"] == 0.12, (ns, name)
+            assert plain[ns]["controller_server"]["ros__parameters"][name][
+                "desired_linear_vel"] == 0.25, (ns, name)
+
+
+@pytest.mark.parametrize("bad", ["fast", "0", "-1", "nan"])
+def test_a_bad_nav_max_speed_stops_the_launch(made, bad):
+    with pytest.raises(ValueError, match="nav_max_speed"):
+        run(made, nav_max_speed=bad)
+
+
+def test_a_bare_params_name_is_a_fleet_core_data_file(made, tmp_path):
+    from fleet_core.common.params import DEFAULT_PARAMS, load_params
+    actions = run(made, fleet_params_file="fleet_params_real_arena", traffic_mode="freefloor",
+                  result_dir=str(tmp_path / "r"))
+    used = params_files([*actions, *after_wait(actions)])
+    [path] = set(used.values())
+    mine = load_params(DEFAULT_PARAMS.parent / "fleet_params_real_arena.yaml")
+    assert load_params(path).floor_lock_ahead_m == mine.floor_lock_ahead_m
+    plain = run(made, fleet_params_file="fleet_params_real_arena", result_dir=str(tmp_path / "q"))
+    assert set(params_files([*plain, *after_wait(plain)]).values()) == {
+        str(DEFAULT_PARAMS.parent / "fleet_params_real_arena.yaml")}
+
+
+def test_an_unknown_params_name_stops_the_launch(made):
+    with pytest.raises(ValueError, match="fleet_params_file"):
+        run(made, fleet_params_file="no_such_params")
+
+
 def test_gazebo_can_give_every_nav2_a_second_rpp_without_the_approach_slow_down(made, tmp_path):
     """The robot Nav2 params already load FollowPathThrough; the sim copy only changes AMCL and
     pinky_fsm sends lock-boundary paths there by default (B)."""
