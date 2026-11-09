@@ -92,6 +92,10 @@ class FleetParams:
     eta_fill_items_default: int = 2  # 주문을 모를 때 채울 품목 수
     eta_swap_s: float = 8.0
     floor_leave_s: float = 2.5  # 도크를 떠나기 시작해서 접근선이 빌 때까지
+    # 끔: 접근선은 먼저 온 순서. 켬: 가장 빨리 닿는 로봇이 다음이고, 비울 때에 맞춰 미리 출발
+    floor_dock_schedule: bool = False
+    floor_pre_admit_margin_s: float = 1.0  # 딱 맞는 때보다 이만큼 먼저 출발
+    floor_dock_aging_s: float = 30.0  # 이만큼 기다리면 다시 먼저 온 순서(굶김 방지)
 
 
 def load_params(path=None) -> FleetParams:

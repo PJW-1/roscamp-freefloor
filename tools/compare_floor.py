@@ -24,6 +24,10 @@ invariants instead of lane checks. Extra columns, filled for both modes:
     violations      1 when an invariant broke (the run stops there), else 0
     placement_outside  freefloor: robots whose true body stuck out of their cells before their
                     first MoveTo (placed from a report off by more than the cell margin)
+    line_idle_s     freefloor: 도크 접근선이 비어 있는데 그 선으로 가려는 로봇이 있던 시간(선 합)
+    pre_admits      freefloor: 선이 비기 전에 미리 출발시킨 횟수(floor_dock_schedule)
+
+    --set KEY=VALUE  freefloor 실행의 파라미터를 바꾼다(여러 번 가능). 예: --set floor_dock_schedule=true
 """
 from __future__ import annotations
 
@@ -34,6 +38,8 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tools"))
@@ -47,7 +53,8 @@ from fleet_core.traffic.floor.floor_map import floor_map_for  # noqa: E402
 from floor_world import FloorWorld  # noqa: E402
 
 MODES = ("lanes", "freefloor")
-EXTRA = ["min_gap_m", "path_m", "tick_ms_mean", "tick_ms_max", "tick_ms_p99", "slowdowns",
+OVERRIDES: dict = {}  # --set
+EXTRA = ["line_idle_s", "pre_admits", "min_gap_m", "path_m", "tick_ms_mean", "tick_ms_max", "tick_ms_p99", "slowdowns",
          "replans", "sidesteps", "deadlocks", "unresolved", "isolations", "violations",
          "placement_outside"]
 
@@ -66,11 +73,24 @@ def build(data, map_, seed, traffic_mode):
     return FloorWorld(seed=seed, orders=[dict(o) for o in data["orders"]], stock=stock,
                       robots={n: dict(spec) for n, spec in data["robots"].items()},
                       faults=world_faults, site=site,
-                      params=replace(load_params(), lane_goal_mode="path"),
+                      params=replace(load_params(), lane_goal_mode="path", **OVERRIDES),
                       arm_s_per_item=parsed.arm.seconds_per_item,
                       swap_step_s=parsed.arm.swap_seconds / 2, dock_s=parsed.dock.duration_s,
                       gaussian_noise=True,
                       floor=floor)
+
+
+def _line_idle(traffic) -> int:
+    """접근선 중 비어 있는데 그 선으로 가려는 로봇이 있는 선의 수."""
+    n = 0
+    for line, ids in traffic._line_ids.items():
+        if not line.endswith("_in"):
+            continue
+        if any(ids & traffic.zones.held_set(r) for r in traffic._missions):
+            continue
+        if any(leg.in_line == line and traffic._in_service(r) for r, leg in traffic._legs.items()):
+            n += 1
+    return n
 
 
 def _timed(world, store):
@@ -105,7 +125,7 @@ def run(map_, scenario, seed, traffic_mode, timeout_s=None, frame_every=0):
     operator = baseline.Operator(world, actions)
     limit = timeout_s or parse_scenario(data, world.site).timeout_s
     finish, complete = None, False
-    gap, driven = math.inf, 0.0
+    gap, driven, line_idle = math.inf, 0.0, 0.0
     last = {n: (r.x, r.y) for n, r in world.virtual.items()}
     meter.observe(world)
     try:
@@ -119,6 +139,8 @@ def run(map_, scenario, seed, traffic_mode, timeout_s=None, frame_every=0):
             for r in present:
                 driven += math.dist(last.get(r.name, (r.x, r.y)), (r.x, r.y))
                 last[r.name] = (r.x, r.y)
+            if isinstance(world, FloorWorld):
+                line_idle += _line_idle(world.core.traffic) * baseline.DT
             if finish is None and world.all_orders_final():
                 finish = max((t for t, c in world.commands if isinstance(c, ReportOrderCmd)),
                              default=0.0)
@@ -144,6 +166,8 @@ def run(map_, scenario, seed, traffic_mode, timeout_s=None, frame_every=0):
         tick_ms_mean=round(1000 * sum(ticks) / len(ticks), 3) if ticks else "",
         tick_ms_max=round(1000 * max(ticks), 3) if ticks else "",
         tick_ms_p99=round(1000 * sorted(ticks)[int(0.99 * (len(ticks) - 1))], 3) if ticks else "",
+        line_idle_s=round(line_idle, 3) if metrics else "",
+        pre_admits=metrics.get("pre_admits", 0) if metrics else "",
         slowdowns=metrics["slowdowns"] if metrics else "",
         replans=metrics["replans"] if metrics else "",
         sidesteps=metrics["sidesteps"] if metrics else "",
@@ -170,7 +194,11 @@ def main(argv=None) -> int:
     parser.add_argument("--seeds", nargs="+", type=int, default=list(range(1, 11)))
     parser.add_argument("--out", type=Path, default=Path("compare.csv"))
     parser.add_argument("--timeout", type=float)
+    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     args = parser.parse_args(argv)
+    for item in args.set:
+        key, _, value = item.partition("=")
+        OVERRIDES[key] = yaml.safe_load(value)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     started = time.monotonic()

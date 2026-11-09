@@ -86,6 +86,7 @@ class _Leg:
     resume_at: float | None = None  # sidestep done: plan the real leg again from then
     waiting: bool = False  # another robot has the approach line: the route ends at a wait spot
     asked_at: float = 0.0  # when this leg asked for its approach line (first come first served)
+    admitted: bool = False  # 시간창: 접근선 차례를 받음(선이 비기 전 미리 출발 포함)
 
 
 class FloorController(TrafficController):
@@ -106,7 +107,8 @@ class FloorController(TrafficController):
         # m.outside, which counts beyond release_distance_m)
         self._rest_outside: dict[str, dict[str, int]] = {name: {} for name in robots}
         self._wp_cell: dict = {}
-        self.metrics = {"slowdowns": 0, "replans": 0, "sidesteps": 0, "no_path": 0}
+        self.metrics = {"slowdowns": 0, "replans": 0, "sidesteps": 0, "no_path": 0,
+                        "pre_admits": 0}
         self._block_since: dict[str, float] = {}  # robot -> first BLOCKED report of this run
         self._clear_n: dict[str, int] = {}  # robot -> non-BLOCKED reports since its mark
         self._marks: dict[str, set[str]] = {}  # robot -> cells it marked as blocked
@@ -417,6 +419,9 @@ class FloorController(TrafficController):
     def _admitted(self, m: _Mission, leg: _Leg) -> bool:
         """leg가 접근선에 들어가도 되나: 다른 로봇이 그 선으로 가는 중이 아니고 선 칸을 쥐지 않았고
         먼저 기다리기 시작한 로봇이 없을 때."""
+        if self.params.floor_dock_schedule:
+            leg.admitted = self._admitted_in_time(m, leg)
+            return leg.admitted
         line = leg.in_line
         cells = self._line_ids[line]
         for name in self._missions:
@@ -512,6 +517,63 @@ class FloorController(TrafficController):
                       leg.route.length)
             ahead = leg.route.between(leg.s, s0) if s0 > leg.s else []
         return route_s(here + ahead, self.params, heading=m.yaw)
+
+    # ---- 접근선 시간창 ----------------------------------------------------------------------
+
+    def _line_queue(self, line: str, me: str) -> list[str]:
+        """접근선 차례. 오래 기다린 로봇은 먼저 온 순서, 나머지는 가장 빨리 닿는 순서."""
+        now = self._clock()
+        names = [me] + [n for n, other in self._legs.items()
+                        if n != me and other.in_line == line and other.waiting
+                        and self._in_service(n)]
+
+        def key(name):
+            leg = self._legs[name]
+            if now - leg.asked_at >= self.params.floor_dock_aging_s:
+                return (0, leg.asked_at, 0.0)
+            eta = self.line_eta(name)
+            return (1, math.inf if eta is None else eta, leg.asked_at)
+
+        return sorted(names, key=key)
+
+    def _admitted_in_time(self, m: _Mission, leg: _Leg) -> bool:
+        """시간창 차례: 다른 로봇이 그 선으로 가는 중이 아니고, 줄 맨 앞이고, 선이 비었거나
+        닿을 때쯤 빈다(비기 전에 출발해도 선 칸은 빌 때까지 못 잡는다. 안전은 칸 잠금)."""
+        line = leg.in_line
+        for name, other in self._legs.items():
+            if (name != m.name and other.in_line == line and not other.waiting
+                    and self._in_service(name)):
+                return False
+        free_in = self.line_free_in(line, exclude=m.name)
+        if free_in == math.inf:
+            return False  # 선 위에 언제 비킬지 모르는 로봇
+        if leg.admitted:
+            return True  # 이미 차례를 받음: 예측이 늦어져도 거두지 않는다(오가지 않게)
+        if self._line_queue(line, m.name)[0] != m.name:
+            return False
+        if free_in is None:
+            return True
+        eta = self.line_eta(m.name)
+        if eta is None or free_in > eta + self.params.floor_pre_admit_margin_s:
+            return False
+        self.metrics["pre_admits"] += 1
+        return True
+
+    def _line_cap(self, m: _Mission, leg: _Leg) -> float | None:
+        """미리 출발한 로봇은 선이 남에게 잡혀 있으면 선 시작까지만 잠근다.
+
+        선 칸에 줄을 서지 않는다: 떠나는 로봇이 이 로봇이 지나가며 쥔 출구선 칸을 기다리면
+        대기 순환이 된다. 선이 비면 다음 tick에 선 끝까지 한 번에 잡는다.
+        """
+        if not leg.admitted or leg.in_line is None or leg.route is None:
+            return None
+        ids = self._line_ids[leg.in_line]
+        if not any(ids & self.zones.held_set(r) for r in self._missions if r != m.name):
+            return None
+        for s0, _, line in leg.route.fixed:
+            if line == leg.in_line:
+                return s0
+        return None
 
     def _plan_wait(self, m: _Mission, leg: _Leg, out_line) -> None:
         """접근선 시작 근처, 고정 선 칸·남의 칸·다른 대기 자리에 닿지 않는 가장 가까운 빈 자리로."""
@@ -634,6 +696,10 @@ class FloorController(TrafficController):
             return
         grew = self._extend(m, leg)
         self._send(m, leg)
+        cap = self._line_cap(m, leg)
+        if cap is not None and leg.s_lock >= cap - 1e-9:
+            leg.stuck_since = None  # 선 시작에서 선이 비기를 기다린다: 다른 길이 없다
+            return
         self._replan_if_stuck(m, leg, grew)
 
     def _replan_if_stuck(self, m: _Mission, leg: _Leg, grew: bool) -> None:
@@ -798,10 +864,12 @@ class FloorController(TrafficController):
         holder = self.zones.holder(self._zone(m.path[-1]))
         return holder is not None and holder != m.name
 
-    def _candidates(self, leg: _Leg) -> list[float]:
+    def _candidates(self, leg: _Leg, cap: float | None = None) -> list[float]:
         """Lock ends to try, best first. Inside a fixed line: its end, else stop before it."""
         route = leg.route
         want = min(route.length, leg.s + self.params.floor_lock_ahead_m)
+        if cap is not None:
+            want = min(want, cap)  # _line_cap
         ends, e = [], want
         while e > leg.s_lock + 1e-9:
             ends.append(e)
@@ -818,7 +886,11 @@ class FloorController(TrafficController):
         return out
 
     def _extend(self, m: _Mission, leg: _Leg) -> bool:
-        for end in self._candidates(leg):
+        cap = self._line_cap(m, leg)
+        if cap is not None and leg.s_lock >= cap - 1e-9:
+            self.zones.cancel_all_requests(m.name)
+            return False
+        for end in self._candidates(leg, cap):
             cells = (self._swept(leg.route.between(leg.s, end)) | self._body_cells(m.x, m.y)
                      | self._swept(self._drive_path(m, leg, end)))
             if self.zones.acquire_all(m.name, cells):
