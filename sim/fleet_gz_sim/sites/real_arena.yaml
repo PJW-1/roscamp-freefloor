@@ -1,0 +1,13 @@
+# 실제 경기장 (2026-11-09). 사용자 SLAM 지도(pinky_map_20261105_193409, 5 cm)와 위에서 찍은
+# 사진으로 잡은 2.05 x 1.05 m 바닥과 장애물 넷. 원점은 벽 안쪽 모서리이고, 사진을 180도 돌린
+# 방향이다(x는 긴 변, y는 짧은 변). 장애물 위치는 ±5 cm.
+# 바닥이 좁아 레인은 벽·상자에서 0.12 m만 띄운다. 레인은 표시용이고 관제는 자유바닥
+# (traffic_mode freefloor, pc/fleet_core/fleet_core/data/floor_map_real_arena.yaml)으로 돈다.
+lane_map: real_arena           # sim/fake_robots/maps/의 이름
+lane_clearance_m: 0.12
+bounds_m: [0.0, 0.0, 2.05, 1.05] # 벽 안쪽 면
+boxes:
+  - {name: bin, kind: block, x0: 0.50, y0: 0.60, x1: 0.70, y1: 0.80}         # 수거함
+  - {name: box_small, kind: block, x0: 1.35, y0: 0.65, x1: 1.50, y1: 0.80}   # 작은 나무 상자
+  - {name: block_long, kind: block, x0: 1.05, y0: 0.20, x1: 1.15, y1: 0.50}  # 긴 나무 토막
+  - {name: table_2, kind: block, x0: 1.55, y0: 0.30, x1: 1.70, y1: 0.45}     # 2번 테이블
