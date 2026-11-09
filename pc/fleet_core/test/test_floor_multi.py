@@ -31,12 +31,56 @@ def test_the_lane_scenarios_finish_on_the_free_floor(scenario, seed):
     assert row["min_gap_m"] >= 2 * load_params().robot_radius_m
 
 
-def test_every_wait_cycle_ends_in_a_sidestep_or_a_replan():
+def _cycle_spans(monkeypatch):
+    """순환마다 (이어진 시간, 그동안 비켜 서기 + 재계획 수). 1초 안에 다시 생기면 같은 순환(관제와 같다)."""
+    from fleet_core.traffic.deadlock import find_cycle, wait_graph
+    from fleet_core.traffic.floor.controller import BLOCK_OWNER
+    real, spans = compare_floor.build, []
+
+    def build(*args):
+        world = real(*args)
+        step, now = world.step, {"since": None, "seen": 0.0, "acts": 0}
+
+        def acts():
+            m = world.core.traffic.metrics
+            return m["sidesteps"] + m["replans"]
+
+        def close():
+            spans.append((now["seen"] - now["since"], acts() - now["acts"]))
+            now["since"] = None
+
+        def counted():
+            step()
+            graph = wait_graph(world.core.traffic.zones)
+            graph.pop(BLOCK_OWNER, None)
+            if now["since"] is not None and world.t - now["seen"] > 1.0:
+                close()
+            if find_cycle(graph):
+                if now["since"] is None:
+                    now["since"], now["acts"] = world.t, acts()
+                now["seen"] = world.t
+
+        world.step, world.close_cycle = counted, lambda: now["since"] is not None and close()
+        return world
+
+    monkeypatch.setattr(compare_floor, "build", build)
+    return spans
+
+
+def test_every_wait_cycle_ends_in_a_sidestep_or_a_replan(monkeypatch):
+    """순환은 비켜 서기 유예(deadlock_grace_s) 안에 저절로 풀리거나(지나가던 로봇이 비킴)
+    그동안 재계획·비켜 서기로 풀린다. 남아 있는 순환은 없다."""
+    spans = _cycle_spans(monkeypatch)
+    grace = load_params().deadlock_grace_s
     for seed in (1, 2, 3):
+        spans.clear()
         row, world = floor_run("basic_orders", seed)
+        world.close_cycle()
         codes = [e.code for e in world.events]
-        if "DEADLOCK_DETECTED" in codes:
-            assert row["sidesteps"] + row["replans"] > 0, seed
+        assert row["finished"] and "DEADLOCK_UNRESOLVED" not in codes, seed
+        assert bool(spans) == ("DEADLOCK_DETECTED" in codes), (seed, spans)
+        for span, acted in spans:
+            assert span < grace or acted > 0, (seed, span, acted)
 
 
 def test_an_object_marks_the_cells_ahead_and_clears_them_later():

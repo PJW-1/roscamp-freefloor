@@ -82,6 +82,7 @@ class FleetParams:
     floor_extend_step_m: float = 0.1  # a shorter all-or-nothing try when the full one fails
     floor_replan_s: float = 1.0  # a robot whose lock cannot grow looks for another route
     floor_plan_window_s: float = 8.0  # reservations of other robots looked at this far ahead
+    floor_pass_wait_s: float = 4.0  # 지나가는 로봇에 막히면 다른 길을 찾기 전에 이만큼 서서 기다린다
     # 자유바닥 ETA와 접근선 시간창(제안, 실측 전). eta_*는 버전 2 공식 ETA와 같은 값
     eta_speed_mps: float = 0.2
     eta_turn_s_per_rad: float = 1.0  # 제자리 회전 초/rad. 0이면 회전을 안 셈

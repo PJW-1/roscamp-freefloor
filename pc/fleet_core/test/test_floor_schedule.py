@@ -210,6 +210,15 @@ def test_a_robot_that_stopped_short_still_queues(monkeypatch):
     assert set(traffic.zones.waited_cells("b")) & line_cells(traffic)
 
 
+def test_a_robot_standing_at_its_stop_is_a_wall_to_other_plans(monkeypatch):
+    """설 자리에서 선이 비기를 기다리는 로봇은 경로가 있어도 서 있다: 남의 계획이 벽으로 피한다."""
+    traffic, _, leg = _sent_early_at_the_line(monkeypatch)
+    assert leg.stuck_since is None
+    assert not traffic._passing("b")
+    assert traffic._wall_cells("a") >= {traffic.floor.cell_at(c)
+                                       for c in traffic.zones.held_set("b")}
+
+
 def test_a_robot_sent_early_waits_at_the_line_start_without_replanning(monkeypatch):
     traffic, at, leg = _sent_early_at_the_line(monkeypatch)
     b = traffic._missions["b"]
