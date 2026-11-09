@@ -11,6 +11,7 @@ from fleet_core.manager import FleetManager
 from fleet_core.orders.orchestrator import FILL
 from fleet_core.traffic.floor.controller import BLOCK_OWNER
 from fleet_core.traffic.floor.eta import route_s
+from fleet_core.traffic.floor.planner import Route
 from fleet_core.traffic.lane_map import load_lane_map
 from fleet_core.traffic.mission import AT_STATION, ERROR
 from test_floor_multi import two_robot_floor
@@ -136,6 +137,22 @@ def test_a_robot_that_has_not_moved_off_the_dock_still_needs_the_whole_leave_tim
     assert traffic.line_free_in("work_in") == pytest.approx(traffic.params.floor_leave_s)
 
 
+def test_the_leave_time_shrinks_with_the_way_gone_along_the_exit_line():
+    """다시 계획해 경로에서 출구선이 빠져도 도크에서 나간 만큼 줄어든다."""
+    core, _, _ = _floor_at({"a": (1.05, 1.55), "b": (2.6, 0.8)})
+    traffic = core.traffic
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_OUTBOUND", None, "O")
+    line = traffic.floor.fixed_lines["work_out"]
+    (x0, y0), (x1, y1) = line.points[0], line.points[-1]
+    a.x, a.y = (x0 + x1) / 2, (y0 + y1) / 2
+    leg = traffic._legs["a"]
+    leg.route = Route([(a.x, a.y), traffic.site.waypoint_pose("O")])
+    leg.s = 0.0
+    assert traffic.line_free_in("work_in") == pytest.approx(traffic.params.floor_leave_s / 2,
+                                                             abs=0.1)
+
+
 def test_the_station_work_left_reads_the_tick_time_not_the_live_clock(monkeypatch):
     """교통과 같은 굳힌 시각: 기록을 다시 돌려도 같은 값."""
     core, now, at = _floor_at({"a": (1.05, 1.55)})
@@ -213,6 +230,10 @@ def test_the_station_work_left_counts_down_during_a_stay():
     for stay in stays:
         values = [s for _, s in stay]
         assert all(b <= a + 1e-6 for a, b in zip(values, values[1:], strict=False)), values
+        # 시계만큼 줄고 1초에서 멈춘다
+        took = stay[-1][0] - stay[0][0]
+        assert len(stay) >= 2 and took >= 2.0
+        assert values[0] - values[-1] == pytest.approx(min(took, values[0] - 1.0), abs=0.5)
 
 
 def test_watching_the_predictions_does_not_change_the_run():

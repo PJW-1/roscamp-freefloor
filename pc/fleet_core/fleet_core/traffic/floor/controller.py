@@ -87,6 +87,7 @@ class _Leg:
     waiting: bool = False  # another robot has the approach line: the route ends at a wait spot
     asked_at: float = 0.0  # when this leg asked for its approach line (first come first served)
     admitted: bool = False  # 시간창: 접근선 차례를 받음(선이 비기 전 미리 출발 포함)
+    early: bool = True  # 시간창: 선이 비기 전에 출발해도 되나(설 자리가 없던 다리는 끔)
 
 
 class FloorController(TrafficController):
@@ -128,7 +129,7 @@ class FloorController(TrafficController):
         self._plan_budget = PLANS_PER_TICK
         self.station_left = None  # 매니저가 꽂는다: 로봇 -> 스테이션 작업 남은 초 또는 None
         self._phase_at: dict[str, tuple[str, float]] = {}  # 로봇 -> (단계, 들어간 시각)
-        self._stand_ban: set[str] | None = None  # 미리 출발한 로봇이 서면 안 되는 칸(_line_cap)
+        self._stand_ban: dict[str, set[str]] = {}  # 접근선 -> 미리 출발한 로봇이 못 서는 칸
 
     # ---- cells --------------------------------------------------------------------------
 
@@ -414,6 +415,12 @@ class FloorController(TrafficController):
         leg.route = route
         leg.s = leg.s_lock = leg.s_sent = 0.0
         leg.stuck_since = None
+        if (leg.admitted and self._line_held(leg.in_line, m.name)
+                and self._stop_before_line(leg) is None):
+            # 선 칸·주차 지점 밖에 설 곳이 없는 길: 미리 출발하지 않고 대기 자리에서 기다린다
+            leg.admitted, leg.early = False, False
+            leg.waiting = True
+            self._plan_wait(m, leg, out_line)
 
     # ---- one robot at a time on an approach line -------------------------------------------
 
@@ -480,11 +487,10 @@ class FloorController(TrafficController):
                 left = self._work_s(station)  # 방금 닿음: 팔 일이 곧 온다
             return left + p.floor_leave_s
         if leg is not None and leg.out_line:  # 도크를 떠나는 중: 출구선을 나간 만큼 줄인다
-            out = next((b for _, b, name in leg.route.fixed if name == leg.out_line),
-                       None) if leg.route is not None else None
-            if not out:
-                return p.floor_leave_s  # 아직 계획 전(다리를 만든 시각은 출발이 아니다)
-            return p.floor_leave_s * max(0.0, 1.0 - leg.s / out)
+            pts = self.floor.fixed_lines[leg.out_line].points  # 다리를 만든 시각은 출발이 아니다
+            length = sum(math.dist(a, b) for a, b in zip(pts, pts[1:], strict=False))
+            gone = math.dist((m.x, m.y), pts[0])
+            return p.floor_leave_s * max(0.0, 1.0 - gone / length) if length > 0 else 0.0
         if leg is not None:  # 선 칸에서 다른 곳으로 출발
             return p.floor_leave_s
         return math.inf  # 서 있는 로봇: 언제 비킬지 모른다
@@ -563,6 +569,8 @@ class FloorController(TrafficController):
             return False
         if free_in is None:
             return True
+        if not leg.early:
+            return False  # 선 앞에 설 자리가 없는 다리: 선이 빈 뒤에만
         eta = self.line_eta(m.name)
         if eta is None or free_in > eta + self.params.floor_pre_admit_margin_s:
             return False
@@ -570,19 +578,28 @@ class FloorController(TrafficController):
         return True
 
     def _line_cap(self, m: _Mission, leg: _Leg) -> float | None:
-        """미리 출발한 로봇은 선이 남에게 잡혀 있으면 고정 선 칸과 주차 지점에 닿지 않고 서는
-        마지막 자리까지만 잠근다(대기 자리와 같은 규칙).
+        """미리 출발한 로봇은 선이 남에게 잡혀 있으면 설 자리(_stop_before_line)까지만 잠근다.
 
-        선 칸에 줄을 서지 않는다: 떠나는 로봇이 이 로봇이 지나가며 쥔 출구선 칸을 기다리면
-        대기 순환이 된다. 선 시작에서 선 칸을 쥐고 서면 떠나는 로봇의 길을 막을 수 있고,
-        주차 지점에 서면 그리로 가는 로봇이 매 tick 다시 출발한다. 설 자리가 없으면 None:
-        보통 다리처럼 선 칸에 줄을 선다(순환은 교착 처리가 맡는다).
-        선이 비면 다음 tick에 선 끝까지 한 번에 잡는다.
+        가는 동안은 선 칸에 줄을 서지 않는다: 떠나는 로봇이 이 로봇이 지나가며 쥔 출구선 칸을
+        기다리면 대기 순환이 된다. 설 자리에 서면 줄을 선다(_extend): 떠나는 로봇이 이 로봇의
+        칸을 기다리면 순환이 보여 교착 처리가 맡는다. 출구선 칸이나 주차 지점에 서면 떠나는
+        로봇이나 그 지점으로 가는 로봇을 막는다(주차는 매 tick 다시 출발해 격리까지 갔다).
+        설 자리가 없으면 None: 보통 다리처럼 줄을 선다. 계획 때 설 자리가 없으면 _plan이
+        미리 출발을 거둔다. 선이 비면 다음 tick에 선 끝까지 한 번에 잡는다.
         """
         if not leg.admitted or leg.in_line is None or leg.route is None:
             return None
-        if all(self.zones.holder(c) in (None, m.name) for c in self._line_ids[leg.in_line]):
+        if not self._line_held(leg.in_line, m.name):
             return None
+        return self._stop_before_line(leg)
+
+    def _line_held(self, line: str, me: str) -> bool:
+        """선 칸 중 하나라도 남(로봇 또는 막힘 표시)이 쥐었나."""
+        return any(self.zones.holder(c) not in (None, me) for c in self._line_ids[line])
+
+    def _stop_before_line(self, leg: _Leg) -> float | None:
+        """경로에서 접근선 고정 구간 시작까지, 다른 고정 선 칸과 주차 지점에 닿지 않고 서는 마지막
+        자리. 선 시작에서 대기 자리 거리(WAIT_SPOT_M) 안에 없으면 None."""
         s0 = low = None
         for a, b, line in leg.route.fixed:
             if line == leg.in_line:
@@ -591,12 +608,20 @@ class FloorController(TrafficController):
             low = b  # 앞선 고정 선(출구선) 끝보다 뒤로는 안 간다
         if s0 is None:
             return None
-        if self._stand_ban is None:
-            self._stand_ban = set(self._all_line_ids).union(
-                *(self._standing_cells(*self.site.waypoint_pose(p)) for p in self.site.parking))
+        ban = self._stand_ban.get(leg.in_line)
+        if ban is None:  # 다른 고정 선(제 출구선 포함) 칸과 주차 지점의 몸 칸. 제 선에만 속한 칸은 된다
+            others = set().union(*(ids for line, ids in self._line_ids.items()
+                                   if line != leg.in_line))
+            ban = others.union(*(self._body_cells(*self.site.waypoint_pose(p))
+                                 for p in self.site.parking))
+            self._stand_ban[leg.in_line] = ban
+        start = self.floor.fixed_lines[leg.in_line].points[0]
         s, low = s0, low or 0.0
         while s > low + 1e-9:
-            if self._standing_cells(*leg.route.at(s)).isdisjoint(self._stand_ban):
+            x, y = leg.route.at(s)
+            if math.dist((x, y), start) > WAIT_SPOT_M[1]:
+                return None  # 대기 자리보다 멀다: 선이 빈 뒤 먼 길을 가느니 대기 자리가 낫다
+            if self._standing_cells(x, y).isdisjoint(ban):
                 return s
             s -= self.params.floor_extend_step_m
         return None
@@ -920,7 +945,14 @@ class FloorController(TrafficController):
     def _extend(self, m: _Mission, leg: _Leg) -> bool:
         cap = self._line_cap(m, leg)
         if cap is not None and leg.s_lock >= cap - 1e-9:
-            self.zones.cancel_all_requests(m.name)
+            if cap - leg.s > self.params.floor_extend_step_m:
+                self.zones.cancel_all_requests(m.name)  # 아직 가는 중: 줄을 서지 않는다
+                return False
+            end = next(b for _, b, line in leg.route.fixed if line == leg.in_line)
+            cells = self._swept(leg.route.between(leg.s, end)) | self._body_cells(m.x, m.y)
+            if self.zones.acquire_all(m.name, cells):  # 섰다: 선 전체에 줄을 선다
+                leg.s_lock = end
+                return True
             return False
         for end in self._candidates(leg, cap):
             cells = (self._swept(leg.route.between(leg.s, end)) | self._body_cells(m.x, m.y)

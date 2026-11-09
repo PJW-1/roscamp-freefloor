@@ -65,8 +65,8 @@ def test_the_next_robot_sets_off_when_the_line_frees_by_its_arrival(monkeypatch)
     assert not line_cells(traffic) & traffic.zones.held_set("b")
 
 
-def _sent_early_at_the_line(monkeypatch):
-    """a는 도크에 서 있고(선 칸을 쥠), b는 미리 출발해 선 시작 바로 앞까지 왔다."""
+def _sent_early_at_the_line(monkeypatch, short=0.05):
+    """a는 도크에 서 있고(선 칸을 쥠), b는 미리 출발해 설 자리 short m 앞까지 왔다."""
     traffic, at = floor({"a": (1.0, 1.15), "b": (2.6, 0.8)})
     a, b = traffic._missions["a"], traffic._missions["b"]
     traffic._start_leg(a, "TO_WORK", None, "W")
@@ -78,7 +78,7 @@ def _sent_early_at_the_line(monkeypatch):
     cap = traffic._line_cap(b, leg)
     for cell in list(traffic.zones.held_set("b")):
         traffic.zones.release("b", cell)
-    leg.s = leg.s_sent = cap - 0.05
+    leg.s = leg.s_sent = cap - short
     b.x, b.y = leg.route.at(leg.s)
     leg.s_lock = cap
     assert traffic.zones.acquire_all("b", traffic._body_cells(b.x, b.y)
@@ -86,22 +86,45 @@ def _sent_early_at_the_line(monkeypatch):
     return traffic, at, leg
 
 
-def test_a_robot_sent_early_stops_where_it_stands_off_every_fixed_line(monkeypatch):
-    """대기 자리와 같은 규칙: 선 시작에서 선 칸을 쥐고 서면 떠나는 로봇의 길을 막을 수 있다."""
+def _parking_cells(traffic):
+    """주차하는 로봇이 설 몸 칸."""
+    return set().union(*(traffic._body_cells(*traffic.site.waypoint_pose(p))
+                         for p in traffic.site.parking))
+
+
+def test_a_robot_sent_early_stops_off_other_lines_and_parking_spots(monkeypatch):
+    """제 접근선에만 속한 칸(선 시작 쪽)에는 서도 된다. 출구선 등 다른 고정 선 칸을 쥐고 서면
+    떠나는 로봇의 길을 막고, 주차 지점 칸을 쥐고 서면 그리로 가는 로봇이 매 tick 다시 출발한다."""
     traffic, _, leg = _sent_early_at_the_line(monkeypatch)
     s0 = leg.route.fixed[0][0]
-    assert s0 - 0.6 < leg.s_lock < s0
-    assert traffic._standing_cells(*leg.route.at(leg.s_lock)).isdisjoint(traffic._all_line_ids)
+    assert s0 - 0.6 < leg.s_lock <= s0
+    standing = traffic._standing_cells(*leg.route.at(leg.s_lock))
+    others = set().union(*(ids for line, ids in traffic._line_ids.items() if line != "work_in"))
+    assert standing.isdisjoint(others)
+    assert standing.isdisjoint(_parking_cells(traffic))
+    start = traffic.floor.fixed_lines["work_in"].points[0]
+    assert math.dist(leg.route.at(leg.s_lock), start) <= 1.2
 
 
-def test_a_robot_sent_early_does_not_queue_on_a_line_someone_holds(monkeypatch):
-    """줄을 서면 떠나는 로봇과 대기 순환이 된다(지나가며 출구선 칸을 쥐고 있을 때)."""
-    traffic, _, leg = _sent_early_at_the_line(monkeypatch)
+def test_a_robot_sent_early_does_not_queue_on_the_line_on_its_way(monkeypatch):
+    """가는 동안 줄을 서면 떠나는 로봇과 대기 순환이 된다(지나가며 출구선 칸을 쥐고 있을 때)."""
+    traffic, _, leg = _sent_early_at_the_line(monkeypatch, short=0.4)
     cap = leg.s_lock
     traffic._extend(traffic._missions["b"], leg)
     assert leg.s_lock == pytest.approx(cap)
     assert not set(traffic.zones.waited_cells("b")) & line_cells(traffic)
     assert "b" not in wait_graph(traffic.zones)
+
+
+def test_a_robot_sent_early_queues_on_the_line_once_it_stands_at_its_stop(monkeypatch):
+    """서 있는 동안은 줄을 선다: 떠나는 로봇이 이 로봇의 칸을 기다리면 순환이 보이고 교착 처리가
+    맡는다(보이지 않는 교착이 없다)."""
+    traffic, _, leg = _sent_early_at_the_line(monkeypatch)
+    cap = leg.s_lock
+    traffic._extend(traffic._missions["b"], leg)
+    assert leg.s_lock == pytest.approx(cap)
+    assert set(traffic.zones.waited_cells("b")) & line_cells(traffic)
+    assert "a" in wait_graph(traffic.zones)["b"]
 
 
 def test_a_robot_sent_early_waits_at_the_line_start_without_replanning(monkeypatch):
@@ -114,22 +137,28 @@ def test_a_robot_sent_early_waits_at_the_line_start_without_replanning(monkeypat
     assert leg.route is route and not leg.waiting
 
 
-def test_a_robot_sent_early_does_not_stop_on_a_parking_spot(monkeypatch):
-    """주차 지점 칸을 쥐고 서면 그 지점으로 가는 로봇이 매 tick 다시 출발한다(격리까지 감)."""
-    traffic, _ = floor({"a": (1.0, 1.15), "b": (1.52, 2.06)})
+def test_a_route_with_no_stop_near_the_line_waits_at_a_wait_spot_instead(monkeypatch):
+    """선 시작 가까이 다른 선·주차 지점에 닿지 않고 설 곳이 없는 길: 미리 출발하지 않는다."""
+    traffic, _ = floor({"a": (1.0, 1.15), "b": (2.6, 0.8)})
     a, b = traffic._missions["a"], traffic._missions["b"]
     traffic._start_leg(a, "TO_WORK", None, "W")
     del traffic._legs["a"]
     a.phase = "AT_STATION"
-    monkeypatch.setattr(traffic, "line_free_in", lambda line, exclude=None: 1.0)
+    free = [1.0]
+    monkeypatch.setattr(traffic, "line_free_in", lambda line, exclude=None: free[0])
+    monkeypatch.setattr(traffic, "_stop_before_line", lambda leg: None)
     traffic._start_leg(b, "TO_WORK", None, "W")
     leg = traffic._legs["b"]
-    assert leg.admitted
-    cap = traffic._line_cap(b, leg)
-    if cap is not None:
-        spots = set().union(*(traffic._standing_cells(*traffic.site.waypoint_pose(p))
-                              for p in traffic.site.parking))
-        assert traffic._standing_cells(*leg.route.at(cap)).isdisjoint(spots)
+    assert leg.waiting and not leg.admitted
+    spot = traffic._standing_cells(*leg.route.points[-1])
+    assert spot.isdisjoint(traffic._all_line_ids)
+    traffic._drive(b)  # 다시 미리 출발시키지 않는다(매 tick 계획을 오가지 않게)
+    assert traffic._legs["b"].waiting
+    for cell in list(traffic.zones.held_set("a")):
+        traffic.zones.release("a", cell)
+    free[0] = None  # 선이 비면 보통처럼 들어간다
+    traffic._drive(b)
+    assert not traffic._legs["b"].waiting and traffic._legs["b"].admitted
 
 
 def test_a_robot_sent_early_goes_to_a_wait_spot_when_the_holder_is_isolated(monkeypatch):
