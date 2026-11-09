@@ -225,3 +225,10 @@ def test_the_step_onto_clear_floor_does_not_run_over_cells_of_others():
     if path is not None:
         assert not (line_cells(floor, path[:2]) - {floor.cell_of(*start)}) & others
     assert path is None
+
+
+def test_the_step_onto_clear_floor_leaves_a_start_cell_held_by_a_close_robot():
+    floor = box_floor()
+    start = (1.0, 0.76)
+    path = FloorPlanner(floor).plan(start, (1.6, 0.4), avoid=frozenset({floor.cell_of(*start)}))
+    assert path is not None and floor.cell_of(*path[1]) in floor.clear
