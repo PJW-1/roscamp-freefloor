@@ -504,7 +504,8 @@ class FloorController(TrafficController):
         if leg is not None and leg.out_line:  # 도크를 떠나는 중: 출구선을 따라 나간 만큼 줄인다
             pts = self.floor.fixed_lines[leg.out_line].points  # 다리를 만든 시각은 출발이 아니다
             gone, length = _along(pts, (m.x, m.y))
-            return p.floor_leave_s * max(0.0, 1.0 - gone / length) if length > 0 else 0.0
+            return p.floor_leave_s * max(0.0, 1.0 - gone / length) if length > 0 else \
+                p.floor_leave_s
         if leg is not None:  # 선 칸에서 다른 곳으로 출발
             return p.floor_leave_s
         return math.inf  # 서 있는 로봇: 언제 비킬지 모른다
@@ -760,7 +761,6 @@ class FloorController(TrafficController):
         if m.goal is None and self._clock() < m.retry_at:
             return
         grew = self._extend(m, leg)
-        self._send(m, leg)
         cap = self._line_cap(m, leg)
         if cap is not None and leg.s_lock >= cap - 1e-9:
             if self.line_free_in(leg.in_line, exclude=m.name) == math.inf:
@@ -769,9 +769,16 @@ class FloorController(TrafficController):
                     self._cancel_goal(m)
                 self._plan(m, leg)
                 return
+            if not self._at_stop(m, leg, cap):
+                self._send(m, leg)  # 서 있으면 마지막 몇 cm를 다시 보내지 않는다(줄이 지워진다)
             leg.stuck_since = None  # 선 앞에서 선이 비기를 기다린다: 다른 길이 없다
             return
+        self._send(m, leg)
         self._replan_if_stuck(m, leg, grew)
+
+    def _at_stop(self, m: _Mission, leg: _Leg, cap: float) -> bool:
+        """설 자리로 가는 MoveTo가 끝났고 설 자리 floor_extend_step_m 안이다."""
+        return m.goal is None and cap - leg.s <= self.params.floor_extend_step_m
 
     def _replan_if_stuck(self, m: _Mission, leg: _Leg, grew: bool) -> None:
         """잠금이 floor_replan_s 동안 못 늘고 앞이 짧으면 남을 피해 다시 계획한다."""
@@ -959,9 +966,9 @@ class FloorController(TrafficController):
     def _extend(self, m: _Mission, leg: _Leg) -> bool:
         cap = self._line_cap(m, leg)
         if cap is not None and leg.s_lock >= cap - 1e-9:
-            if (cap - leg.s > self.params.floor_extend_step_m
-                    or not self.zones.held_set(m.name).isdisjoint(self._stand_ban[leg.in_line])):
-                # 아직 가는 중이거나 지나온 다른 선 칸을 아직 쥠: 줄을 서지 않는다
+            if not self._at_stop(m, leg, cap):
+                # 아직 달리는 중: 줄을 서지 않는다(지나온 칸을 아직 쥘 수 있어 떠나는 로봇과
+                # 잠깐씩 순환이 생긴다). 서면 무엇을 쥐었든 줄을 선다(순환이 보이게)
                 self.zones.cancel_all_requests(m.name)
                 return False
             end = next(b for _, b, line in leg.route.fixed if line == leg.in_line)

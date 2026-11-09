@@ -9,6 +9,7 @@ from fleet_core.common.params import load_params
 from fleet_core.manager import FleetManager
 from fleet_core.traffic.deadlock import find_cycle, wait_graph
 from fleet_core.traffic.lane_map import load_lane_map
+from fleet_core.traffic.mission import MOVE, _Goal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
 import compare_floor  # noqa: E402
@@ -65,8 +66,9 @@ def test_the_next_robot_sets_off_when_the_line_frees_by_its_arrival(monkeypatch)
     assert not line_cells(traffic) & traffic.zones.held_set("b")
 
 
-def _sent_early_at_the_line(monkeypatch, short=0.05):
-    """a는 도크에 서 있고(선 칸을 쥠), b는 미리 출발해 설 자리 short m 앞까지 왔다."""
+def _sent_early_at_the_line(monkeypatch, short=0.05, arrived=True):
+    """a는 도크에 서 있고(선 칸을 쥠), b는 미리 출발해 설 자리 short m 앞까지 왔다.
+    arrived: 설 자리로 가는 MoveTo가 끝났다."""
     traffic, at = floor({"a": (1.0, 1.15), "b": (2.6, 0.8)})
     a, b = traffic._missions["a"], traffic._missions["b"]
     traffic._start_leg(a, "TO_WORK", None, "W")
@@ -83,6 +85,7 @@ def _sent_early_at_the_line(monkeypatch, short=0.05):
     leg.s_lock = cap
     assert traffic.zones.acquire_all("b", traffic._body_cells(b.x, b.y)
                                      | traffic._swept(leg.route.between(leg.s, cap)))
+    b.goal = None if arrived else _Goal(MOVE, 99, 0)  # 설 자리로 가는 MoveTo
     return traffic, at, leg
 
 
@@ -108,7 +111,7 @@ def test_a_robot_sent_early_stops_off_other_lines_and_parking_spots(monkeypatch)
 
 def test_a_robot_sent_early_does_not_queue_on_the_line_on_its_way(monkeypatch):
     """가는 동안 줄을 서면 떠나는 로봇과 대기 순환이 된다(지나가며 출구선 칸을 쥐고 있을 때)."""
-    traffic, _, leg = _sent_early_at_the_line(monkeypatch, short=0.4)
+    traffic, _, leg = _sent_early_at_the_line(monkeypatch, short=0.4, arrived=False)
     cap = leg.s_lock
     traffic._extend(traffic._missions["b"], leg)
     assert leg.s_lock == pytest.approx(cap)
@@ -130,14 +133,34 @@ def test_a_robot_sent_early_queues_on_the_line_once_it_stands_at_its_stop(monkey
     assert set(find_cycle(wait_graph(traffic.zones))) == {"a", "b"}
 
 
-def test_a_robot_sent_early_does_not_queue_while_it_still_holds_exit_line_cells(monkeypatch):
-    """설 자리에 거의 왔어도 지나온 출구선 칸을 아직 놓지 않았으면 줄을 서지 않는다."""
+def test_a_robot_standing_at_its_stop_stays_queued_through_a_whole_drive_tick(monkeypatch):
+    """_drive 한 번 전체에서도 줄이 남는다: 몇 cm 못 미쳐 섰다고 다시 보내는 MoveTo가
+    대기 기록을 지우면 순환이 다시 안 보인다."""
+    traffic, _, leg = _sent_early_at_the_line(monkeypatch)
+    b = traffic._missions["b"]
+    traffic._drive(b)
+    assert set(traffic.zones.waited_cells("b")) & line_cells(traffic)
+    assert b.goal is None
+    assert not traffic.zones.acquire_all("a", set(traffic.zones.held_set("b")))
+    assert set(find_cycle(wait_graph(traffic.zones))) == {"a", "b"}
+
+
+def test_a_robot_sent_early_does_not_queue_until_its_move_to_the_stop_ends(monkeypatch):
+    """설 자리에 거의 왔어도 아직 달리는 중이면 줄을 서지 않는다(지나온 칸을 아직 쥘 수 있다)."""
+    traffic, _, leg = _sent_early_at_the_line(monkeypatch, arrived=False)
+    traffic._extend(traffic._missions["b"], leg)
+    assert not set(traffic.zones.waited_cells("b")) & line_cells(traffic)
+
+
+def test_a_robot_that_stopped_short_still_queues(monkeypatch):
+    """조금 못 미쳐 서서 다른 선 칸에 닿아 있어도 줄을 선다: 안 서면 떠나는 로봇이 그 칸을
+    기다릴 때 순환이 안 보인다."""
     traffic, _, leg = _sent_early_at_the_line(monkeypatch)
     only_out = traffic._line_ids["work_out"] - traffic._line_ids["work_in"]
     cell = next(c for c in sorted(only_out) if traffic.zones.holder(c) is None)
     assert traffic.zones.acquire_all("b", {cell})
     traffic._extend(traffic._missions["b"], leg)
-    assert not set(traffic.zones.waited_cells("b")) & line_cells(traffic)
+    assert set(traffic.zones.waited_cells("b")) & line_cells(traffic)
 
 
 def test_a_robot_sent_early_waits_at_the_line_start_without_replanning(monkeypatch):
