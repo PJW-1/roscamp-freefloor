@@ -272,3 +272,17 @@ def test_a_floor_map_name_that_links_out_of_the_data_folder_is_refused(tmp_path,
     (data / WAREHOUSE_FLOOR.name).symlink_to(outside / WAREHOUSE_FLOOR.name)
     with pytest.raises(FloorMapError, match="floor_map"):
         floor_map_for(load_lane_map(WAREHOUSE_LANES))
+
+
+def test_an_install_of_links_into_one_data_folder_is_accepted(tmp_path, monkeypatch):
+    """A symlink install links every data file to the source folder: that is one folder."""
+    from fleet_core.traffic.floor import floor_map as module
+    from fleet_core.traffic.floor.floor_map import floor_map_for
+    source = copy_data(tmp_path, monkeypatch)
+    links = tmp_path / "install"
+    links.mkdir()
+    for path in source.iterdir():
+        (links / path.name).symlink_to(path)
+    monkeypatch.setattr(module, "DEFAULT_FLOOR", links / DEFAULT_FLOOR.name)
+    floor = floor_map_for(load_lane_map(WAREHOUSE_LANES))
+    assert floor.source_text == WAREHOUSE_FLOOR.read_text(encoding="utf-8")
