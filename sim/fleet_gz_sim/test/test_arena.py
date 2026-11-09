@@ -138,7 +138,8 @@ def test_a_site_keeps_lanes_the_default_distance_unless_it_says_otherwise(tmp_pa
         arena.generate(tmp_path / "out", LANES, site=tight)
 
 
-@pytest.mark.parametrize("value", ["0", "-0.1", ".nan", ".inf", "wide"])
+@pytest.mark.parametrize("value", ["0", "-0.1", ".nan", ".inf", "wide", "true", "'0.1'",
+                                   pytest.param("1" + "0" * 400, id="huge")])
 def test_a_bad_lane_clearance_is_refused(tmp_path, value):
     with pytest.raises(arena.SiteError, match="lane_clearance_m"):
         arena.load_site(site_file(tmp_path, f"lane_clearance_m: {value}\n" + TOY))

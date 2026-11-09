@@ -138,10 +138,13 @@ def load_site(path) -> Site:
         raise SiteError(f"{path}: bounds_m must be finite numbers")
     if x1 <= x0 or y1 <= y0:
         raise SiteError(f"{path}: bounds_m is empty")
+    raw = data.get("lane_clearance_m", CLEARANCE_M)
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        raise SiteError(f"{path}: lane_clearance_m must be a number")
     try:
-        clearance_m = float(data.get("lane_clearance_m", CLEARANCE_M))
-    except (TypeError, ValueError) as e:
-        raise SiteError(f"{path}: lane_clearance_m must be a number") from e
+        clearance_m = float(raw)
+    except OverflowError as e:
+        raise SiteError(f"{path}: lane_clearance_m is too large") from e
     if not (math.isfinite(clearance_m) and clearance_m > 0):
         raise SiteError(f"{path}: lane_clearance_m must be a finite number above 0")
     site = Site(path.stem, (x0, y0, x1, y1), (), str(data.get("lane_map") or ""), clearance_m)

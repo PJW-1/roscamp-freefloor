@@ -103,10 +103,12 @@ class FloorMap:
 
     @staticmethod
     def _read_wall_margin(value) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise FloorMapError(f"wall_margin_m {value!r} is not a number")
         try:
             margin = float(value)
-        except (TypeError, ValueError):
-            raise FloorMapError(f"wall_margin_m {value!r} is not a number") from None
+        except OverflowError:
+            raise FloorMapError(f"wall_margin_m {value!r} is too large") from None
         if not math.isfinite(margin) or margin < 0:
             raise FloorMapError(f"wall_margin_m {value!r} must be a finite number >= 0")
         return margin

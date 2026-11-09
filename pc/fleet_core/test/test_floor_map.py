@@ -326,7 +326,8 @@ def test_a_narrow_gap_is_clear_only_with_a_small_wall_margin():
     assert tight.cell_margin_m == 0.05  # the robot-to-robot margin is untouched
 
 
-@pytest.mark.parametrize("bad", [-0.01, float("nan"), float("inf"), "wide", None])
+@pytest.mark.parametrize("bad", [-0.01, float("nan"), float("inf"), "wide", None, True,
+                                 "0.01", pytest.param(10 ** 400, id="huge")])
 def test_a_bad_wall_margin_is_refused(bad):
     with pytest.raises(FloorMapError, match="wall_margin_m"):
         FloorMap(corridor_data(wall_margin_m=bad))
