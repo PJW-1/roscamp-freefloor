@@ -622,10 +622,20 @@ def test_nav_collision_check_false_turns_the_rpp_check_off_for_every_robot(made,
                 "use_collision_detection"] is True, (ns, name)
 
 
-@pytest.mark.parametrize("bad", ["fast", "0", "-1", "nan"])
+@pytest.mark.parametrize("bad", ["fast", "0", "-1", "nan", "0.05", "0.079"])
 def test_a_bad_nav_max_speed_stops_the_launch(made, bad):
+    """Below the FSM's own speeds (backup 0.08, horizon floor 0.05 m/s) the cap would not hold:
+    the backup goes faster, and the lock-boundary slow-down never starts."""
     with pytest.raises(ValueError, match="nav_max_speed"):
         run(made, nav_max_speed=bad)
+
+
+def test_the_slowest_nav_max_speed_is_the_fsm_backup_speed(made):
+    from pinky_fsm.core import FsmParams
+    slowest = FsmParams().backup_speed_mps
+    assert slowest >= FsmParams().horizon_min_mps
+    fsms = includes(run(made, nav_max_speed=str(slowest)), "pinky_fsm.launch.py")
+    assert {launch_args(i)["horizon_cap_mps"] for i in fsms} == {str(slowest)}
 
 
 def test_a_bare_params_name_is_a_fleet_core_data_file(made, tmp_path):

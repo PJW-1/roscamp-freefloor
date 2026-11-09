@@ -104,6 +104,14 @@ def speed_of(text: str) -> float | None:
         raise ValueError(f"nav_max_speed must be a number in m/s, got {text!r}") from None
     if not (math.isfinite(value) and value > 0):
         raise ValueError(f"nav_max_speed must be above 0 m/s, got {text!r}")
+    # pinky_fsm backs up at backup_speed_mps and never slows a lock-boundary path below
+    # horizon_min_mps; a cap under those would not hold
+    from pinky_fsm.core import FsmParams
+    fsm = FsmParams()
+    slowest = max(fsm.backup_speed_mps, fsm.horizon_min_mps)
+    if value < slowest:
+        raise ValueError(f"nav_max_speed must be at least {slowest} m/s (pinky_fsm backup and "
+                         f"slow-down speeds), got {text!r}")
     return value
 
 
