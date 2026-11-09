@@ -159,10 +159,15 @@ def test_parked_robots_sit_in_bays_and_leave_the_eight_open():
     homes = {FLOOR.cell_of(*p) for p in ends}
     main = [p for p in pieces if homes & p]
     assert len(main) == 1 and homes <= main[0]
-    # the ring still goes round both islands (the middle stays open from north to south)
+    # the middle stays open from north to south on its own (not only round the outside)
     middle = {c for c in main[0] if MIDDLE[0] < FLOOR.centre(c)[0] < MIDDLE[1]}
-    ys = [FLOOR.centre(c)[1] for c in middle]
-    assert min(ys) < 0.2 and max(ys) > 0.85
+    assert [p for p in parts(middle) if min(FLOOR.centre(c)[1] for c in p) < 0.2
+            and max(FLOOR.centre(c)[1] for c in p) > 0.85]
+    # and the corridor in front of every bay still has open floor across it
+    for x in (0.50, 1.55):
+        column = [c for c in main[0] if abs(FLOOR.centre(c)[0] - x) < FLOOR.cell_m / 2]
+        assert any(FLOOR.centre(c)[1] > 0.75 for c in column), (x, "north")
+        assert any(FLOOR.centre(c)[1] < 0.30 for c in column), (x, "south")
 
 
 def test_the_rehearsal_runs_three_pinkys_at_fifteen_centimetres_a_second():
