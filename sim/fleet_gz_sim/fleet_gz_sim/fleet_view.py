@@ -6,6 +6,8 @@
 교차 쌍은 따로 된 id가 없고 구역 두 개가 서로 잠글 뿐이라 각 구역으로 그린다.
 자유바닥(traffic_mode: freefloor)에서는 구역 id가 칸 이름(c12_17)이라 쥔 칸을 소유자 색
 사각형으로 그린다. 물체 앞을 막은 칸(소유자 #blocked)은 빨강.
+로봇마다 지금 가는 곳(핑키가 보고한 current_goal의 지점이나 스테이션 도크)을 로봇 색 깃대와
+로봇에서 그곳까지의 가는 선으로 그린다.
 """
 from __future__ import annotations
 
@@ -125,12 +127,24 @@ class FleetView:
         self._pose: dict = {}  # 로봇 -> (x, y, yaw, 시각)
         self._zones: list = []
         self._blocked: dict = {}  # 로봇 -> 막힌 레인 (a, b)
+        self._goal: dict = {}  # robot -> current_goal as the robot reports it
 
     def set_statuses(self, statuses) -> None:
         self._status = {s.robot_id: s for s in statuses}
 
     def set_pose(self, robot: str, x: float, y: float, yaw: float, now: float) -> None:
         self._pose[robot] = (x, y, yaw, now)
+
+    def set_goal(self, robot: str, goal: str) -> None:
+        self._goal[robot] = goal
+
+    def goal_pose(self, goal: str):
+        """(x, y) of a MoveTo/DockTo target, None if unknown. Free-floor ids are 'W~1.25'."""
+        name = goal.split("~", 1)[0]
+        if name in self._by_name:
+            return self.lane_map.waypoint_pose(self._by_name[name])
+        station = self.lane_map.stations.get(name)
+        return self.lane_map.waypoint_pose(station.dock) if station else None
 
     def set_zones(self, zones) -> None:
         self._zones = list(zones)
@@ -159,7 +173,7 @@ class FleetView:
 
     def specs(self, now: float) -> list[Spec]:
         return [*self._lanes, *self._zone_specs(), *self._blocked_specs(),
-                *self._robot_specs(now)]
+                *self._goal_specs(), *self._robot_specs(now)]
 
     def _zone_specs(self) -> list[Spec]:
         specs = self._cell_specs()
@@ -214,6 +228,26 @@ class FleetView:
             return []
         return [Spec("blocked", 0, "LINE_LIST", (0.0, 0.0, 0.02, 0.0), (0.05, 0.0, 0.0),
                      RED, tuple(points))]
+
+    def _goal_specs(self) -> list[Spec]:
+        specs = []
+        for i, robot in enumerate(sorted(self._goal)):
+            goal = self._goal[robot]
+            where = self.goal_pose(goal) if goal else None
+            if where is None:
+                continue
+            gx, gy = where
+            color = robot_color(robot)
+            specs += [
+                Spec("goal", i, "CYLINDER", (gx, gy, 0.1, 0.0), (0.03, 0.03, 0.2), color),
+                Spec("goal_text", i, "TEXT", (gx, gy, 0.26, 0.0), (0.0, 0.0, 0.06), color,
+                     text=f"{robot} -> {goal.split('~', 1)[0]}"),
+            ]
+            if robot in self._pose:
+                x, y = self._pose[robot][:2]
+                specs.append(Spec("goal_line", i, "LINE_LIST", (0.0, 0.0, 0.02, 0.0),
+                                  (0.012, 0.0, 0.0), _faded(color, 0.6), ((x, y), (gx, gy))))
+        return specs
 
     def _robot_specs(self, now: float) -> list[Spec]:
         specs = []

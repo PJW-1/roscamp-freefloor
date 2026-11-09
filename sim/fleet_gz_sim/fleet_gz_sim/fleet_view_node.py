@@ -1,7 +1,8 @@
 """관제 화면 노드(시뮬레이션 전용): 함대 전체를 RViz 하나에 마커로 그린다.
 
-/fleet/robots, /fleet/zones, /central/events와 로봇마다 자세(기본은 Gazebo 실제 위치
-/<robot>/sim/truth, map 기준)를 받아 /fleet_view/markers에 5 Hz로 낸다.
+/fleet/robots, /fleet/zones, /central/events, 로봇마다 /<robot>/state(current_goal)와
+자세(기본은 Gazebo 실제 위치 /<robot>/sim/truth, map 기준)를 받아 /fleet_view/markers에
+5 Hz로 낸다.
 로봇 TF는 네임스페이스 안에 있으므로 전역 /tf_static에 map -> fleet_view를 내서
 네임스페이스 없는 RViz에도 map 프레임이 있게 한다.
 """
@@ -10,7 +11,7 @@ import math
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from fleet_core.common.contract import load_contract, to_ros_qos
-from fleet_interfaces.msg import FleetEvent, RobotStatusArray, ZoneStateArray
+from fleet_interfaces.msg import FleetEvent, RobotState, RobotStatusArray, ZoneStateArray
 from geometry_msgs.msg import Point, TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
@@ -72,6 +73,11 @@ class FleetViewNode(Node):
         sub(ZoneStateArray, "zones", lambda msg: self.view.set_zones(msg.zones))
         sub(FleetEvent, "events",
             lambda msg: self.view.on_event(msg.code, msg.source, msg.detail))
+        for robot in robots:  # current_goal: where each pinky is heading now
+            self.create_subscription(
+                RobotState, contract.name("robot_state", pinky=robot),
+                lambda msg, robot=robot: self.view.set_goal(robot, msg.current_goal),
+                to_ros_qos(contract.qos("robot_state")))
         if self.pose_source == "truth":
             for robot in robots:
                 self.create_subscription(

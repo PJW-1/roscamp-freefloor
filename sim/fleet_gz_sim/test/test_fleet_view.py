@@ -358,3 +358,33 @@ def test_lane_zones_still_draw_with_a_floor_space():
     view.set_zones([Zone("AVENUE", holder="pinky3")])
     assert by_ns(view.specs(now=0.0), "zone_lanes")
     assert not by_ns(view.specs(now=0.0), "zone_cells")
+
+
+# ---- where each robot is heading -------------------------------------------------------
+
+
+def test_each_robot_shows_its_goal_with_a_line_from_where_it_is():
+    view = fv.FleetView(LANES)
+    view.set_pose("pinky1", *pose_of("S"), 0.0, now=0.0)
+    view.set_goal("pinky1", "W~1.25")  # free-floor: route end W, this MoveTo ends 1.25 m along
+    specs = view.specs(now=0.0)
+    [flag] = by_ns(specs, "goal")
+    assert xy([flag.pose[:2]]) == {pose_of("W")}
+    assert flag.color[:3] == fv.ROBOT_COLORS["pinky1"][:3]
+    [line] = by_ns(specs, "goal_line")
+    assert line.kind == "LINE_LIST" and segments(line.points) == {(pose_of("S"), pose_of("W"))}
+    [text] = by_ns(specs, "goal_text")
+    assert "pinky1" in text.text and "W" in text.text
+
+
+def test_a_station_goal_points_at_its_dock_and_no_goal_draws_nothing():
+    station = sorted(LANES.stations.values(), key=lambda s: s.id)[0]
+    view = fv.FleetView(LANES)
+    view.set_goal("pinky2", station.id)  # DockTo carries the station id
+    [flag] = by_ns(view.specs(now=0.0), "goal")
+    x, y = LANES.waypoint_pose(station.dock)
+    assert xy([flag.pose[:2]]) == {(round(x, 3), round(y, 3))}
+    assert not by_ns(view.specs(now=0.0), "goal_line")  # no pose yet
+    view.set_goal("pinky2", "")
+    view.set_goal("pinky3", "NOWHERE")
+    assert not by_ns(view.specs(now=0.0), "goal")
