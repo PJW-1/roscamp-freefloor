@@ -38,15 +38,16 @@ def test_the_lane_map_names_this_floor_and_its_image_is_the_gazebo_map():
     assert FLOOR.source_text == (DEFAULT_FLOOR.parent / "floor_map_real_arena.yaml").read_text(
         encoding="utf-8")
     gazebo = REPO / "sim" / "fleet_gz_sim" / "maps"
-    assert (DEFAULT_FLOOR.parent / "real_arena.pgm").read_bytes() == (
-        gazebo / "real_arena.pgm").read_bytes()
-    data = yaml.safe_load((gazebo / "real_arena.yaml").read_text(encoding="utf-8"))
+    assert (DEFAULT_FLOOR.parent / "real_arena_fine.pgm").read_bytes() == (
+        gazebo / "real_arena_fine.pgm").read_bytes()
+    data = yaml.safe_load((gazebo / "real_arena_fine.yaml").read_text(encoding="utf-8"))
     assert list(FLOOR.origin) == data["origin"][:2]
+    assert FLOOR.px_m == data["resolution"]
 
 
 def test_the_margins_are_small_for_a_small_floor():
-    assert (FLOOR.robot_radius_m, FLOOR.cell_margin_m, FLOOR.wall_margin_m) == (0.08, 0.02, 0.01)
-    assert FLOOR.cell_m == 0.05
+    assert (FLOOR.robot_radius_m, FLOOR.cell_margin_m, FLOOR.wall_margin_m) == (0.08, 0.03, 0.01)
+    assert FLOOR.cell_m == 0.03  # 5 cm cells shut the 0.25 m gap between block_long and box_small
 
 
 def test_the_whole_floor_is_one_piece_from_end_to_end():
@@ -56,15 +57,27 @@ def test_the_whole_floor_is_one_piece_from_end_to_end():
     assert min(xs) < 0.2 and max(xs) > 1.85
 
 
-def test_the_east_end_is_reached_only_through_the_outbound_lines():
-    """The 0.25 m gap north of box_small is the only way east: both OUTBOUND lines run through
-    it, so a whole-line lock lets one robot at a time into it."""
-    lines = {name: {FLOOR.cell_of(*FLOOR.centre(c)) for c in swept_cells(
-        FLOOR, list(line.points), BODY)} for name, line in FLOOR.fixed_lines.items()}
-    gap = {c for c in FLOOR.clear if 1.25 < FLOOR.centre(c)[0] < 1.65 and FLOOR.centre(c)[1] > 0.85}
-    assert gap and gap <= lines["outbound_in"] and gap <= lines["outbound_out"]
-    rest = parts(FLOOR.clear - gap)
-    assert len(rest) == 2
+def cells_of(line) -> set:
+    return set(swept_cells(FLOOR, list(line.points), BODY))
+
+
+def test_outbound_is_a_one_way_loop_in_by_the_north_gap_out_by_the_south():
+    """The east end has two ways in: the 0.25 m gap north of box_small and the 0.25 m gap
+    between block_long and box_small (south of table_2, then up the middle). Robots go in by
+    the north one and leave by the other, so one leaving never meets one coming in."""
+    lines = FLOOR.fixed_lines
+    north = {c for c in FLOOR.clear
+             if 1.30 < FLOOR.centre(c)[0] < 1.55 and FLOOR.centre(c)[1] > 0.85}
+    middle = {c for c in FLOOR.clear
+              if 1.20 < FLOOR.centre(c)[0] < 1.30 and 0.53 < FLOOR.centre(c)[1] < 0.60}
+    assert north and middle
+    assert north <= cells_of(lines["outbound_in"]) and not north & cells_of(lines["outbound_out"])
+    assert middle <= cells_of(lines["outbound_out"])
+    assert not middle & cells_of(lines["outbound_in"])
+    assert len(parts(FLOOR.clear - north - middle)) == 2
+    assert len(parts(FLOOR.clear - north)) == 1 and len(parts(FLOOR.clear - middle)) == 1
+    south = [p for p in lines["outbound_out"].points if p[1] < 0.30]
+    assert south and max(x for x, _ in south) > 1.55  # under table_2
 
 
 def test_a_parked_robot_leaves_the_station_lines_and_the_other_spot_free():
@@ -106,8 +119,8 @@ def test_the_real_arena_params_change_only_the_lock_sizes():
     assert {k: mine[k] for k in base if mine[k] != base[k]} == LOCKS
 
 
-def test_the_body_is_ten_centimetres_and_still_covers_the_robot():
-    assert BODY == 0.10
+def test_the_body_is_eleven_centimetres_and_still_covers_the_robot():
+    assert BODY == 0.11
     assert BODY > math.hypot(0.0575, 0.0575)  # 11.5 cm square Pinky turning in place
 
 

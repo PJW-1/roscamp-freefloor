@@ -4,6 +4,8 @@
 #  - OUTBOUND(O)는 동남쪽 노란 빗금 구역. 북쪽 벽을 따라 동쪽 끝(EN)까지 가서 남쪽으로 내려간다.
 #    상자 box_small 북쪽 0.25 m 틈(QO-EN)은 이 길뿐이라 들고 나는 로봇이 같은 길을 쓴다
 #  - 출고를 마친 로봇은 QO에서 가운데(PS)로 내려와 남서쪽 대기 칸을 지나 QW로 간다
+#  - 자유바닥에서는 OUTBOUND를 나올 때 table_2 남쪽, 가운데, block_long과 box_small 사이 틈을
+#    지나 PS로 간다(floor_map_real_arena.yaml outbound_out). 북쪽 틈은 들어가는 길로만 쓴다
 #  - 대기 칸 P-1, P-2는 남쪽 벽 쪽. WORK로 가는 길 위라 먼저 온 로봇이 먼저 나간다
 #
 #   y

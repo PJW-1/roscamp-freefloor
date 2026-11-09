@@ -1,9 +1,12 @@
 # 실제 경기장(real_arena) 리허설: 핑키 2대, 주문 8건이 20초마다 들어온다.
-# 로봇은 남쪽 대기 칸 P-1, P-2에서 출발해 서쪽 WORK와 동남쪽 OUTBOUND를 오간다. 동쪽 끝으로 가는
-# 길은 상자 box_small 북쪽 0.25 m 틈 하나라 한 번에 한 대만 지난다(OUTBOUND 접근선·출구선).
+# 로봇은 남쪽 대기 칸 P-1, P-2에서 출발해 서쪽 WORK와 동남쪽 OUTBOUND를 오간다. OUTBOUND는
+# box_small 북쪽 틈으로 들어가 table_2 남쪽과 가운데 틈으로 나오는 한 방향 고리다.
 # 자유바닥 전용이고, 도킹은 sim_dock_stub:=true가 있어야 끝까지 돈다. 바닥이 좁아 잠금을 줄인
 # 관제 파라미터(fleet_params_real_arena)와 느린 속도(0.12 m/s)로 돈다. 틈 옆 여유가 5 cm라
 # 라이다 잡음이 벽을 발자국 안에 찍으므로 RPP 충돌 검사를 끈다(nav_collision_check:=false).
+# 집에서 돌리기: 이 레포를 colcon build로 빌드하고(시뮬 월드와 지도도 함께 설치된다), 실물
+# 네트워크가 아닌 도메인에서(6은 launch가 막는다, 시뮬은 58) 이 컴퓨터 안에서만 돌린다.
+#   export ROS_DOMAIN_ID=58 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 #   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_real_arena traffic_mode:=freefloor \
 #       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.12 \
 #       nav_collision_check:=false
