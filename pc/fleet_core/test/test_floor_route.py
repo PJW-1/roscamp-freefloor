@@ -344,3 +344,17 @@ def test_the_last_resort_ends_with_the_cycle():
     traffic._unresolved_at, traffic._unresolved_robot = 5.0, "b"
     traffic._check_deadlock(6.5)  # 순환 없이 1초가 지났다
     assert traffic._unresolved_at is None
+
+
+def test_a_robot_right_next_to_another_can_plan_out_through_its_own_cells():
+    """바로 옆 로봇의 칸을 몸만큼 넓히면 내 출발 칸 둘레가 다 막힌다. 내가 쥔 칸으로는 나갈 수 있다
+    (창고 씨드 4: 붙어 선 두 로봇이 길을 못 찾아 격리)."""
+    traffic, _ = floor({"a": (1.98, 0.8), "b": (2.30, 0.8)})
+    a, b = traffic._missions["a"], traffic._missions["b"]
+    for m in (a, b):
+        assert traffic.zones.acquire_all(m.name, traffic._body_cells(m.x, m.y))
+    walls = traffic._inflate({traffic.floor.cell_at(c) for c in traffic.zones.held_set("a")})
+    here = (2.24, 0.8)  # 보고 위치는 조금 흔들린다: 출발 칸이 a의 칸 바로 옆
+    route = traffic._route(b, here, (2.9, 0.8), extra=frozenset(walls))
+    assert route is not None
+    assert not traffic._swept(route.between(0.15, route.length)) & traffic.zones.held_set("a")  # 멀어진다

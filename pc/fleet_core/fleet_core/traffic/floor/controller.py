@@ -687,20 +687,22 @@ class FloorController(TrafficController):
         cautious(대기 자리로 가는 길): 급하지 않으니 남이 쥔 칸을 모두 피한다."""
         penalty = self._penalty_for(m.name)
         walls = self._others_cells(m.name) if cautious else self._wall_cells(m.name)
-        route = self._plan_around(start, goal, out_line, in_line, walls, extra, penalty)
+        mine = {self.floor.cell_at(c) for c in self.zones.held_set(m.name)}
+        route = self._plan_around(start, goal, out_line, in_line, walls, extra, penalty, mine)
         if route is not None and not cautious:
             oncoming = self._oncoming(m.name, route)
             if oncoming:
                 walls |= {self.floor.cell_at(c) for n in oncoming for c in self.zones.held_set(n)}
                 route = self._plan_around(start, goal, out_line, in_line, walls, extra,
-                                          penalty) or route
+                                          penalty, mine) or route
         if route is None and not extra:
             route = self.planner.leg(start, goal, out_line, in_line)
         return route
 
-    def _plan_around(self, start, goal, out_line, in_line, walls, extra, penalty):
+    def _plan_around(self, start, goal, out_line, in_line, walls, extra, penalty, mine=frozenset()):
         avoid = self._inflate(walls) | extra
-        avoid -= {self.floor.cell_of(*start)}
+        # 내가 쥔 칸으로는 나갈 수 있다: 붙어 선 로봇의 넓힌 칸에 출발 칸 둘레가 다 막혀도
+        avoid -= {self.floor.cell_of(*start)} | mine
         return self.planner.leg(start, goal, out_line, in_line, frozenset(avoid), penalty)
 
     def _headings(self, points, limit: float) -> dict:
