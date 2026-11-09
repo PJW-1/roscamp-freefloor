@@ -101,6 +101,9 @@ class FloorController(TrafficController):
         # robot -> goal id -> path of every MoveTo the robot may still follow (until its result)
         self._active: dict[str, dict[int, Route]] = {name: {} for name in robots}
         self._off_cells: dict[str, int] = {name: 0 for name in robots}
+        # robot -> cell -> reports in a row beyond the body while at rest (kept apart from
+        # m.outside, which counts beyond release_distance_m)
+        self._rest_outside: dict[str, dict[str, int]] = {name: {} for name in robots}
         self._wp_cell: dict = {}
         self.metrics = {"slowdowns": 0, "replans": 0, "sidesteps": 0, "no_path": 0}
         self._block_since: dict[str, float] = {}  # robot -> first BLOCKED report of this run
@@ -173,19 +176,28 @@ class FloorController(TrafficController):
             m.fault_reason = ""
 
     def _count_reports_outside(self, m: _Mission) -> None:
+        d = self.params.release_distance_m
         # a robot standing at the end of its trip needs only its body: the cells it came over
         # within release_distance_m would shut a parking spot 0.35 m away
-        d = self._body if self._at_rest(m) else self.params.release_distance_m
+        rest = self._rest_outside.setdefault(m.name, {})
+        at_rest = self._at_rest(m)
+        if not at_rest:
+            rest.clear()
         for cell_id in list(self.zones.held_set(m.name)):
-            if self.floor.box_distance(self.floor.cell_at(cell_id), m.x, m.y) > d:
+            gap = self.floor.box_distance(self.floor.cell_at(cell_id), m.x, m.y)
+            if gap > d:
                 m.outside[cell_id] = m.outside.get(cell_id, 0) + 1
             else:
                 m.outside.pop(cell_id, None)
+            if at_rest and gap > self._body:
+                rest[cell_id] = rest.get(cell_id, 0) + 1
+            else:
+                rest.pop(cell_id, None)
 
     def _at_rest(self, m: _Mission) -> bool:
         """The trip is over: no leg, no goal and no old MoveTo it may still follow."""
         return (m.name not in self._legs and m.goal is None and not self._active[m.name]
-                and m.robot_state not in ON_A_GOAL + (BLOCKED,))
+                and m.phase != DOCKING and m.robot_state not in ON_A_GOAL + (BLOCKED,))
 
     def _watch_lane_error(self, m: _Mission) -> None:
         """보고 자리의 몸 칸을 쥐었나 본다. 아니면 한꺼번에 잡고, 못 잡는 보고가
@@ -314,12 +326,15 @@ class FloorController(TrafficController):
         for active in self._active[m.name].values():
             s, _ = active.project(m.x, m.y)
             keep |= self._swept(active.between(s, active.length))
-        need = (max(REST_RELEASE_SAMPLES, self.params.release_confirm_samples)
-                if self._at_rest(m) else self.params.release_confirm_samples)
+        rest = self._rest_outside.get(m.name, {}) if self._at_rest(m) else {}
         for cell_id in list(self.zones.held_set(m.name)):
-            if cell_id not in keep and m.outside.get(cell_id, 0) >= need:
+            if cell_id in keep:
+                continue
+            if (m.outside.get(cell_id, 0) >= self.params.release_confirm_samples
+                    or rest.get(cell_id, 0) >= REST_RELEASE_SAMPLES):
                 self.zones.release(m.name, cell_id)
                 m.outside.pop(cell_id, None)
+                rest.pop(cell_id, None)
 
     # ---- legs ---------------------------------------------------------------------------
 

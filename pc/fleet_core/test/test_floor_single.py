@@ -270,25 +270,70 @@ def test_a_robot_on_cells_of_another_is_stopped_after_the_confirm_count():
 # Gazebo warehouse, 2026-11-09: a pinky stopped 4 cm short of P-3 kept the cells it came over
 # (within release_distance_m) and they shut P-2, 0.35 m away, for the next robot.
 
-def test_a_robot_standing_at_the_end_of_its_trip_keeps_only_its_body():
+def standing_after_a_trip(x=1.0, y=1.15):
+    """Robot a stands at (x, y) holding every cell within release_distance_m."""
     core, now = bare_floor()
-    traffic = core.traffic
-    floor = traffic.floor
-    report(core, "a", 1.0, 1.15)
-    came_over = {floor.cell_id(c) for c in disk_cells(floor, 1.0, 1.15,
+    floor = core.traffic.floor
+    report(core, "a", x, y)
+    came_over = {floor.cell_id(c) for c in disk_cells(floor, x, y,
                                                       core.params.release_distance_m)}
-    body = {floor.cell_id(c) for c in disk_cells(floor, 1.0, 1.15,
+    body = {floor.cell_id(c) for c in disk_cells(floor, x, y,
                                                  floor.robot_radius_m + floor.cell_margin_m)}
     assert came_over > body
-    assert traffic.zones.acquire_all("a", came_over)
-    for n in range(1, REST_RELEASE_SAMPLES + 2):
+    assert core.traffic.zones.acquire_all("a", came_over)
+    return core, now, came_over, body
+
+
+def stand(core, now, n, x=1.0, y=1.15):
+    for _ in range(n):
         now[0] += 0.1
-        report(core, "a", 1.0, 1.15, times=1)
-        traffic.tick_progress(now[0])
-        if n == core.params.release_confirm_samples + 1:
-            # noisy reports of a robot at rest need a longer run before it lets go
-            assert traffic.zones.held_set("a") == came_over
-    assert traffic.zones.held_set("a") == body
+        report(core, "a", x, y, times=1)
+        core.traffic.tick_progress(now[0])
+
+
+def test_a_robot_standing_at_the_end_of_its_trip_keeps_only_its_body():
+    core, now, came_over, body = standing_after_a_trip()
+    held = core.traffic.zones.held_set
+    stand(core, now, REST_RELEASE_SAMPLES - 1)
+    # noisy reports of a robot at rest need a longer run than release_confirm_samples
+    assert held("a") == came_over
+    stand(core, now, 1)
+    assert held("a") == body
+
+
+def test_a_report_nearer_a_cell_starts_its_count_again():
+    core, now, came_over, body = standing_after_a_trip()
+    floor = core.traffic.floor
+    reach = floor.robot_radius_m + floor.cell_margin_m
+    east = next(c for c in sorted(came_over) if c not in body
+                and floor.box_distance(floor.cell_at(c), 1.05, 1.15) <= reach)
+    west = next(c for c in sorted(came_over) if c not in body
+                and floor.box_distance(floor.cell_at(c), 1.05, 1.15) > reach)
+    stand(core, now, REST_RELEASE_SAMPLES - 1)
+    stand(core, now, 1, x=1.05)  # east is under the body of this one report
+    stand(core, now, REST_RELEASE_SAMPLES - 1)
+    held = core.traffic.zones.held_set("a")
+    assert east in held and west not in held
+
+
+def test_a_robot_that_leaves_before_its_count_is_full_keeps_its_cells():
+    core, now, came_over, body = standing_after_a_trip()
+    traffic = core.traffic
+    stand(core, now, REST_RELEASE_SAMPLES - 1)
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")
+    traffic.step("a")
+    assert moves_of(traffic.take_output())
+    now[0] += 0.1
+    traffic.tick_progress(now[0])  # no report yet since it left
+    assert came_over <= traffic.zones.held_set("a")
+
+
+def test_a_robot_waiting_to_dock_keeps_its_cells():
+    core, now, came_over, body = standing_after_a_trip()
+    m = core.traffic._missions["a"]
+    m.phase, m.dest, m.retry_at = "DOCKING", "WORK", now[0] + 60.0  # a dock retry to come
+    stand(core, now, REST_RELEASE_SAMPLES + 1)
+    assert came_over <= core.traffic.zones.held_set("a")
 
 
 def test_a_robot_on_its_way_still_keeps_the_cells_within_the_release_distance():
