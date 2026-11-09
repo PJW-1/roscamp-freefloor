@@ -79,6 +79,83 @@ def test_the_roaming_scenario_has_stock_for_every_order():
         assert wanted <= stock[item], item
 
 
+PKG = Path(__file__).resolve().parents[1]
+FAKE = PKG.parent / "fake_robots"  # 소스 폴더도 share와 같은 모양(scenarios/, maps/)
+
+
+def test_a_scenario_without_a_map_runs_in_the_lane_arena():
+    from fleet_gz_sim.fleet_setup import arena_for
+    arena = arena_for(ROAM, PKG, FAKE)
+    assert arena.name == "lane_arena" and arena.lane_map == ""
+    assert arena.world == str(PKG / "worlds" / "lane_arena.sdf")
+    assert arena.nav_map == str(PKG / "maps" / "lane_arena.yaml")
+    assert arena.nav_map_fine == str(PKG / "maps" / "lane_arena_fine.yaml")
+
+
+def test_a_warehouse_scenario_gets_the_generated_warehouse_world_and_maps():
+    """map: warehouse -> the world and Nav2 maps arena.py builds from sites/warehouse.yaml,
+    and the lane map that site names."""
+    from fleet_gz_sim import arena as arena_module
+    from fleet_gz_sim.fleet_setup import arena_for
+    arena = arena_for(WAREHOUSE, PKG, FAKE)
+    site = arena_module.load_site(PKG / "sites" / "warehouse.yaml")
+    assert arena.name == site.name == "warehouse"
+    world, nav, _, fine, _ = site.outputs()
+    assert (arena.world, arena.nav_map, arena.nav_map_fine) == tuple(
+        str(PKG / rel) for rel in (world, nav, fine))
+    assert arena.lane_map == str(FAKE / "maps" / f"{site.lane_map}.yaml")
+    for path in (arena.world, arena.nav_map, arena.nav_map_fine, arena.lane_map):
+        assert Path(path).is_file(), path
+
+
+def test_a_scenario_map_without_a_gazebo_world_is_refused(tmp_path):
+    from fleet_gz_sim.fleet_setup import arena_for
+    mine = tmp_path / "mine.yaml"
+    mine.write_text("map: no_such_map\n")
+    with pytest.raises(ScenarioUnfit, match="no_such_map"):
+        arena_for(mine, PKG, FAKE)
+
+
+def test_the_scenario_map_drives_loading_and_start_poses():
+    """warehouse_rush starts on P-3..P-1 of the warehouse map, which the default map lacks."""
+    site, scenario = load(FAKE / "scenarios" / "warehouse_rush.yaml")
+    poses = start_poses(site, scenario)
+    assert poses["pinky2"][:2] == pytest.approx((3.0, 3.15))  # P-2
+    from fleet_gz_sim.fleet_setup import arena_for
+    site, scenario = load(WAREHOUSE, arena_for(WAREHOUSE, PKG, FAKE).lane_map)
+    parking = {next(iter(site.zones[name])) for name in ("P-1", "P-2", "P-3")}
+    assert {cfg.start for cfg in scenario.robots.values()} == parking
+
+
+WAREHOUSE = PKG / "scenarios" / "gz_warehouse.yaml"
+
+
+def _warehouse():
+    from fleet_gz_sim.fleet_setup import arena_for
+    return load(WAREHOUSE, arena_for(WAREHOUSE, PKG, FAKE).lane_map)[1]
+
+
+def test_the_warehouse_scenario_keeps_three_pinkies_busy_for_twenty_minutes():
+    scenario = _warehouse()
+    assert list(scenario.robots) == ["pinky1", "pinky2", "pinky3"]
+    times = [order.at_s for order in scenario.orders]
+    assert times == sorted(times) and times[0] <= 10
+    assert times[-1] >= 1200
+    assert max(b - a for a, b in pairwise(times)) <= 45
+    assert scenario.timeout_s > times[-1] + 600
+    assert scenario.arm.seconds_per_item <= 3.0 and scenario.dock.duration_s <= 3.0
+    assert scenario.arm.fail_rate == 0.0 and not scenario.faults
+
+
+def test_the_warehouse_scenario_has_stock_for_every_order():
+    scenario = _warehouse()
+    stock = {item: count for items in scenario.stock.values() for item, count in items.items()}
+    for order in scenario.orders:
+        assert set(order.items) <= set(stock), order.id
+    for item in stock:
+        assert sum(order.items.get(item, 0) for order in scenario.orders) <= stock[item], item
+
+
 def test_an_obstacle_schedule_is_off_a_share_name_or_a_file(tmp_path):
     """obstacles 인자: 비면 장애물 없음, 이름은 share의 obstacles 폴더, 아니면 파일."""
     from fleet_gz_sim.fleet_setup import obstacles_path

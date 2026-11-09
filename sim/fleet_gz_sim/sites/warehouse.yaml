@@ -1,0 +1,56 @@
+# 창고 사이트 (2026-11-08). 레인 지도 sim/fake_robots/maps/warehouse.yaml의 정적 상자.
+# 랙 줄 넷(y 0.6-0.9, 1.4-1.7, 2.2-2.5, 3.0-3.3)이 레인 줄 사이에 있고, 열 A, C, E, G에서 끊긴다.
+# 열 D(x 3.0) 자리는 줄 0-1, 1-2 랙이 비어 있다(지점 없는 교차 D0->D2). 대기 칸 자리(x 2.55-3.45,
+# y 3.0-3.3)도 비었다. 벽 따라 랙, 도크 옆 작업대와 그 위 팔, 남쪽 벽 기둥, 북쪽 모서리 소품.
+# 레인에서 모두 0.25 m 이상.
+lane_map: warehouse            # sim/fake_robots/maps/의 이름
+bounds_m: [0.0, 0.0, 6.0, 4.0] # 벽 안쪽 면
+boxes:
+  # ---- 작업대: WORK(arm1, arm2)는 서쪽 벽, OUTBOUND(arm3)는 동쪽 벽 ----
+  - {name: table_arm1, kind: table, x0: 0.000, y0: 1.550, x1: 0.200, y1: 1.900, height_m: 0.3}
+  - {name: table_arm2, kind: table, x0: 0.000, y0: 2.000, x1: 0.200, y1: 2.350, height_m: 0.3}
+  - {name: table_arm3, kind: table, x0: 5.800, y0: 1.650, x1: 6.000, y1: 2.250, height_m: 0.3}
+  # ---- 로봇 팔(움직이지 않는 모형): 작업대 위에 받침이 0.12 m 솟는다. 충돌은 받침만 ----
+  - {name: arm1, kind: arm, x0: 0.020, y0: 1.645, x1: 0.180, y1: 1.805, height_m: 0.42}
+  - {name: arm2, kind: arm, x0: 0.020, y0: 2.095, x1: 0.180, y1: 2.255, height_m: 0.42}
+  - {name: arm3, kind: arm, x0: 5.820, y0: 1.870, x1: 5.980, y1: 2.030, height_m: 0.42}
+  # ---- 소품: WORK 북쪽 대기 랙(WU 위), OUTBOUND 북쪽 포장대(OU 위). 레인에서 0.25 m ----
+  - {name: staging_rack, kind: rack, x0: 0.250, y0: 3.050, x1: 0.650, y1: 3.750, height_m: 0.45}
+  - {name: packing_table, kind: table, x0: 5.350, y0: 3.000, x1: 5.750, y1: 3.500, height_m: 0.3}
+  # ---- 벽 랙 ----
+  - {name: rack_w1, kind: rack, x0: 0.000, y0: 0.150, x1: 0.200, y1: 1.450, height_m: 0.45}
+  - {name: rack_w2, kind: rack, x0: 0.000, y0: 2.450, x1: 0.200, y1: 3.850, height_m: 0.45}
+  - {name: rack_e1, kind: rack, x0: 5.800, y0: 0.150, x1: 6.000, y1: 1.450, height_m: 0.45}
+  - {name: rack_e2, kind: rack, x0: 5.800, y0: 2.450, x1: 6.000, y1: 3.850, height_m: 0.45}
+  - {name: rack_n1, kind: rack, x0: 0.300, y0: 3.800, x1: 1.550, y1: 4.000, height_m: 0.45}
+  - {name: rack_n2, kind: rack, x0: 1.650, y0: 3.800, x1: 2.950, y1: 4.000, height_m: 0.45}
+  - {name: rack_n3, kind: rack, x0: 3.050, y0: 3.800, x1: 4.350, y1: 4.000, height_m: 0.45}
+  - {name: rack_n4, kind: rack, x0: 4.450, y0: 3.800, x1: 5.700, y1: 4.000, height_m: 0.45}
+  # ---- 랙 줄: 이름은 rack_<줄><블록><반쪽> ----
+  - {name: rack_0aca, kind: rack, x0: 1.150, y0: 0.600, x1: 1.575, y1: 0.900, height_m: 0.45}
+  - {name: rack_0acb, kind: rack, x0: 1.625, y0: 0.600, x1: 2.050, y1: 0.900, height_m: 0.45}
+  - {name: rack_0cea, kind: rack, x0: 2.550, y0: 0.600, x1: 2.750, y1: 0.900, height_m: 0.45}
+  - {name: rack_0ceb, kind: rack, x0: 3.250, y0: 0.600, x1: 3.450, y1: 0.900, height_m: 0.45}
+  - {name: rack_0ega, kind: rack, x0: 3.950, y0: 0.600, x1: 4.375, y1: 0.900, height_m: 0.45}
+  - {name: rack_0egb, kind: rack, x0: 4.425, y0: 0.600, x1: 4.850, y1: 0.900, height_m: 0.45}
+  - {name: rack_1aca, kind: rack, x0: 1.150, y0: 1.400, x1: 1.575, y1: 1.700, height_m: 0.45}
+  - {name: rack_1acb, kind: rack, x0: 1.625, y0: 1.400, x1: 2.050, y1: 1.700, height_m: 0.45}
+  - {name: rack_1cea, kind: rack, x0: 2.550, y0: 1.400, x1: 2.750, y1: 1.700, height_m: 0.45}
+  - {name: rack_1ceb, kind: rack, x0: 3.250, y0: 1.400, x1: 3.450, y1: 1.700, height_m: 0.45}
+  - {name: rack_1ega, kind: rack, x0: 3.950, y0: 1.400, x1: 4.375, y1: 1.700, height_m: 0.45}
+  - {name: rack_1egb, kind: rack, x0: 4.425, y0: 1.400, x1: 4.850, y1: 1.700, height_m: 0.45}
+  - {name: rack_2aca, kind: rack, x0: 1.150, y0: 2.200, x1: 1.575, y1: 2.500, height_m: 0.45}
+  - {name: rack_2acb, kind: rack, x0: 1.625, y0: 2.200, x1: 2.050, y1: 2.500, height_m: 0.45}
+  - {name: rack_2cea, kind: rack, x0: 2.550, y0: 2.200, x1: 2.975, y1: 2.500, height_m: 0.45}
+  - {name: rack_2ceb, kind: rack, x0: 3.025, y0: 2.200, x1: 3.450, y1: 2.500, height_m: 0.45}
+  - {name: rack_2ega, kind: rack, x0: 3.950, y0: 2.200, x1: 4.375, y1: 2.500, height_m: 0.45}
+  - {name: rack_2egb, kind: rack, x0: 4.425, y0: 2.200, x1: 4.850, y1: 2.500, height_m: 0.45}
+  - {name: rack_3aca, kind: rack, x0: 1.150, y0: 3.000, x1: 1.575, y1: 3.300, height_m: 0.45}
+  - {name: rack_3acb, kind: rack, x0: 1.625, y0: 3.000, x1: 2.050, y1: 3.300, height_m: 0.45}
+  - {name: rack_3ega, kind: rack, x0: 3.950, y0: 3.000, x1: 4.375, y1: 3.300, height_m: 0.45}
+  - {name: rack_3egb, kind: rack, x0: 4.425, y0: 3.000, x1: 4.850, y1: 3.300, height_m: 0.45}
+  # ---- 남쪽 벽 기둥 ----
+  - {name: pillar_s1, kind: pillar, x0: 1.150, y0: 0.000, x1: 1.250, y1: 0.100, height_m: 0.6}
+  - {name: pillar_s2, kind: pillar, x0: 2.600, y0: 0.000, x1: 2.700, y1: 0.100, height_m: 0.6}
+  - {name: pillar_s3, kind: pillar, x0: 3.300, y0: 0.000, x1: 3.400, y1: 0.100, height_m: 0.6}
+  - {name: pillar_s4, kind: pillar, x0: 4.700, y0: 0.000, x1: 4.800, y1: 0.100, height_m: 0.6}

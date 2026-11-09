@@ -1,0 +1,166 @@
+# 창고 지도 (2026-11-08). 6.0 x 4.0 m 바닥을 레인으로 거의 다 덮은 부하 시험용 지도.
+# 상자 배치는 sim/fleet_gz_sim/sites/warehouse.yaml. 열 A~G(x 0.9~5.1), 줄 0~4(y 0.35~3.55).
+#  - 일방통행 격자: 줄 0, 3 동쪽행, 줄 1, 4 서쪽행, 열 A, E 남쪽행, 열 C, G 북쪽행
+#  - 좁은 양방향 통로 TUN(A2-C2): 잠금 하나. 돌아가는 길은 줄 0, 1, 3, 4
+#  - 지점 없는 교차: D0->D2가 줄 1(E1->C1)을 가로지른다. 두 끝 구역은 서로 4칸 넘게 떨어져
+#    충돌 쌍이 대기 고리를 만들지 않는다
+#  - WORK는 서쪽 띠(x 0.45), OUTBOUND는 동쪽 띠(x 5.55). 둘 다 남쪽에서 줄을 서고 북쪽이나
+#    서쪽으로 나간다. 그래서 WORK->OUTBOUND(북서에서 남동)와 OUTBOUND->WORK(북동에서 남서)가
+#    가운데에서 엇갈리고, 갈 길마다 길이가 같은 길이 둘씩 있다
+#  - 대기 칸 P-1~P-3은 북쪽 가운데 곁길(X3에서 들어가 C4로 나온다). 들어가는 레인에 계획 비용
+#    4 m를 매겨 지나가는 로봇의 지름길이 되지 않게 한다. 레인은 모두 직각으로 만나 충돌 쌍이 없다
+#
+#   y
+#  3.55        A4 <--- B4 <--- C4 <--- D4 <--- E4 <--- F4 <--- G4
+#               v               ^ ^             v               ^
+#  3.15         v               ^  P-3 <- P-2 <- P-1            ^
+#               v               ^              ^ v              ^
+#  2.75  WU -> A3 ---> B3 ---> C3 ---> D3 -> X3 -> E3 ---> F3 ---> G3 <- OU
+#         ^     v               ^               v               ^     ^
+#  1.95   W    A2 <===TUN====> C2 <--- D2 <--- E2 <--- F2 <--- G2 <-  O
+#         ^     v               ^      ^        v               ^     ^
+#  1.15  QS <- A1 <--- B1 <--- C1 <----+------ E1 <--- F1 <--- G1 -> QOS
+#         ^     v               ^      |        v               ^     ^
+#  0.35  WS <- A0 ---> B0 ---> C0 ---> D0 ---> E0 ---> F0 ---> G0 -> ES
+#       0.45  0.9     1.6     2.3     3.0     3.7     4.4     5.1   5.55  x
+half_width_m: 0.05    # 추정: 레인에서 이 거리까지는 레인 위로 친다
+lane_entry_m: 0.25    # 레인 바닥이 시작되는 거리
+origin_m: [0.0, 0.0]
+bundle_two_way: true  # 양방향 쌍은 잠금 하나
+waypoints:
+  # ---- 줄 0 (y 0.35) ----
+  - {id: A0, x: 0.90, y: 0.35}
+  - {id: B0, x: 1.60, y: 0.35}
+  - {id: C0, x: 2.30, y: 0.35}
+  - {id: D0, x: 3.00, y: 0.35}
+  - {id: E0, x: 3.70, y: 0.35}
+  - {id: F0, x: 4.40, y: 0.35}
+  - {id: G0, x: 5.10, y: 0.35}
+  # ---- 줄 1 (y 1.15), D1 없음: 교차 ----
+  - {id: A1, x: 0.90, y: 1.15}
+  - {id: B1, x: 1.60, y: 1.15}
+  - {id: C1, x: 2.30, y: 1.15}
+  - {id: E1, x: 3.70, y: 1.15}
+  - {id: F1, x: 4.40, y: 1.15}
+  - {id: G1, x: 5.10, y: 1.15}
+  # ---- 줄 2 (y 1.95), B2 없음: 좁은 통로 ----
+  - {id: A2, x: 0.90, y: 1.95}
+  - {id: C2, x: 2.30, y: 1.95}
+  - {id: D2, x: 3.00, y: 1.95}
+  - {id: E2, x: 3.70, y: 1.95}
+  - {id: F2, x: 4.40, y: 1.95}
+  - {id: G2, x: 5.10, y: 1.95}
+  # ---- 줄 3 (y 2.75) ----
+  - {id: A3, x: 0.90, y: 2.75}
+  - {id: B3, x: 1.60, y: 2.75}
+  - {id: C3, x: 2.30, y: 2.75}
+  - {id: D3, x: 3.00, y: 2.75}
+  - {id: X3, x: 3.35, y: 2.75}     # 대기 칸 입구
+  - {id: E3, x: 3.70, y: 2.75}
+  - {id: F3, x: 4.40, y: 2.75}
+  - {id: G3, x: 5.10, y: 2.75}
+  # ---- 줄 4 (y 3.55) ----
+  - {id: A4, x: 0.90, y: 3.55}
+  - {id: B4, x: 1.60, y: 3.55}
+  - {id: C4, x: 2.30, y: 3.55}
+  - {id: D4, x: 3.00, y: 3.55}
+  - {id: E4, x: 3.70, y: 3.55}
+  - {id: F4, x: 4.40, y: 3.55}
+  - {id: G4, x: 5.10, y: 3.55}
+  # ---- 서쪽 띠: WORK ----
+  - {id: WU, x: 0.45, y: 2.75}     # 도크를 떠나 북쪽으로
+  - {id: W, x: 0.45, y: 1.95}      # WORK 도크
+  - {id: QS, x: 0.45, y: 1.15}     # 대기 지점
+  - {id: WS, x: 0.45, y: 0.35}
+  # ---- 동쪽 띠: OUTBOUND ----
+  - {id: ES, x: 5.55, y: 0.35}
+  - {id: QOS, x: 5.55, y: 1.15}    # 대기 지점
+  - {id: O, x: 5.55, y: 1.95}      # OUTBOUND 도크
+  - {id: OU, x: 5.55, y: 2.75}     # 도크를 떠나 북쪽으로
+  # ---- 대기 칸, 주행 순서대로 ----
+  - {id: P-1, x: 3.35, y: 3.15}
+  - {id: P-2, x: 3.00, y: 3.15}
+  - {id: P-3, x: 2.65, y: 3.15}
+two_way:
+  TUN: [A2, C2]
+lanes:
+  # ---- 줄 0, 동쪽행 ----
+  - {from: A0, to: B0}
+  - {from: B0, to: C0}
+  - {from: C0, to: D0}
+  - {from: D0, to: E0}
+  - {from: E0, to: F0}
+  - {from: F0, to: G0}
+  # ---- 줄 1, 서쪽행 ----
+  - {from: G1, to: F1}
+  - {from: F1, to: E1}
+  - {from: E1, to: C1}
+  - {from: C1, to: B1}
+  - {from: B1, to: A1}
+  # ---- 줄 2, 서쪽행(TUN 동쪽) ----
+  - {from: G2, to: F2}
+  - {from: F2, to: E2}
+  - {from: E2, to: D2}
+  - {from: D2, to: C2}
+  # ---- 줄 3, 동쪽행 ----
+  - {from: A3, to: B3}
+  - {from: B3, to: C3}
+  - {from: C3, to: D3}
+  - {from: D3, to: X3}
+  - {from: X3, to: E3}
+  - {from: E3, to: F3}
+  - {from: F3, to: G3}
+  # ---- 줄 4, 서쪽행 ----
+  - {from: G4, to: F4}
+  - {from: F4, to: E4}
+  - {from: E4, to: D4}
+  - {from: D4, to: C4}
+  - {from: C4, to: B4}
+  - {from: B4, to: A4}
+  # ---- 열 A, 남쪽행 ----
+  - {from: A4, to: A3}
+  - {from: A3, to: A2}
+  - {from: A2, to: A1}
+  - {from: A1, to: A0, length: 0.9}   # 실제 0.8 m. WORK->OUTBOUND 기본 길을 열 E로(같은 길이 둘 중)
+  # ---- 열 C, 북쪽행 ----
+  - {from: C0, to: C1}
+  - {from: C1, to: C2}
+  - {from: C2, to: C3}
+  - {from: C3, to: C4}
+  # ---- 열 E, 남쪽행 ----
+  - {from: E4, to: E3}
+  - {from: E3, to: E2}
+  - {from: E2, to: E1}
+  - {from: E1, to: E0}
+  # ---- 열 G, 북쪽행 ----
+  - {from: G0, to: G1}
+  - {from: G1, to: G2}
+  - {from: G2, to: G3}
+  - {from: G3, to: G4}
+  # ---- 열 D: 줄 1을 지점 없이 가로지른다 ----
+  - {from: D0, to: D2}
+  # ---- WORK: 남쪽에서 들어와 북쪽(A3)으로 나간다 ----
+  - {from: A0, to: WS}
+  - {from: WS, to: QS}
+  - {from: A1, to: QS}
+  - {from: QS, to: W}
+  - {from: W, to: WU}
+  - {from: WU, to: A3}
+  # ---- OUTBOUND: 남쪽에서 들어와 서쪽(G2)이나 북쪽(G3)으로 나간다 ----
+  - {from: G0, to: ES}
+  - {from: ES, to: QOS}
+  - {from: G1, to: QOS}
+  - {from: QOS, to: O}
+  - {from: O, to: G2}
+  - {from: O, to: OU}
+  - {from: OU, to: G3}
+  # ---- 대기 칸 ----
+  - {from: X3, to: P-1, length: 4.0}   # 계획 비용만 늘린다(실제 0.4 m)
+  - {from: P-1, to: P-2}
+  - {from: P-2, to: P-3}
+  - {from: P-3, to: C4}
+stations:
+  WORK: {dock: W, queue: [[QS, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[QOS, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+# 주행 순서대로. 대기 로봇은 가장 깊은 빈 곳으로 가므로 먼저 온 로봇이 먼저 나간다.
+parking: [P-1, P-2, P-3]

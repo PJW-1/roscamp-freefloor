@@ -1,0 +1,17 @@
+# 창고 지도(warehouse)용 장애물 일정. 형식은 roam.yaml 머리말과 같다.
+# 기본 길(WORK->OUTBOUND: 줄 3, 열 E, 줄 0 / OUTBOUND->WORK: 줄 2, TUN, 열 A) 위에서 돌아가는
+# 길이 있는 레인에만 놓는다. 대기 줄, 도크 앞, 대기 칸 레인에는 놓지 않는다.
+repeat_every_s: 300
+size_m: [0.12, 0.12, 0.25]
+# 막힌 레인의 출발 지점에는 늘 다른 출구가 있어(test_every_blocked_lane_leaves_a_way_around)
+# 관제가 기다리지 않고 돌아간다(LANE_BLOCKED -> DETOUR).
+obstacles:
+  - {at_s: 30, lane: [A3, B3], duration_s: 30}      # WORK를 떠나 A3에서 열 A, 줄 0으로
+  - {at_s: 70, lane: [G2, F2], duration_s: 30}      # OUTBOUND에서 G2 북쪽(G3, 줄 4)으로
+  - {at_s: 115, lane: [E2, E1], duration_s: 25}     # E2에서 줄 2 서쪽
+  - {at_s: 155, lane: [C1, B1], duration_s: 30}     # C1에서 북쪽(C2, TUN)으로
+  - {at_s: 200, lane: [A2, C2], duration_s: 25}     # 좁은 통로 TUN. 돌아가는 길: 줄 1
+  - {at_s: 245, lane: [E3, E2], duration_s: 30}     # 기본 길의 열 E. E3에서 동쪽(F3)으로
+# 줄 0의 E0->F0, F0->G0은 OUTBOUND로 가는 유일한 길이라 놓지 않는다. 출구가 하나뿐인
+# 지점(B3, D2, F2, D3 등)에서 나가는 레인에도 놓지 않는다. 대기 줄 입구 X3로 가는 유일한 길
+# C3->D3->X3에도 놓지 않는다(test_every_blocked_lane_keeps_the_docks_and_the_queue_reachable).

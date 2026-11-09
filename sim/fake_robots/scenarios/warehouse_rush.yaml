@@ -1,0 +1,67 @@
+# 창고 지도(warehouse) 부하 시나리오. 주문 36건이 15~25초마다 와서 늘 밀려 있다.
+# 로봇 3대는 대기 칸에서 출발해 서쪽 끝 WORK와 동쪽 끝 OUTBOUND를 오가며 서로 엇갈린다.
+# 고장은 없다. Gazebo에서도 같은 파일을 쓴다(Gazebo는 speed_factor를 무시한다).
+map: warehouse
+seed: 16
+speed_factor: 5.0
+timeout_s: 3000
+stock: {arm1: {A: 60, B: 60}, arm2: {C: 60, D: 60}}
+orders:
+  - {at_s: 0, id: O-001, items: {B: 1, D: 1}}
+  - {at_s: 20, id: O-002, items: {B: 1, D: 1}}
+  - {at_s: 35, id: O-003, items: {A: 1, C: 1}}
+  - {at_s: 53, id: O-004, items: {C: 2}}
+  - {at_s: 73, id: O-005, items: {C: 2}}
+  - {at_s: 91, id: O-006, items: {A: 1, C: 1, D: 1}}
+  - {at_s: 116, id: O-007, items: {D: 2}}
+  - {at_s: 136, id: O-008, items: {C: 2}}
+  - {at_s: 158, id: O-009, items: {C: 2}}
+  - {at_s: 183, id: O-010, items: {C: 1}}
+  - {at_s: 203, id: O-011, items: {A: 1}}
+  - {at_s: 221, id: O-012, items: {B: 1, D: 1}}
+  - {at_s: 241, id: O-013, items: {B: 1, D: 1}}
+  - {at_s: 256, id: O-014, items: {D: 1}}
+  - {at_s: 271, id: O-015, items: {A: 1, D: 1}}
+  - {at_s: 293, id: O-016, items: {D: 1}}
+  - {at_s: 308, id: O-017, items: {A: 1, D: 1}}
+  - {at_s: 326, id: O-018, items: {A: 1, C: 1}}
+  - {at_s: 351, id: O-019, items: {D: 1}}
+  - {at_s: 373, id: O-020, items: {A: 1, B: 1, D: 1}}
+  - {at_s: 388, id: O-021, items: {A: 2}}
+  - {at_s: 410, id: O-022, items: {A: 1}}
+  - {at_s: 425, id: O-023, items: {B: 1, C: 1}}
+  - {at_s: 445, id: O-024, items: {B: 1}}
+  - {at_s: 463, id: O-025, items: {A: 1, B: 1, C: 1}}
+  - {at_s: 481, id: O-026, items: {B: 1, D: 1}}
+  - {at_s: 496, id: O-027, items: {C: 1, D: 1}}
+  - {at_s: 518, id: O-028, items: {A: 1, C: 1}}
+  - {at_s: 533, id: O-029, items: {B: 2}}
+  - {at_s: 553, id: O-030, items: {A: 1, C: 1, D: 1}}
+  - {at_s: 568, id: O-031, items: {A: 1, B: 1}}
+  - {at_s: 583, id: O-032, items: {A: 1, D: 1}}
+  - {at_s: 605, id: O-033, items: {B: 1}}
+  - {at_s: 627, id: O-034, items: {B: 1, D: 1}}
+  - {at_s: 645, id: O-035, items: {A: 1, D: 1}}
+  - {at_s: 667, id: O-036, items: {D: 1}}
+robots:
+  pinky1: {start: P-3, speed_mps: 0.20, pose_noise_m: 0.03}
+  pinky2: {start: P-2, speed_mps: 0.18, pose_noise_m: 0.03}
+  pinky3: {start: P-1, speed_mps: 0.20, pose_noise_m: 0.03}
+arm: {seconds_per_item: 2.0, swap_seconds: 4.0, fail_rate: 0.0}
+dock: {duration_s: 2.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 36
+  orders_partial: 0
+  orders_held: 0
+  fifo_violations: 0
+  dual_arm_overlaps: 0
+  zone_holder_max: 1
+  released_without_position_check: 0
+  unheld_zone_pose: 0
+  parked_while_backlog: 0
+  path_not_connected: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED, DOCKED]
+  event_counts: {ORDER_BOUND: 36, COMM_LOST: 0, ROBOT_NOT_REPORTING: 0}
+  order_results: {O-001: SHIPPED, O-002: SHIPPED, O-003: SHIPPED, O-004: SHIPPED, O-005: SHIPPED, O-006: SHIPPED, O-007: SHIPPED, O-008: SHIPPED, O-009: SHIPPED, O-010: SHIPPED, O-011: SHIPPED, O-012: SHIPPED, O-013: SHIPPED, O-014: SHIPPED, O-015: SHIPPED, O-016: SHIPPED, O-017: SHIPPED, O-018: SHIPPED, O-019: SHIPPED, O-020: SHIPPED, O-021: SHIPPED, O-022: SHIPPED, O-023: SHIPPED, O-024: SHIPPED, O-025: SHIPPED, O-026: SHIPPED, O-027: SHIPPED, O-028: SHIPPED, O-029: SHIPPED, O-030: SHIPPED, O-031: SHIPPED, O-032: SHIPPED, O-033: SHIPPED, O-034: SHIPPED, O-035: SHIPPED, O-036: SHIPPED}

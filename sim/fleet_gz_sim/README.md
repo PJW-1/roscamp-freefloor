@@ -66,9 +66,14 @@ ros2 launch fleet_gz_sim gz.launch.py
 # 주행 확인 추천: 24분 순환 운행, 임무를 끝까지(도킹 대역), 레인 장애물
 ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_roam sim_dock_stub:=true obstacles:=roam
 
+# 창고(포트폴리오): 6 x 4 m 창고, 랙, 작업대 위 팔 3대, 21분 동안 30 s마다 주문, 레인 장애물
+ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_warehouse sim_dock_stub:=true obstacles:=warehouse
+
 # 화면 없이(느린 컴퓨터, 원격)
 ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_roam sim_dock_stub:=true gui:=false rviz:=none
 ```
+
+경기장은 시나리오의 `map`이 고른다. `map`이 없으면 `lane_arena`, `map: warehouse`면 `worlds/warehouse.sdf`, `maps/warehouse[_fine].yaml`, 관제 레인 지도 `fake_robots/maps/warehouse.yaml`. 월드와 지도는 `sites/<이름>.yaml`에서 `python3 -m fleet_gz_sim.arena --site <이름>`(소스 폴더에서)으로 만들어 저장소에 넣는다.
 
 WSL2에서 화면이 느리면 GPU를 쓰게 한다: `export GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA`(그래픽 카드 이름).
 

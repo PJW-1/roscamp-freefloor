@@ -1,0 +1,69 @@
+# 포트폴리오용 Gazebo 창고 운행: 창고 지도(warehouse)에서 핑키 3대가 21분 동안 쉬지 않는다.
+# 주문이 30초마다 하나씩(43건) 들어와 늘 밀려 있다. 로봇은 북쪽 대기 칸 P-1~P-3에서 출발해
+# 서쪽 WORK(팔 arm1, arm2)와 동쪽 OUTBOUND(팔 arm3)를 오가며 가운데에서 엇갈린다.
+# 팔과 도킹 시간은 짧게 잡아 로봇이 오래 서 있지 않는다. 고장은 없다.
+# 도킹은 sim_dock_stub:=true로 돌린다(진짜 pinky_fsm은 DOCK_UNAVAILABLE). 장애물은
+# obstacles:=warehouse. Gazebo 시계를 쓰므로 speed_factor는 쓰이지 않는다.
+#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_warehouse sim_dock_stub:=true obstacles:=warehouse
+map: warehouse
+seed: 47
+speed_factor: 5.0
+timeout_s: 2400
+stock: {arm1: {A: 40, B: 40}, arm2: {C: 40, D: 40}}
+orders:
+  - {at_s: 0, id: W-001, items: {A: 1, C: 1}}
+  - {at_s: 30, id: W-002, items: {B: 1}}
+  - {at_s: 60, id: W-003, items: {D: 1, A: 1}}
+  - {at_s: 90, id: W-004, items: {C: 1}}
+  - {at_s: 120, id: W-005, items: {B: 1, D: 1}}
+  - {at_s: 150, id: W-006, items: {A: 1}}
+  - {at_s: 180, id: W-007, items: {C: 1, B: 1}}
+  - {at_s: 210, id: W-008, items: {D: 1}}
+  - {at_s: 240, id: W-009, items: {A: 1, C: 1}}
+  - {at_s: 270, id: W-010, items: {B: 1}}
+  - {at_s: 300, id: W-011, items: {D: 1, A: 1}}
+  - {at_s: 330, id: W-012, items: {C: 1}}
+  - {at_s: 360, id: W-013, items: {B: 1, D: 1}}
+  - {at_s: 390, id: W-014, items: {A: 1}}
+  - {at_s: 420, id: W-015, items: {C: 1, B: 1}}
+  - {at_s: 450, id: W-016, items: {D: 1}}
+  - {at_s: 480, id: W-017, items: {A: 1, C: 1}}
+  - {at_s: 510, id: W-018, items: {B: 1}}
+  - {at_s: 540, id: W-019, items: {D: 1, A: 1}}
+  - {at_s: 570, id: W-020, items: {C: 1}}
+  - {at_s: 600, id: W-021, items: {B: 1, D: 1}}
+  - {at_s: 630, id: W-022, items: {A: 1}}
+  - {at_s: 660, id: W-023, items: {C: 1, B: 1}}
+  - {at_s: 690, id: W-024, items: {D: 1}}
+  - {at_s: 720, id: W-025, items: {A: 1, C: 1}}
+  - {at_s: 750, id: W-026, items: {B: 1}}
+  - {at_s: 780, id: W-027, items: {D: 1, A: 1}}
+  - {at_s: 810, id: W-028, items: {C: 1}}
+  - {at_s: 840, id: W-029, items: {B: 1, D: 1}}
+  - {at_s: 870, id: W-030, items: {A: 1}}
+  - {at_s: 900, id: W-031, items: {C: 1, B: 1}}
+  - {at_s: 930, id: W-032, items: {D: 1}}
+  - {at_s: 960, id: W-033, items: {A: 1, C: 1}}
+  - {at_s: 990, id: W-034, items: {B: 1}}
+  - {at_s: 1020, id: W-035, items: {D: 1, A: 1}}
+  - {at_s: 1050, id: W-036, items: {C: 1}}
+  - {at_s: 1080, id: W-037, items: {B: 1, D: 1}}
+  - {at_s: 1110, id: W-038, items: {A: 1}}
+  - {at_s: 1140, id: W-039, items: {C: 1, B: 1}}
+  - {at_s: 1170, id: W-040, items: {D: 1}}
+  - {at_s: 1200, id: W-041, items: {A: 1, C: 1}}
+  - {at_s: 1230, id: W-042, items: {B: 1}}
+  - {at_s: 1260, id: W-043, items: {D: 1, A: 1}}
+robots:
+  pinky1: {start: P-3}
+  pinky2: {start: P-2}
+  pinky3: {start: P-1}
+arm: {seconds_per_item: 2.0, swap_seconds: 4.0, fail_rate: 0.0}
+dock: {duration_s: 2.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 43
+  orders_partial: 0
+  orders_held: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED]

@@ -3,14 +3,18 @@
 - 핑키를 놓는 자리: 시나리오의 시작 지점. 방향은 그 지점으로 들어오는 레인 방향
   (대기 줄을 따라 들어와 섰다).
 - 돌릴 수 없는 시나리오: 로봇 고장이 있는 것(가짜 핑키가 일으키는 고장이라 진짜 pinky_fsm에는
-  일으킬 곳이 없다). 경기장은 기본 레인 지도로 만들었으므로 지도도 기본 지도를 쓴다.
+  일으킬 곳이 없다).
+- 경기장: 시나리오의 `map`이 없으면 lane_arena(기본 레인 지도), 있으면 그 이름의 월드·지도·레인
+  지도(arena_for).
 """
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
-from fake_robots.scenario import ROBOT_FAULTS, load_scenario
+import yaml
+from fake_robots.scenario import ROBOT_FAULTS, load_scenario, scenario_map_file
 from fleet_core.traffic.lane_map import load_lane_map
 
 
@@ -57,10 +61,39 @@ def obstacles_path(value: str, share: str | Path) -> str:
     return str(path)
 
 
-def load(path):
-    """(기본 레인 지도, 시나리오). 경기장에서 돌릴 수 없으면 ScenarioUnfit."""
+@dataclass(frozen=True)
+class Arena:
+    """시나리오가 돌 경기장: Gazebo 월드, Nav2 지도 둘, 관제 레인 지도(""는 기본 지도)."""
+    name: str
+    world: str
+    nav_map: str
+    nav_map_fine: str
+    lane_map: str
+
+
+def arena_for(scenario_file, gz_share: str | Path, fake_share: str | Path) -> Arena:
+    """시나리오의 `map`이 없으면 lane_arena, 있으면 arena.py가 sites/<map>.yaml로 만든 월드와
+    지도, 그리고 fake_robots/maps/<map>.yaml 레인 지도."""
+    data = yaml.safe_load(Path(scenario_file).read_text(encoding="utf-8")) or {}
+    name = data.get("map") or ""
+    gz = Path(gz_share)
+    arena = name or "lane_arena"
+    found = Arena(arena, str(gz / "worlds" / f"{arena}.sdf"), str(gz / "maps" / f"{arena}.yaml"),
+                  str(gz / "maps" / f"{arena}_fine.yaml"),
+                  str(Path(fake_share) / "maps" / f"{name}.yaml") if name else "")
+    missing = [p for p in (found.world, found.nav_map, found.nav_map_fine, found.lane_map)
+               if p and not Path(p).is_file()]
+    if missing:
+        raise ScenarioUnfit(f"{Path(scenario_file).name} wants map {name!r}, but there is no "
+                            f"{', '.join(missing)} (python3 -m fleet_gz_sim.arena --site {name})")
+    return found
+
+
+def load(path, lane_map_file: str = ""):
+    """(레인 지도, 시나리오). 레인 지도는 lane_map_file, 비면 시나리오의 map(fake_robots의
+    지도), 그것도 없으면 기본 지도. 경기장에서 돌릴 수 없으면 ScenarioUnfit."""
     name = Path(path).name
-    site = load_lane_map(None)
+    site = load_lane_map(lane_map_file or scenario_map_file(path) or None)
     scenario = load_scenario(path, site)
     faults = sorted({f.type for f in scenario.faults if f.type in ROBOT_FAULTS})
     if faults:
