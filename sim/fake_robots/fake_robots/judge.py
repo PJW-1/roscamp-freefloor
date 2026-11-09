@@ -354,12 +354,17 @@ class ScenarioJudge:
             return
         elif zone in self._work_zones:
             if task is not None and task not in WORK_TASKS:
-                return  # passing by on another errand
+                # passing by on another errand; look again next tick while it stays here
+                del self._last_zone[robot]
+                return
             self._from_outbound.discard(robot)
             self.direct_returns += 1
         elif zone in self._waiting_zones:
             if task in STATION_TASKS:
-                return  # crossing or queueing on the way to a station, not parking
+                # crossing or queueing on the way to a station, not parking; a task that turns
+                # to WAIT (or arrives late) while the robot stays here is seen next tick
+                del self._last_zone[robot]
+                return
             self._from_outbound.discard(robot)
             unbound = self._unbound_on_board()
             if unbound >= len(self.scenario.robots):

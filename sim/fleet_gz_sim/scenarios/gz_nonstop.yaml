@@ -37,7 +37,9 @@ expect:
   orders_shipped: 18
   orders_partial: 0
   orders_held: 0
-  # 첫 3건은 대기 칸에서 출발한 로봇이 받고, 나머지 15건은 출고에서 곧장 작업대로 온 바퀴다
+  # 세 로봇은 대기 칸에서 호출돼 한 건씩 받는다(0·10·20초 주문). 나머지 15건은 출고에서 곧장
+  # 작업대로 온 바퀴다: 주문이 밀린 동안 주차는 위반이고, 170초 뒤로는 새 주문이 없어 출고 뒤
+  # 호출되지 않은 로봇은 다시 묶지 않는다. 로봇 고장 같은 일이 나면 이 수는 맞지 않는다
   direct_returns_min: 15
   parked_while_backlog: 0
   events_include: [ORDER_BOUND, ORDER_SHIPPED]

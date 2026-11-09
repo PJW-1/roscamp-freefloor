@@ -254,3 +254,32 @@ def test_lanes_ignore_assignments_for_laps():
     lap(j, "pinky1", [OUT, LANE, WAITING, WORK])
     assert j.parked_while_backlog == 1
     assert j.direct_returns == 0
+
+
+def stay(j, robot, cell, t):
+    x, y = SITE.waypoint_pose(cell)
+    j.on_robot_state(t, robot, x, y, "MOVING")
+    j.tick(t)
+
+
+def test_floor_a_task_that_turns_to_wait_while_on_the_parking_zone_is_parking():
+    j = backlog_judge()
+    j.on_assignments(0.5, {"pinky1": "TO_WORK"})
+    lap(j, "pinky1", [OUT, LANE, WAITING])
+    assert j.parked_while_backlog == 0
+    j.on_assignments(4.5, {"pinky1": "WAIT"})  # or a late WAIT after the pose
+    stay(j, "pinky1", WAITING, 5.0)
+    assert j.parked_while_backlog == 1
+    lap(j, "pinky1", [WORK], start=6.0)
+    assert j.direct_returns == 0  # the lap went through parking
+
+
+def test_floor_a_late_to_work_on_the_work_zone_is_a_direct_return():
+    j = backlog_judge()
+    j.on_assignments(0.5, {"pinky1": "WAIT"})
+    lap(j, "pinky1", [OUT, LANE, WORK])
+    assert j.direct_returns == 0
+    j.on_assignments(4.5, {"pinky1": "TO_WORK"})
+    stay(j, "pinky1", WORK, 5.0)
+    stay(j, "pinky1", WORK, 6.0)
+    assert j.direct_returns == 1
