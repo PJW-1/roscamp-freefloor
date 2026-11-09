@@ -196,7 +196,7 @@ def test_a_robot_with_no_approach_line_has_no_line_eta():
 # ---- 시뮬에서 맞는지 ------------------------------------------------------------------
 
 def _watch(scenario, seed):
-    """접근선을 쥔 로봇이 스테이션에 서 있는 동안의 예측(시각, 빌 시각)과 실제로 빈 시각."""
+    """접근선을 쥔 로봇이 스테이션에 서 있는 동안의 예측(시각, 빌 시각)과 그 로봇이 선 칸을 다 놓은 시각."""
     data = compare_floor.baseline.load_scenario(scenario)
     world = compare_floor.build(data, "lane_map", seed, "freefloor")
     traffic = world.core.traffic
@@ -212,7 +212,9 @@ def _watch(scenario, seed):
             holders = {n for n in traffic._missions if ids & traffic.zones.held_set(n)}
             docked = [n for n in holders if traffic._missions[n].phase == AT_STATION]
             free_in = traffic.line_free_in(line)
-            if len(docked) == 1 and free_in is not None and free_in < math.inf:
+            # 선을 쥔 로봇이 스테이션에 선 로봇 하나뿐일 때만: 그 로봇이 놓을 때 선이 빈다
+            if (len(docked) == 1 and holders == set(docked) and free_in is not None
+                    and free_in < math.inf):
                 preds.setdefault((line, docked[0]), []).append(world.t + free_in)
             for n in docked:
                 s = world.core.station_left_s(n)

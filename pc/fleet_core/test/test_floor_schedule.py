@@ -8,6 +8,7 @@ import pytest
 from fleet_core.common.params import load_params
 from fleet_core.manager import FleetManager
 from fleet_core.traffic.deadlock import find_cycle, wait_graph
+from fleet_core.traffic.floor.controller import REST_RELEASE_SAMPLES
 from fleet_core.traffic.lane_map import load_lane_map
 from fleet_core.traffic.mission import MOVE, _Goal
 
@@ -64,6 +65,31 @@ def test_the_next_robot_sets_off_when_the_line_frees_by_its_arrival(monkeypatch)
     assert [f[2] for f in leg.route.fixed] == ["work_in"]
     traffic._extend(b, leg)  # 선 칸은 a가 쥐고 있어 선 앞에서 멈춘다
     assert not line_cells(traffic) & traffic.zones.held_set("b")
+
+
+@pytest.mark.parametrize("dx,dy", [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)])
+def test_a_robot_resting_at_the_dock_still_holds_its_line(dx, dy):
+    """도크에 서서 쉬는 로봇은 몸 칸만 남길 수 있다(쉬는 로봇 규칙). 도착 허용만큼 비켜 서도
+    몸 칸이 접근선 칸에 닿아, 선이 빈 것(None)으로 보이지 않는다."""
+    traffic, at = floor({"a": (0.65, 1.15), "b": (2.6, 0.8)})
+    core = traffic.station_left.__self__  # 매니저(보고 입구)
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_WORK", None, "W")
+    tol = traffic.params.arrival_tolerance_m
+    wx, wy = traffic.site.waypoint_pose("W")[:2]
+    x, y = wx + dx * tol, wy + dy * tol
+    del traffic._legs["a"]
+    traffic._active["a"].clear()
+    a.goal, a.phase = None, "AT_STATION"
+    for t in range(1, REST_RELEASE_SAMPLES + 3):
+        at(float(t))
+        core.on_robot_state("a", x, y, 0.0, "IDLE")
+        traffic.tick_progress(float(t))
+    held = traffic.zones.held_set("a")
+    assert traffic._at_rest(a)
+    assert held <= traffic._body_cells(x, y)  # 놓을 칸은 다 놓고 몸 칸만 남았다
+    assert held & line_cells(traffic)
+    assert traffic.line_free_in("work_in") is not None
 
 
 def _sent_early_at_the_line(monkeypatch, short=0.05, arrived=True):
