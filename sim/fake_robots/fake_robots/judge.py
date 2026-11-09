@@ -43,6 +43,8 @@ class ScenarioJudge:
     def __init__(self, lane_map, scenario, margin_m: float = 0.13, grace_s: float = 2.0,
                  radius_m: float = 0.08):
         self.site = lane_map
+        # free-floor zone space: /fleet/zones holds cell names, not lane zone ids
+        self.floor_zones = hasattr(lane_map, "is_cell")
         self.scenario = scenario
         self.margin_m = margin_m
         self.radius_m = radius_m
@@ -292,6 +294,8 @@ class ScenarioJudge:
                 by_zone.setdefault(zone, []).append(robot)
                 self._track_lap(t, robot, zone)
         for zone, robots in by_zone.items():
+            if self.floor_zones:
+                continue  # lane zones are not reserved in free-floor mode
             self.max_occupancy = max(self.max_occupancy, len(robots))
             key = (zone, *sorted(robots))
             if len(robots) > 1 and key not in self._over:
@@ -337,6 +341,8 @@ class ScenarioJudge:
         return False
 
     def _check_unheld(self, t: float) -> None:
+        if self.floor_zones:
+            return  # holders are cells, so a lane zone has no holder by design
         current = set()
         for robot, (x, y) in self._positions().items():
             spot = self._put_back_spot(robot, x, y)

@@ -36,9 +36,15 @@ class SafetyMeter:
             if old and old != new and old in self.poses:
                 self._on_release(t, zone, old)
 
+    def _is_cell(self, zone: str) -> bool:
+        is_cell = getattr(self.site, "is_cell", None)  # only the free-floor zone space has it
+        return bool(is_cell and is_cell(zone))
+
     def _on_release(self, t: float, zone: str, robot: str) -> None:
         x, y = self.poses[robot]
-        gap = self.site.distance_to_zone(x, y, zone) + self.site.half_width
+        gap = self.site.distance_to_zone(x, y, zone)
+        if not self._is_cell(zone):
+            gap += self.site.half_width  # lane centreline width; a cell square has none
         self.releases += 1
         self.min_release_m = min(self.min_release_m, gap)
         if gap < self.radius_m:
