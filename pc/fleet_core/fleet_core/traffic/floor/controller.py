@@ -4,13 +4,15 @@
 로봇 선택, 통신 점검, 격리. 바꾸는 것: 구역 대신 칸 잠금(CellLocks), 레인 대신 바닥 경로.
 
 안전 규칙(각각 시험이 있다):
-  - 로봇이 쓰는 칸 = 경로를 따라 몸(반지름 + 여유)이 쓸고 지나가는 칸.
+  - 로봇이 쓰는 칸 = 경로를 따라 몸(반지름 + 여유)이 쓸고 지나가는 칸. 지도에 반폭(robot_half_width_m)이
+    있으면 곧은 데는 반폭 + 여유만, 제자리에서 돌 수 있는 데(_turn_spans)는 몸 원 전체.
   - 굴러가는 잠금: 앞쪽으로 floor_lock_ahead_m만큼 미리 잠근다. 늘릴 칸은 한꺼번에 잡을 수
     있을 때만 늘린다. 다 못 잡으면 floor_extend_step_m씩 짧게 다시 한꺼번에 시도한다.
   - 보내는 path는 잠근 끝까지만이다. 잠금이 늘면 MoveTo를 교체한다(서지 않는다).
   - 몸 아래 칸, 잠근 앞 칸, 아직 따라가는 MoveTo의 남은 칸은 쥔다. 나머지 칸은 연속 보고
     release_confirm_samples번이 칸에서 release_distance_m보다 멀 때 놓는다.
-  - 고정 선(도킹 접근, 도크에서 나감)은 들어가기 전에 선 끝까지 한꺼번에 잡는다.
+  - 고정 선(도킹 접근, 도크에서 나감)은 들어가기 전에 선 끝까지 한꺼번에 잡는다. 지도의 rolling_lines
+    (한 방향 선)는 바닥처럼 굴려 잠그고 접근선 한 대 규칙도 쓰지 않는다.
 m.path는 [출발할 때 가까운 지점, 목적지 지점] 두 개다. 선택과 단계 처리가 그대로 쓴다.
 
 여러 대(P3). 안전은 칸 잠금, 효율은 계획:
@@ -72,6 +74,9 @@ WAIT_TRIES = 8  # 출발할 수 없는 대기 자리 길을 이만큼 보면 그
 # a robot at rest lets go down to its body only after this many reports in a row: noise drawn
 # anew for each report (sigma 0.03 m) crosses the 5 cm body margin about 1 time in 20
 REST_RELEASE_SAMPLES = 10
+# 반폭 잠금(지도 robot_half_width_m). RPP가 제자리에서 돌 수 있는 곳만 몸 원 전체를 잠근다
+TURN_LEAD_M = 0.25  # RPP max_lookahead_dist: 꺾이기 이만큼 앞에서부터 돌기 시작할 수 있다
+TURN_START_M = 0.05  # 다리 출발 뒤 이만큼은 출발 자리에서 돌 수 있다
 
 
 @dataclass
@@ -122,6 +127,8 @@ class FloorController(TrafficController):
         self.zones = CellLocks(clock)
         self.planner = FloorPlanner(self.floor)
         self._body = self.floor.robot_radius_m + self.floor.cell_margin_m
+        half = self.floor.robot_half_width_m
+        self._side = min(self._body, half + self.floor.cell_margin_m) if half else self._body
         self._legs: dict[str, _Leg] = {}
         # robot -> goal id -> path of every MoveTo the robot may still follow (until its result)
         self._active: dict[str, dict[int, Route]] = {name: {} for name in robots}
@@ -168,6 +175,62 @@ class FloorController(TrafficController):
 
     def _swept(self, points) -> set[str]:
         return self._ids(swept_cells(self.floor, points, self._body))
+
+    def _turn_spans(self, route) -> list:
+        """경로에서 제자리에서 돌 수 있는 구간 [(s0, s1)]: 출발점, 끝점, 그리고 TURN_LEAD_M 안에서
+        모두 eta_turn_min_rad(RPP rotate_to_heading_min_angle)보다 꺾이는 점들 앞 TURN_LEAD_M."""
+        spans = getattr(route, "turn_spans", None)
+        if spans is not None:
+            return spans
+        pts, cum = route.points, route.cum
+        turns = []
+        for k in range(1, len(pts) - 1):
+            a, b, c = pts[k - 1], pts[k], pts[k + 1]
+            if math.dist(a, b) < 1e-9 or math.dist(b, c) < 1e-9:
+                continue
+            h0 = math.atan2(b[1] - a[1], b[0] - a[0])
+            h1 = math.atan2(c[1] - b[1], c[0] - b[0])
+            turns.append((cum[k], abs(math.remainder(h1 - h0, math.tau))))
+        spans = [(0.0, 0.0), (route.length, route.length)]
+        limit = self.params.eta_turn_min_rad
+        for i, (s, _) in enumerate(turns):
+            window = [(t, a) for t, a in turns[i:] if t <= s + TURN_LEAD_M + 1e-9]
+            if sum(a for _, a in window) > limit:
+                spans.append((max(0.0, s - TURN_LEAD_M), window[-1][0]))
+        route.turn_spans = spans
+        return spans
+
+    def _turning_at(self, route, s: float) -> bool:
+        return any(a - 1e-9 <= s <= b + 1e-9 for a, b in self._turn_spans(route))
+
+    def _lock_cells(self, route, a: float, b: float) -> set[str]:
+        """경로 a..b를 달리며 쓰는 칸: 곧은 데는 반폭(_side), 제자리에서 돌 수 있는 데는 몸 원."""
+        if self._side >= self._body:
+            return self._swept(route.between(a, b))
+        cells = self._ids(swept_cells(self.floor, route.between(a, b), self._side))
+        for s0, s1 in self._turn_spans(route):
+            lo, hi = max(a, s0), min(b, s1)
+            if lo <= hi + 1e-9:
+                cells |= self._swept(route.between(lo, max(lo, hi)))
+        return cells
+
+    def _reach_now(self, m: _Mission) -> float:
+        """지금 보고 자리에서 쥘 몸 반지름: 경로를 곧게 달리는 중이면 반폭, 아니면 몸 원."""
+        if self._side < self._body:
+            leg = self._legs.get(m.name)
+            if (leg is not None and leg.route is not None and leg.s > TURN_START_M
+                    and not self._turning_at(leg.route, leg.s)):
+                return self._side
+        return self._body
+
+    def _body_now(self, m: _Mission) -> set[str]:
+        return self._ids(disk_cells(self.floor, m.x, m.y, self._reach_now(m)))
+
+    def _drive_cells(self, m: _Mission, leg, end: float, points) -> set[str]:
+        """leg.s..end를 달리고 보낼 path(points)를 따라가는 데 쥘 칸."""
+        reach = self._reach_now(m)
+        return (self._lock_cells(leg.route, leg.s, end) | self._body_now(m)
+                | self._ids(swept_cells(self.floor, points, reach)))
 
     def _zone(self, waypoint) -> str:
         """지점이 든 칸. 물려받은 대기 지점·commit 판단이 이 칸의 주인을 본다."""
@@ -235,7 +298,7 @@ class FloorController(TrafficController):
         release_confirm_samples번 이어지면 세운다(레인 이탈 감시 대신)."""
         if not m.available:
             return
-        need = self._body_cells(m.x, m.y)
+        need = self._body_now(m)
         if need <= self.zones.held_set(m.name) or self.zones.acquire_all(m.name, need):
             self._off_cells[m.name] = 0
             return
@@ -352,13 +415,13 @@ class FloorController(TrafficController):
     def _release_cells(self, m: _Mission) -> None:
         if m.fault == ERROR or m.block_cancel is not None:
             return  # an isolated robot keeps its cells until confirm_clear
-        keep = self._body_cells(m.x, m.y)
+        keep = self._body_now(m)
         leg = self._legs.get(m.name)
         if leg and leg.route and leg.s_lock > leg.s:
-            keep |= self._swept(leg.route.between(leg.s, leg.s_lock))
+            keep |= self._lock_cells(leg.route, leg.s, leg.s_lock)
         for active in self._active[m.name].values():
             s, _ = active.project(m.x, m.y)
-            keep |= self._swept(active.between(s, active.length))
+            keep |= self._lock_cells(active, s, active.length)
         rest = self._rest_outside.get(m.name, {}) if self._at_rest(m) else {}
         rest_need = max(REST_RELEASE_SAMPLES, self.params.release_confirm_samples)
         for cell_id in list(self.zones.held_set(m.name)):
@@ -422,10 +485,13 @@ class FloorController(TrafficController):
             self._plan_wait(m, leg, out_line)
             return
         if math.dist(start, leg.goal_xy) <= self.params.arrival_tolerance_m and not out_line:
-            if m.goal and m.goal.kind == MOVE:
+            moving = bool(m.goal and m.goal.kind == MOVE)
+            if moving:
                 self._cancel_goal(m)  # 옛 MoveTo가 로봇을 목표 밖으로 끌고 가지 않게
             leg.route = Route([leg.goal_xy])
-            leg.done = m.goal is None
+            leg.s = leg.s_lock = leg.s_sent = 0.0
+            # 달리던 로봇은 목표 자리로 짧게 보내고 그 결과로 도착한다(취소 결과 전에 도착 아님)
+            leg.done = m.goal is None and not moving
             return
         route = self._route(m, start, leg.goal_xy, out_line, leg.in_line)
         if route is None:
@@ -1131,14 +1197,13 @@ class FloorController(TrafficController):
                 self.zones.cancel_all_requests(m.name)
                 return False
             end = next(b for _, b, line in leg.route.fixed if line == leg.in_line)
-            cells = self._swept(leg.route.between(leg.s, end)) | self._body_cells(m.x, m.y)
+            cells = self._lock_cells(leg.route, leg.s, end) | self._body_now(m)
             if self.zones.acquire_all(m.name, cells):  # 섰다: 선 전체에 줄을 선다
                 leg.s_lock = end
                 return True
             return False
         for end in self._candidates(leg, cap):
-            cells = (self._swept(leg.route.between(leg.s, end)) | self._body_cells(m.x, m.y)
-                     | self._swept(self._drive_path(m, leg, end)))
+            cells = self._drive_cells(m, leg, end, self._drive_path(m, leg, end))
             if self.zones.acquire_all(m.name, cells):
                 leg.s_lock = end
                 return True
@@ -1160,7 +1225,7 @@ class FloorController(TrafficController):
                 final and leg.s_sent < end - AT_END_M):
             return
         points = self._drive_path(m, leg, end)
-        if not self.zones.acquire_all(m.name, self._swept(points) | self._body_cells(m.x, m.y)):
+        if not self.zones.acquire_all(m.name, self._drive_cells(m, leg, end, points)):
             return  # the first stretch from the reported pose is not free: wait
         poses = []
         for k, (x, y) in enumerate(points):
@@ -1191,10 +1256,11 @@ class FloorController(TrafficController):
         return points
 
     def _step_parked(self, m: _Mission) -> None:
-        """대기 입구가 비도록 빈 지점으로 계속 앞으로 간다. 아직 맵에 안 오른 로봇이 있으면
+        """대기 입구가 비도록 빈 지점으로 계속 앞으로 간다. 한 번도 보고하지 않은 로봇이 있으면
         그 로봇이 선 칸을 모르니 기다린다(첫 보고 전의 빈 칸은 빈 칸이 아닐 수 있다)."""
-        if any(not o.placed and o.fault != OUT_OF_SERVICE for o in self._missions.values()):
-            return
+        if any(not o.placed and not o.robot_state and o.fault != OUT_OF_SERVICE
+               for o in self._missions.values()):
+            return  # 한 번도 보고하지 않은 로봇: 어디 섰는지 모른다
         if self._run_mode == RUN and self._park_goal(m, m.path[m.idx]):
             self._start_park_leg(m)
 

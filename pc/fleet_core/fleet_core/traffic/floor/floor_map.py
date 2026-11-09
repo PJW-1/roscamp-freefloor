@@ -7,6 +7,8 @@
 고정 선(fixed_lines)은 좁은 곳·도킹 접근·출고 앞에서 따라야 하는 선과 방향이다. 점 순서가 방향이다.
 고정 선은 통째로 잠근다(양방향 통로에서 마주 오지 않게). rolling_lines에 적은 선은 한 방향만 다니는
 선이라 바닥처럼 잠금 앞 거리만큼만 굴려 잠그고, 접근선 한 대 규칙도 쓰지 않는다(뒤 로봇이 선 위에 줄 선다).
+robot_half_width_m(있으면): 차동구동 로봇은 옆으로 가지 않으니 곧게 달리는 동안은 반폭 + cell_margin_m만
+잠그고, 제자리에서 돌 수 있는 곳(출발점, 끝점, 크게 꺾이는 점 앞)만 반지름 + cell_margin_m 원으로 잠근다.
 """
 from __future__ import annotations
 
@@ -91,6 +93,7 @@ class FloorMap:
         self.fixed_lines = {name: FixedLine(name, tuple(tuple(map(float, p)) for p in points))
                             for name, points in (data.get("fixed_lines") or {}).items()}
         self.rolling_lines = self._read_rolling(data.get("rolling_lines") or [])
+        self.robot_half_width_m = self._read_half_width(data.get("robot_half_width_m"))
         self._ids = {}
         self._cells = {}
         for i in range(self.cols):
@@ -110,6 +113,16 @@ class FloorMap:
                 or not all(isinstance(n, str) for n in names):
             raise FloorMapError(f"rolling_lines {names!r} must list fixed line names")
         return frozenset(names)
+
+    def _read_half_width(self, value) -> float | None:
+        """차동구동 로봇의 반폭. 없으면 None: 늘 반지름 원으로 잠근다."""
+        if value is None:
+            return None
+        if (isinstance(value, bool) or not isinstance(value, int | float)
+                or not math.isfinite(value) or not 0 < value <= self.robot_radius_m):
+            raise FloorMapError(f"robot_half_width_m {value!r} must be a number in "
+                                f"(0, robot_radius_m {self.robot_radius_m}]")
+        return float(value)
 
     @staticmethod
     def _read_wall_margin(value) -> float:

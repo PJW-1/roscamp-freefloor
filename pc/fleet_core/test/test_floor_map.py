@@ -360,3 +360,17 @@ def test_a_rolling_line_that_is_not_a_fixed_line_is_refused(bad):
     with pytest.raises(FloorMapError, match="rolling_lines"):
         FloorMap(data)
 
+
+def test_the_half_width_is_read_only_when_the_map_gives_it(floor):
+    assert floor.robot_half_width_m is None
+    data = {"bounds": [0, 0, 2, 1], "cell_m": 0.1, "robot_radius_m": 0.08,
+            "cell_margin_m": 0.05, "robot_half_width_m": 0.06}
+    assert FloorMap(data).robot_half_width_m == 0.06
+
+
+@pytest.mark.parametrize("bad", [0.0, -0.01, 0.09, float("nan"), "0.06", True])
+def test_a_half_width_that_is_not_inside_the_radius_is_refused(bad):
+    data = {"bounds": [0, 0, 2, 1], "cell_m": 0.1, "robot_radius_m": 0.08,
+            "cell_margin_m": 0.05, "robot_half_width_m": bad}
+    with pytest.raises(FloorMapError, match="robot_half_width_m"):
+        FloorMap(data)

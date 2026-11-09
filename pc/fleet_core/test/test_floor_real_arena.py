@@ -105,8 +105,82 @@ def test_the_rehearsal_runs_three_pinkys_at_fifteen_centimetres_a_second():
 
 
 def test_every_station_line_here_is_one_way_so_it_rolls_like_the_floor():
-    """두 출입선은 끝(도크)만 나눈다: 같은 선을 마주 오는 로봇이 없어 통째로 잠그지 않는다."""
+    """스테이션마다 들어가는 선과 나오는 선은 도크 둘레 칸만 나눈다: 나가는 로봇이 들어오는 선을
+    거슬러 가지 않는다. 그래서 통째로 잠그지 않는다(자유 경로가 선을 거스르는 것은 막지 않는다:
+    선 칸 비용이 4배라 피할 뿐이고, 만나면 칸 잠금과 교착 처리가 맡는다)."""
     assert FLOOR.rolling_lines == frozenset(FLOOR.fixed_lines)
+    for station, dock in FLOOR.docks.items():
+        way_in = cells_of(FLOOR.fixed_lines[f"{station.lower()}_in"])
+        way_out = cells_of(FLOOR.fixed_lines[f"{station.lower()}_out"])
+        assert way_in & way_out <= set(disk_cells(FLOOR, *dock, 2 * BODY)), station
+
+
+NAV2 = REPO / "pinky" / "pinky_nav_config" / "params" / "nav2_params.yaml"
+
+
+def test_the_half_width_is_half_the_nav2_footprint():
+    """차동구동 핑키는 옆으로 가지 않는다: 곧게 달리는 동안 옆은 반폭 + 여유만 잠근다."""
+    nav = yaml.safe_load(NAV2.read_text(encoding="utf-8"))
+    footprint = yaml.safe_load(nav["local_costmap"]["local_costmap"]["ros__parameters"]
+                               ["footprint"])
+    assert FLOOR.robot_half_width_m == max(abs(y) for _, y in footprint) == 0.06
+    # 제자리에서 돌 때 쓰는 원(반지름 + 여유)은 발자국 모서리를 덮는다
+    assert BODY > math.hypot(*footprint[0])
+
+
+def arena_traffic():
+    from dataclasses import replace
+
+    from fleet_core.common.params import load_params
+    from fleet_core.manager import FleetManager
+    core = FleetManager(LANES, replace(load_params(PARAMS), traffic_mode="freefloor"), ["a"],
+                        lambda: 0.0)
+    return core.traffic
+
+
+def beside(traffic, x, y, near, far):
+    """(x, y) 옆(북쪽) 칸 중 곧은 선 y까지 거리가 near 넘고 far 이하인 칸."""
+    floor = traffic.floor
+    return {floor.cell_id(c) for c in disk_cells(FLOOR, x, y, 0.2)
+            if abs(FLOOR.centre(c)[0] - x) < 0.02
+            and near < floor.box_distance(c, FLOOR.centre(c)[0], y) <= far}
+
+
+def test_a_straight_stretch_locks_only_the_half_width_but_a_corner_the_whole_circle():
+    from fleet_core.traffic.floor.planner import Route
+    traffic = arena_traffic()
+    side, body = traffic._side, traffic._body
+    assert (round(side, 6), round(body, 6)) == (0.09, 0.11)
+    route = Route([(1.20, 0.925), (1.875, 0.925), (1.875, 0.25)])  # outbound_in, corner at 0.675
+    cells = traffic._lock_cells(route, 0.1, 0.6)
+    reach = FLOOR.cell_m / 8
+    straight = beside(traffic, 1.40, 0.925, side + reach, body)
+    corner = beside(traffic, 1.80, 0.925, side + reach, body)  # 0.075 before the corner
+    assert straight and corner
+    assert not straight & cells  # 곧은 데서는 옆 칸을 안 잠근다
+    assert corner <= cells  # 꺾이기 전 RPP가 제자리에서 돌 수 있는 곳은 원 전체
+
+
+def test_the_robot_holds_only_its_half_width_beside_it_on_a_straight_line(monkeypatch):
+    data = yaml.safe_load((REPO / "sim" / "fleet_gz_sim" / "scenarios" / "gz_real_arena.yaml")
+                          .read_text(encoding="utf-8"))
+    # 잡음 없이: 보고가 옆으로 튀면 그 자리 둘레를 잡는 것은 맞다(관제는 보고 자리만 안다)
+    data["robots"] = {"pinky1": {"start": "P-2", "speed_mps": SPEED, "pose_noise_m": 0.0}}
+    data["orders"] = data["orders"][:1]
+    monkeypatch.setattr(compare_floor, "OVERRIDES", dict(LOCKS))
+    world = compare_floor.build(data, "real_arena", 3, "freefloor")
+    traffic = world.core.traffic
+    seen = 0
+    for _ in range(3000):
+        world.step()
+        r = world.virtual["pinky1"]
+        if 1.30 < r.x < 1.50 and abs(r.y - 0.925) < 0.02:  # outbound_in 북쪽 곧은 구간
+            seen += 1
+            wide = beside(traffic, r.x, 0.925, traffic._side + FLOOR.cell_m / 8, 0.2)
+            assert not wide & traffic.zones.held_set("pinky1"), (r.x, r.y)
+        if world.done():
+            break
+    assert seen > 5 and world.cell_violations == 0
 
 
 def test_docks_and_parking_are_the_lane_map_waypoints():
@@ -128,7 +202,7 @@ def test_station_lines_start_and_end_where_the_lane_map_says():
 
 PARAMS = DEFAULT_PARAMS_FILE.parent / "fleet_params_real_arena.yaml"
 SPEED = 0.15  # gz.launch.py nav_max_speed:=0.15
-LOCKS = {"floor_lock_ahead_m": 0.25, "floor_extend_step_m": 0.05, "release_distance_m": 0.17}
+LOCKS = {"floor_lock_ahead_m": 0.15, "floor_extend_step_m": 0.05, "release_distance_m": 0.17}
 
 
 def test_the_real_arena_params_change_only_the_lock_sizes():
@@ -167,5 +241,9 @@ def test_three_pinkys_ship_the_first_six_orders_on_the_real_arena(tmp_path, monk
     assert world.cell_violations == 0
     # 선 안에서도 잠금 앞 거리만큼만 보낸다(선 끝까지 한 번에 보내지 않는다)
     ahead = world.core.params.floor_lock_ahead_m + 0.1
+    on_line = set().union(*(cells_of(line) for line in FLOOR.fixed_lines.values()))
+    inside = 0
     for move in world.commands_of(MoveCmd):
         assert sum(math.dist(a[:2], b[:2]) for a, b in itertools.pairwise(move.path)) <= ahead
+        inside += all(FLOOR.cell_of(*p[:2]) in on_line for p in move.path)
+    assert inside > 20  # 선 위에서 보낸 짧은 MoveTo가 실제로 있었다

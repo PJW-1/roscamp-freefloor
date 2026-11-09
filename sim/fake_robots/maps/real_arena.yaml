@@ -7,7 +7,8 @@
 #  - 자유바닥에서는 OUTBOUND를 나올 때 table_2 남쪽, 가운데, block_long과 box_small 사이 틈을
 #    지나 PS로 간다(floor_map_real_arena.yaml outbound_out). 북쪽 틈은 들어가는 길로만 쓴다
 #  - 대기 칸 P-1, P-2는 남쪽 벽 쪽. WORK로 가는 길 위라 먼저 온 로봇이 먼저 나간다
-#  - 대기 칸 P-3은 bin 남쪽 가운데. 고정 선 칸과 다른 대기 칸에 닿지 않는 자리(서는 원 0.14 m까지)
+#  - 대기 칸 P-3은 bin 남쪽 가운데. 고정 선 칸과 다른 대기 칸에 닿지 않는 자리(서는 원 0.14 m까지).
+#    PS에서 곧장 가면 레인이 bin 모서리에서 0.10 m라 PB를 지나 꺾는다(레인은 0.12 m 띄운다)
 #
 #   y
 #  0.925  WN ------------------> QO <=====CORR=====> EN
@@ -33,6 +34,7 @@ waypoints:
   - {id: P-1, x: 0.925, y: 0.20}
   - {id: P-2, x: 0.575, y: 0.15}
   - {id: P-3, x: 0.60, y: 0.45}
+  - {id: PB, x: 0.78, y: 0.43}     # PS에서 P-3으로 꺾는 점(bin 모서리를 비켜, 레인은 0.17 m보다 길게)
 two_way:
   CORR: [QO, EN]
   BAY: [EN, O]
@@ -41,7 +43,8 @@ lanes:
   - {from: W, to: WN}
   - {from: WN, to: QO}
   - {from: QO, to: PS}
-  - {from: PS, to: P-3}
+  - {from: PS, to: PB}
+  - {from: PB, to: P-3}
   - {from: P-3, to: P-1}
   - {from: PS, to: P-1}
   - {from: P-1, to: P-2}

@@ -432,7 +432,11 @@ def test_a_new_leg_that_ends_where_the_robot_stands_stops_the_old_goal():
     traffic._start_leg(m, "TO_PARK", None, "A")  # back to where it stands
     out = traffic.take_output()
     assert any(isinstance(c, CancelCmd) and c.goal_id == east.goal_id for c in out)
-    assert m.goal is None
+    # 취소 결과 전에는 도착이 아니다: 목표 자리로 짧은 MoveTo를 보내고 그 결과로 도착한다
+    assert not traffic._legs["a"].done
+    traffic.step("a")
+    back = moves_of(traffic.take_output())
+    assert back and (back[-1].x, back[-1].y) == (x, y) and m.phase == "TO_PARK"
 
 
 def test_a_parked_robot_moves_up_only_once_every_robot_is_on_the_map():
@@ -444,5 +448,17 @@ def test_a_parked_robot_moves_up_only_once_every_robot_is_on_the_map():
     traffic.step("a")
     assert a.phase == "PARKED" and "a" not in traffic._legs  # b may stand on P-5 or P-6
     report(core, "b", 1.0, 1.15)
+    traffic.step("a")
+    assert a.phase == "TO_PARK" and a.path[-1] == "P-6"
+
+
+def test_a_robot_put_back_that_has_not_reported_yet_does_not_stop_the_parking_queue():
+    """첫 보고를 들은 적 있는 로봇은 자리를 안다(재투입 뒤 보고가 늦어도 다른 로봇을 막지 않는다)."""
+    core, now = bare_floor(robots=("a", "b"))
+    traffic = core.traffic
+    report(core, "b", 1.0, 1.15)
+    traffic._missions["b"].placed = False  # 치웠다 다시 넣음: 아직 보고 없음
+    report(core, "a", *traffic.site.waypoint_pose("P-4"))
+    a = traffic._missions["a"]
     traffic.step("a")
     assert a.phase == "TO_PARK" and a.path[-1] == "P-6"

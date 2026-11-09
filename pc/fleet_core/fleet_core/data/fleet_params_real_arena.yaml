@@ -1,5 +1,5 @@
 # 실제 경기장(real_arena, 2.05 x 1.05 m)용 관제 파라미터. fleet_params.yaml에서 잠금 크기 셋만
-# 줄였다(앞 잠금 0.25 m, 줄여 잡기 0.05 m, 뒤 칸 놓기 0.17 m). 로봇은 0.15 m/s로 달린다
+# 줄였다(앞 잠금 0.15 m, 줄여 잡기 0.05 m, 뒤 칸 놓기 0.17 m). 로봇은 0.15 m/s로 달린다
 # (gz.launch.py nav_max_speed:=0.15, 실물은 Nav2 desired_linear_vel). 나머지는 같아야 한다
 # (test_floor_real_arena가 비교한다).
 # 정책 값. 추정 표시는 실제 코스에서 재야 한다.
@@ -62,7 +62,7 @@ mark_final_goal: true         # 제안(버전 2 4절, 계약 0.8-draft): 잠금 
 self_recovery_limit_s: 45.0   # 제안: 로봇이 RECOVERING(자가 복구)을 이만큼 넘게 이어 보내면 BLOCKED로 본다. 핑키 FSM의 두 번 시도는 길어야 약 35 s
 traffic_mode: lanes           # 실험: lanes(레인 관제) 또는 freefloor(자유바닥, traffic/floor). 기본은 lanes
 # 자유바닥(traffic_mode: freefloor)에서만 쓴다. 지시서 제안값, 실측 전
-floor_lock_ahead_m: 0.25      # 제안: 경로를 따라 이만큼 앞 칸까지 미리 잠근다. 제동 거리 v·τ + v²/2a + 여유 이상
+floor_lock_ahead_m: 0.15      # 한계 시험: 다시 보낼 때 남는 0.10 m가 pinky_fsm 속도 제한 √(2·0.25·(d - 0.15·0.3))이 0.15 m/s 아래로 내리지 않는 최소(0.09 m) 위. 제동 0.15²/(2·0.25) + 0.15·0.3 = 0.09 m
 floor_extend_step_m: 0.05     # 제안: 다 못 잡으면 이만큼 짧게 다시 한꺼번에 시도한다(감속)
 floor_replan_s: 1.0           # 제안: 잠금이 늘지 않으면 이 주기로 다른 길을 찾는다
 floor_plan_window_s: 8.0      # 제안: 다른 로봇의 예약을 이만큼 앞까지 본다(협조 계획)
