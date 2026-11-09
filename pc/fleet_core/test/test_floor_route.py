@@ -394,3 +394,22 @@ def test_a_way_around_whose_first_step_cannot_be_locked_is_no_way(monkeypatch):
     traffic._extend(a, legs["a"])
     traffic._replan_if_stuck(a, legs["a"], False)
     assert legs["a"].route is old and legs["a"].no_way_since == t
+
+
+def test_when_the_first_way_around_cannot_start_the_second_is_tried(monkeypatch):
+    """상대의 앞길을 피한 길이 출발할 수 없으면 상대 칸만 피한 길을 쓴다."""
+    traffic, at = floor({"a": (1.6, 0.8), "b": (1.95, 0.8)})
+    a, b, legs = _head_on(traffic, at)
+    into_b = Route([(a.x, a.y), (2.9, 0.8)])  # 출발할 수 없다
+    north = Route([(a.x, a.y), (a.x, 1.4), (2.9, 1.4), (2.9, 0.8)])
+    calls = []
+
+    def route(m, *args, extra=frozenset(), **kw):
+        calls.append(len(calls))
+        return into_b if len(calls) == 1 else north
+
+    monkeypatch.setattr(traffic, "_route", route)
+    at(10.0 + traffic.params.floor_replan_s + 0.1)
+    traffic._extend(a, legs["a"])
+    traffic._replan_if_stuck(a, legs["a"], False)
+    assert len(calls) == 2 and legs["a"].route is north
