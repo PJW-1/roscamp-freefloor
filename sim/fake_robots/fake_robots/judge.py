@@ -317,8 +317,8 @@ class ScenarioJudge:
             by_zone = {}
             for robot, (x, y) in self._positions().items():
                 cell = self.site.floor.cell_of(x, y)
-                name = self.site.floor.cell_id(cell) if self.site.floor.inside(cell) else str(cell)
-                by_zone.setdefault(name, []).append(robot)
+                if self.site.floor.inside(cell):  # robots taken off the map are not on a cell
+                    by_zone.setdefault(self.site.floor.cell_id(cell), []).append(robot)
         for zone, robots in by_zone.items():
             self.max_occupancy = max(self.max_occupancy, len(robots))
             key = (zone, *sorted(robots))

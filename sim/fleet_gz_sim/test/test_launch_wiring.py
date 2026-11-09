@@ -437,3 +437,15 @@ def test_the_params_copy_never_overwrites_the_file_it_copies(gz, tmp_path):
     with pytest.raises(ValueError, match="fleet_params_file"):
         gz.params_for(str(mine), "freefloor", str(out))
     assert mine.read_text(encoding="utf-8") == "traffic_mode: lanes  # mine\n"
+
+
+def test_the_params_copy_never_writes_through_a_hard_link_to_its_source(gz, tmp_path):
+    import os
+    mine = tmp_path / "mine.yaml"
+    mine.write_text("traffic_mode: lanes  # mine\n", encoding="utf-8")
+    out = tmp_path / "result"
+    out.mkdir()
+    os.link(mine, out / "fleet_params.yaml")
+    with pytest.raises(ValueError, match="fleet_params_file"):
+        gz.params_for(str(mine), "freefloor", str(out))
+    assert mine.read_text(encoding="utf-8") == "traffic_mode: lanes  # mine\n"

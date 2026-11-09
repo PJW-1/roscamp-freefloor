@@ -84,7 +84,7 @@ def params_for(params_file: str, traffic_mode: str, result_dir: str) -> str:
     source = Path(params_file) if params_file else DEFAULT_PARAMS
     values = yaml.safe_load(source.read_text(encoding="utf-8"))
     copy = Path(result_dir) / "fleet_params.yaml"
-    if copy.resolve() == source.resolve():
+    if copy.resolve() == source.resolve() or (copy.exists() and copy.samefile(source)):
         raise ValueError(f"fleet_params_file {source} is where the {traffic_mode} copy goes;"
                          " give another result_dir")
     copy.parent.mkdir(parents=True, exist_ok=True)

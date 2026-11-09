@@ -113,6 +113,16 @@ def test_judge_bodies_in_different_cells_count_one():
     assert j.violations == []
 
 
+def test_judge_robots_taken_off_the_map_are_not_counted_as_sharing_a_cell():
+    """Fake pinkys taken off the course all wait at the same point outside the map."""
+    j = judge()
+    j.on_true_pose("pinky1", -5.0, -5.0)
+    j.on_true_pose("pinky2", -5.0, -5.0)
+    j.tick(1.0)
+    assert j.max_occupancy == 0
+    assert j.violations == []
+
+
 # -- sparse snapshot: a missing cell is released ----------------------------------------
 
 def test_judge_cell_missing_from_the_next_message_is_released():
