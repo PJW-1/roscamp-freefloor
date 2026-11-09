@@ -159,12 +159,14 @@ class FloorPlanner:
 
     def _steps_onto_clear(self, start, avoid=frozenset()) -> list:
         """Centres of the clear cells within STEP_ONTO_CLEAR_M that a straight step over free
-        floor reaches, nearest first; none when the start is not on free floor."""
+        floor reaches without running over avoided cells, nearest first; none when the start
+        is not on free floor."""
         floor = self.floor
         a = floor.cell_of(*start)
         if a not in floor.free:
             return []
         reach = math.ceil(STEP_ONTO_CLEAR_M / floor.cell_m)
+        walkable = (floor.free - avoid) | {a}  # the start cell may be held by a close robot
         steps = []
         for di in range(-reach, reach + 1):
             for dj in range(-reach, reach + 1):
@@ -173,7 +175,7 @@ class FloorPlanner:
                     continue
                 xy = floor.centre(cell)
                 d = math.dist(start, xy)
-                if d <= STEP_ONTO_CLEAR_M and line_cells(floor, [tuple(start), xy]) <= floor.free:
+                if d <= STEP_ONTO_CLEAR_M and line_cells(floor, [tuple(start), xy]) <= walkable:
                     steps.append((d, xy))
         return [xy for _, xy in sorted(steps)]
 

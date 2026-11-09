@@ -201,9 +201,27 @@ def test_a_start_inside_a_box_still_gives_none():
 def test_when_the_nearest_clear_cell_leads_nowhere_the_next_one_is_tried():
     floor = box_floor()
     start = (1.0, 0.76)
-    nearest = floor.cell_of(*FloorPlanner(floor).plan(start, (1.6, 0.4))[1])
-    ring = {(nearest[0] + di, nearest[1] + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)}
-    walled_in = frozenset(ring - {nearest})  # others hold every cell around it
-    path = FloorPlanner(floor).plan(start, (1.6, 0.4), avoid=walled_in)
+    dead_end = floor.centre((3, 3))
+    ring = {(3 + di, 3 + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)} - {(3, 3)}
+
+    class DeadEndFirst(FloorPlanner):
+        # on this floor the clear cells next to the start touch each other, so put a walled-in
+        # clear cell first to see the next one tried
+        def _steps_onto_clear(self, start, avoid=frozenset()):
+            return [dead_end, *super()._steps_onto_clear(start, avoid)]
+
+    path = DeadEndFirst(floor).plan(start, (1.6, 0.4), avoid=frozenset(ring))
     assert path is not None and path[0] == start
-    assert floor.cell_of(*path[1]) not in ring
+    assert path[1] != dead_end and floor.cell_of(*path[1]) in floor.clear
+
+
+def test_the_step_onto_clear_floor_does_not_run_over_cells_of_others():
+    floor = box_floor()
+    start = (1.0, 0.76)
+    # others hold the two nearest clear cells; the straight steps to the two next ones run
+    # over those cells, so there is no step to take
+    others = frozenset({floor.cell_of(1.05, 0.65), floor.cell_of(0.95, 0.65)})
+    path = FloorPlanner(floor).plan(start, (1.6, 0.4), avoid=others)
+    if path is not None:
+        assert not (line_cells(floor, path[:2]) - {floor.cell_of(*start)}) & others
+    assert path is None
