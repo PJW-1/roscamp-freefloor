@@ -496,8 +496,9 @@ class FloorController(TrafficController):
                 self._cancel_goal(m)  # 옛 MoveTo가 로봇을 목표 밖으로 끌고 가지 않게
             leg.route = Route([leg.goal_xy])
             leg.s = leg.s_lock = leg.s_sent = 0.0
-            # 달리던 로봇은 목표 자리로 짧게 보내고 그 결과로 도착한다(취소 결과 전에 도착 아님)
-            leg.done = m.goal is None and not moving
+            # 달리던 로봇은 목표 자리로 짧게 보내고 그 결과로 도착한다(취소 결과 전에 도착 아님).
+            # 앞서 취소한 옛 MoveTo가 아직 끝나지 않았어도 그렇다
+            leg.done = m.goal is None and not moving and not self._active[m.name]
             return
         route = self._route(m, start, leg.goal_xy, out_line, leg.in_line)
         if route is None:

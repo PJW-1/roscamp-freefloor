@@ -202,7 +202,7 @@ def follows_the_rest_of_outbound_out(route, x, y):
     head = route.points
     assert math.dist(head[0], (x, y)) < 1e-9
     assert line.end in [tuple(p) for p in route.points]
-    assert head[1] != line.start and head[1][0] <= x + 1e-9  # 도크로 되돌아가지 않는다
+    assert all(math.dist(p, line.start) > 0.05 for p in head[1:])  # 도크로 되돌아가지 않는다
     assert all(py < 0.70 for px, py in route.points if px > 1.20), route.points
 
 
@@ -224,6 +224,15 @@ def test_a_robot_leaving_outbound_keeps_to_the_rest_of_the_exit_line(x, y):
     follows_the_rest_of_outbound_out(leg.route, x, y)
     traffic._plan(m, leg)  # 같은 다리를 그 자리에서 다시 계획해도
     follows_the_rest_of_outbound_out(leg.route, x, y)
+
+
+def test_a_robot_beside_the_exit_line_steps_square_onto_it_and_cuts_no_corner():
+    """Codex(99c068e): 선 옆 로봇을 다음 꼭짓점으로 곧게 이으면 틈 모서리를 자를 수 있다."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(FLOOR)
+    route = planner.leg((1.31, 0.30), (0.60, 0.45), out_line="outbound_out")
+    assert math.dist(route.points[1], (1.35, 0.30)) < 1e-6  # 선에 수직으로 붙는다
+    assert math.dist(route.points[2], (1.35, 0.45)) < 1e-6  # 그다음은 선 그대로
 
 
 def test_a_robot_past_the_end_of_the_exit_line_plans_on_the_floor():

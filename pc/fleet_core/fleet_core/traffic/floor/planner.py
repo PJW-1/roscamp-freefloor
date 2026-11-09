@@ -281,7 +281,8 @@ class FloorPlanner:
 
 
 def rest_of_exit(point, line):
-    """point가 line(꺾은선)에서 JOIN_M 안이면 가장 가까운 구간 끝부터의 점들. 멀거나 끝을 지났으면 None."""
+    """point가 line(꺾은선)에서 JOIN_M 안이면 가장 가까운 구간 위 발(수직으로 내린 점)부터 남은 점들.
+    멀거나 끝을 지났으면 None. 접히거나 겹친 선은 가장 가까운 구간을 고르므로 맞지 않는다."""
     best = None
     for k, ((ax, ay), (bx, by)) in enumerate(zip(line, line[1:], strict=False)):
         dx, dy = bx - ax, by - ay
@@ -292,13 +293,16 @@ def rest_of_exit(point, line):
         uc = min(1.0, max(0.0, u))
         d = math.dist(point, (ax + uc * dx, ay + uc * dy))
         if best is None or d < best[0] - 1e-12:
-            best = (d, k, u)
+            best = (d, k, u, (ax + uc * dx, ay + uc * dy))
     if best is None or best[0] > JOIN_M:
         return None
-    _, k, u = best
+    _, k, u, foot = best
     if k == len(line) - 2 and u >= 1.0:
         return None  # 선 끝을 지났다
-    return [tuple(p) for p in line[k + 1:]]
+    rest = [tuple(p) for p in line[k + 1:]]
+    if math.dist(foot, rest[0]) > 1e-9:
+        rest.insert(0, foot)  # 수직으로 붙어 선 그대로(모서리를 안 자름)
+    return rest
 
 
 def _rest_of_line(point, line):

@@ -464,6 +464,26 @@ def test_a_new_leg_that_ends_within_a_centimetre_still_waits_for_the_old_goal_to
     assert traffic._legs["a"].done  # 이제 도착(A는 주차 칸이 아니라 다음 tick에 주차 칸으로 간다)
 
 
+def test_a_new_leg_at_the_goal_waits_for_a_goal_cancelled_earlier():
+    """Codex(99c068e): 앞서 취소해 m.goal은 없지만 옛 MoveTo가 아직 달릴 수 있으면 바로 도착이 아니다."""
+    core, now = bare_floor()
+    traffic = core.traffic
+    x, y = traffic.site.waypoint_pose("A")
+    report(core, "a", x, y)
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "B")
+    traffic.step("a")
+    traffic.take_output()
+    traffic._cancel_goal(m)  # 다른 일로 앞서 취소했다
+    report(core, "a", x + 0.05, y, state="MOVING")
+    traffic._start_leg(m, "TO_PARK", None, "A")
+    assert not traffic._legs["a"].done
+    traffic.tick_progress(now[0])
+    traffic.step("a")
+    back = moves_of(traffic.take_output())
+    assert back and (back[-1].x, back[-1].y) == (x, y)  # 목표로 짧게 보내고 그 결과로 도착
+
+
 def test_a_parked_robot_moves_up_only_once_every_robot_is_on_the_map():
     """경기장 씨드 10: 첫 tick에 pinky2의 보고가 아직 없어 P-1이 빈 줄 알고 pinky3이 출발했다."""
     core, now = bare_floor(robots=("a", "b"))
