@@ -247,9 +247,9 @@ def test_floor_outbound_then_wait_with_fewer_orders_than_robots_is_allowed():
 
 
 def test_floor_a_call_from_parking_is_not_a_direct_return():
-    j = backlog_judge()
+    j = backlog_judge(board=("O-1",))  # no backlog, so parking itself is fine
     tasks(j, 1.0, {"pinky1": "SWAP"}, {"pinky1": "WAIT"}, {"pinky1": "TO_WORK"})
-    assert j.direct_returns == 0
+    assert j.direct_returns == 0 and j.parked_while_backlog == 0
 
 
 def test_floor_a_repeated_message_counts_once():
@@ -260,12 +260,12 @@ def test_floor_a_repeated_message_counts_once():
 
 
 def test_floor_laps_are_not_read_from_zones():
-    """A pinky that crosses a parking zone on its way to work (gz_nonstop, pinky3 on P-3) is
-    not parking, and a dock pose beside the zone does not lose a lap."""
+    """Without tasks, zone visits that would be a lap and a parking on the lanes count nothing:
+    a pinky crossing a parking zone on its way to work (gz_nonstop, pinky3 on P-3) is not
+    parking, and a lap is not lost when a dock pose sits beside its zone."""
     j = backlog_judge()
-    tasks(j, 0.0, {"pinky1": "SWAP"}, {"pinky1": "TO_WORK"})
-    lap(j, "pinky1", [OUT, LANE, WAITING, WORK], start=3.0)
-    assert j.parked_while_backlog == 0 and j.direct_returns == 1
+    lap(j, "pinky1", [OUT, LANE, WORK, OUT, LANE, WAITING], start=1.0)
+    assert j.parked_while_backlog == 0 and j.direct_returns == 0
 
 
 def test_lanes_read_laps_from_zones_not_assignments():
