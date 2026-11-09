@@ -311,3 +311,27 @@ def test_a_waiting_leg_stuck_behind_a_standing_robot_picks_another_spot_as_befor
     monkeypatch.setattr(traffic, "_plan", lambda m, leg: picked.append(traffic._clock()))
     _tick(traffic, at, b, leg, 10.0 + traffic.params.floor_replan_s + 0.1)
     assert picked == [10.0 + traffic.params.floor_replan_s + 0.1]
+
+
+def test_after_an_unresolved_deadlock_the_chosen_robot_takes_a_long_way_around(monkeypatch):
+    """비켜 설 자리도 없는 막힘(못 풂)으로 고른 로봇은 격리보다 먼 길이 낫다: +3 m 제한 없이 돈다.
+    다른 로봇은 예전 제한 그대로다."""
+    traffic, at = floor({"a": (1.6, 0.8), "b": (1.95, 0.8)})
+    a, b, legs = _head_on(traffic, at)
+    far = {n: Route([(m.x, m.y), (m.x, 1.6), (m.x + 3.0, 1.6), (m.x + 3.0, 0.4), legs[n].goal_xy])
+           for n, m in (("a", a), ("b", b))}
+    for n in far:
+        assert far[n].length > legs[n].route.length - legs[n].s + 3.0
+    monkeypatch.setattr(traffic, "_route", lambda m, *args, **kw: far[m.name])
+    t = 10.0 + traffic.params.floor_pass_wait_s + 0.1  # 둘 다 다시 계획할 때
+    at(t)
+    for m in (a, b):
+        traffic._extend(m, legs[m.name])
+        traffic._replan_if_stuck(m, legs[m.name], False)
+    assert legs["a"].route is not far["a"] and legs["b"].route is not far["b"]
+    traffic._unresolved_at, traffic._unresolved_robot = t, "b"
+    at(t + traffic.params.floor_replan_s + 0.1)
+    for m in (a, b):
+        traffic._extend(m, legs[m.name])
+        traffic._replan_if_stuck(m, legs[m.name], False)
+    assert legs["b"].route is far["b"] and legs["a"].route is not far["a"]

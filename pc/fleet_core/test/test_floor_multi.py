@@ -56,29 +56,31 @@ def _cycle_spans(monkeypatch):
             return done
 
         traffic._replan_if_stuck, traffic._sidestep = counted_replan, counted_sidestep
-        step, now = world.step, {"since": None, "seen": 0.0, "members": set(), "acted": 0}
+        check, now = traffic._check_deadlock, {"since": None, "seen": 0.0, "members": set(),
+                                                "acted": 0, "last": collections.Counter()}
 
         def close():
             spans.append((now["seen"] - now["since"], now["acted"]))
             now["since"] = None
 
-        def counted():
-            before = collections.Counter(acts)
-            step()
+        def counted_check(t):  # 관제가 순환을 보는 바로 그때 같은 그래프를 본다
             graph = wait_graph(traffic.zones)
             graph.pop(BLOCK_OWNER, None)
-            if now["since"] is not None and world.t - now["seen"] > 1.0:
+            if now["since"] is not None and t - now["seen"] > 1.0:
                 close()
+            if now["since"] is not None:  # 지난번 검사 때 이미 순환에 든 로봇의 행동만 센다
+                now["acted"] += sum(acts[n] - now["last"][n] for n in now["members"])
+            now["last"] = collections.Counter(acts)
             cycle = set(find_cycle(graph) or ())
-            if now["since"] is not None:  # 이 단계 전부터 순환에 든 로봇의 행동만 센다
-                now["acted"] += sum(acts[n] - before[n] for n in now["members"])
             if cycle:
                 if now["since"] is None:
-                    now.update(since=world.t, members=set(), acted=0)
+                    now.update(since=t, members=set(), acted=0)
                 now["members"] |= cycle
-                now["seen"] = world.t
+                now["seen"] = t
+            return check(t)
 
-        world.step, world.close_cycle = counted, lambda: now["since"] is not None and close()
+        traffic._check_deadlock = counted_check
+        world.close_cycle = lambda: now["since"] is not None and close()
         return world
 
     monkeypatch.setattr(compare_floor, "build", build)

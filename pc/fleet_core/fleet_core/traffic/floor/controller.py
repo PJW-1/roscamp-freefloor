@@ -931,7 +931,9 @@ class FloorController(TrafficController):
         if new is None:
             new = self._route(m, here, leg.goal_xy, None, leg.in_line,
                               extra=frozenset(walls | self._others_cells(m.name)))
-        if new is None or new.length > old_left + 3.0:
+        # 비켜 설 자리도 없어 못 풂으로 고른 로봇: 곧 격리되므로 먼 길이라도 돈다
+        last_resort = self._unresolved_at is not None and self._unresolved_robot == m.name
+        if new is None or (new.length > old_left + 3.0 and not last_resort):
             if leg.no_way_since is None:
                 leg.no_way_since = now  # 상대가 이를 보고 기다리지 않는다
             return
