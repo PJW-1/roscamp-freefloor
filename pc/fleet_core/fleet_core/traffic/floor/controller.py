@@ -181,9 +181,11 @@ class FloorController(TrafficController):
         # within release_distance_m would shut a parking spot 0.35 m away
         rest = self._rest_outside.setdefault(m.name, {})
         at_rest = self._at_rest(m)
-        if not at_rest:
-            rest.clear()
-        for cell_id in list(self.zones.held_set(m.name)):
+        held = self.zones.held_set(m.name)
+        for cell_id in list(rest):
+            if not at_rest or cell_id not in held:
+                del rest[cell_id]  # a cell let go and taken again counts from zero
+        for cell_id in list(held):
             gap = self.floor.box_distance(self.floor.cell_at(cell_id), m.x, m.y)
             if gap > d:
                 m.outside[cell_id] = m.outside.get(cell_id, 0) + 1
@@ -327,11 +329,12 @@ class FloorController(TrafficController):
             s, _ = active.project(m.x, m.y)
             keep |= self._swept(active.between(s, active.length))
         rest = self._rest_outside.get(m.name, {}) if self._at_rest(m) else {}
+        rest_need = max(REST_RELEASE_SAMPLES, self.params.release_confirm_samples)
         for cell_id in list(self.zones.held_set(m.name)):
             if cell_id in keep:
                 continue
             if (m.outside.get(cell_id, 0) >= self.params.release_confirm_samples
-                    or rest.get(cell_id, 0) >= REST_RELEASE_SAMPLES):
+                    or rest.get(cell_id, 0) >= rest_need):
                 self.zones.release(m.name, cell_id)
                 m.outside.pop(cell_id, None)
                 rest.pop(cell_id, None)

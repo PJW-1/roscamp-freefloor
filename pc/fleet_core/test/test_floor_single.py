@@ -314,6 +314,8 @@ def test_a_report_nearer_a_cell_starts_its_count_again():
     stand(core, now, REST_RELEASE_SAMPLES - 1)
     held = core.traffic.zones.held_set("a")
     assert east in held and west not in held
+    stand(core, now, 1)
+    assert east not in core.traffic.zones.held_set("a")
 
 
 def test_a_robot_that_leaves_before_its_count_is_full_keeps_its_cells():
@@ -326,6 +328,36 @@ def test_a_robot_that_leaves_before_its_count_is_full_keeps_its_cells():
     now[0] += 0.1
     traffic.tick_progress(now[0])  # no report yet since it left
     assert came_over <= traffic.zones.held_set("a")
+
+
+def test_a_robot_that_moves_counts_from_zero_when_it_stands_again():
+    core, now, came_over, body = standing_after_a_trip()
+    stand(core, now, REST_RELEASE_SAMPLES - 1)
+    report(core, "a", 1.0, 1.15, state="MOVING", times=1)
+    stand(core, now, 1)
+    assert came_over <= core.traffic.zones.held_set("a")
+
+
+def test_a_cell_let_go_and_taken_again_counts_from_zero():
+    core, now, came_over, body = standing_after_a_trip()
+    zones = core.traffic.zones
+    cell = sorted(came_over - body)[0]
+    stand(core, now, REST_RELEASE_SAMPLES - 1)
+    zones.release("a", cell)  # e.g. confirm_clear before a reinstate
+    stand(core, now, 1)
+    assert zones.acquire_all("a", {cell})
+    stand(core, now, 1)
+    assert cell in zones.held_set("a")
+
+
+def test_a_longer_release_confirm_setting_is_kept_at_rest():
+    from dataclasses import replace
+    core, now, came_over, body = standing_after_a_trip()
+    core.traffic.params = replace(core.traffic.params, release_confirm_samples=12)
+    stand(core, now, 11)
+    assert came_over <= core.traffic.zones.held_set("a")
+    stand(core, now, 1)
+    assert core.traffic.zones.held_set("a") == body
 
 
 def test_a_robot_waiting_to_dock_keeps_its_cells():
