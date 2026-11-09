@@ -25,6 +25,24 @@ python3 tools/floor_view.py --map floor_map --out /tmp/floor.html
 
 Windows python에서는 `PYTHONPATH`를 `;`로 잇는다.
 
+### Gazebo로 돌려 보기
+
+Pinky Pro 3대를 Gazebo에 띄우고 진짜 관제(`fleet_manager`)를 자유바닥으로 돌린다. `traffic_mode:=freefloor`가 관제 파라미터를 `traffic_mode: freefloor`로 바꾼 사본(`<result_dir>/fleet_params.yaml`)을 만들어 모든 노드에 준다. RViz(`rviz:=fleet`)에는 쥔 칸이 로봇 색 사각형으로, 물체 앞을 막은 칸이 빨강으로 나온다.
+
+```bash
+cd ~/ros2camp/ff_ws
+source /opt/ros/jazzy/setup.bash && source ~/pinky_deps_ws/install/local_setup.bash
+colcon build --base-paths ~/ros2camp/roscamp-freefloor --packages-up-to fleet_gz_sim fake_robots fleet_manager
+source install/local_setup.bash
+export ROS_DOMAIN_ID=53 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+unset ROS_STATIC_PEERS ROS_DISCOVERY_SERVER FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE FASTDDS_ENVIRONMENT_FILE FASTDDS_BUILTIN_TRANSPORTS
+ros2 launch fleet_gz_sim gz.launch.py scenario:=basic_orders traffic_mode:=freefloor sim_dock_stub:=true result_dir:=gz_freefloor
+```
+
+- 화면 없이: `gui:=false rviz:=none`. 레인과 비교: `traffic_mode:=lanes`(또는 빼기).
+- 결과는 `result_dir`에 시나리오 판정과 `fleet_check.json`(로봇 사이 최소 거리, 정지 횟수, 쥔 칸 밖 위치 수)으로 남는다. 시나리오가 끝나면 launch가 끝난다.
+- 도메인은 53~60, `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`. launch가 격리를 확인하고 아니면 멈춘다.
+
 ## 결과 (52737c1, Windows python, 같은 기계에서 연달아)
 
 | 시나리오 | 방식 | 끝남 | 마지막 주문 보고(s) 평균 (최소~최대) | 정지 횟수 평균 | 기다린 시간 합(s) 평균 | 달린 거리(m) 평균 | 로봇 사이 최소 거리(m) | tick ms 평균 / p99 최대 / 최대 | 비켜 서기 | 미해결 교착 | 격리 | 칸 위반 |
