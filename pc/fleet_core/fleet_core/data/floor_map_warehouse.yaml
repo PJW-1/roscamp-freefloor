@@ -23,8 +23,10 @@ parking:
   - {id: P-3, x: 2.65, y: 3.15}
 # Fixed lines, picked as in floor_map.yaml: the lane into each dock from its queue and the lane
 # out of the dock (QS->W, W->WU, QOS->O, O->G2; OUTBOUND also has O->OU, the lane map's other way
-# out, but a station has one out line). As in feature_floor_map.yaml, the narrow two-way passage
-# TUN (A2-C2, 0.5 m between rack rows) gets one line per direction over the same cells.
+# out, but a station has one out line). As in feature_floor_map.yaml, the lane map's two-way
+# passage TUN (A2-C2) gets one line per direction over the same cells. Note: the controller locks
+# a whole line at once only for the <station>_in/_out lines; the tunnel lines only make the planner
+# pay more for their cells and keep wait spots off them. Every warehouse aisle is 0.5 m wide.
 fixed_lines:
   work_in: [[0.45, 1.15], [0.45, 1.95]]
   work_out: [[0.45, 1.95], [0.45, 2.75]]

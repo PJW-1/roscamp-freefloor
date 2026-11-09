@@ -243,9 +243,15 @@ def floor_map_for(site) -> FloorMap:
     """
     name = getattr(site, "floor_map", "") or DEFAULT_FLOOR.name
     path = DEFAULT_FLOOR.parent / name
-    if Path(name).name != name or not path.is_file():
+    # a link may point elsewhere only where floor_map.yaml itself does (an install of links)
+    home = DEFAULT_FLOOR.resolve().parent
+    if Path(name).name != name or not path.is_file() or path.resolve().parent != home:
         raise FloorMapError(f"floor_map {name!r} is not a file in {DEFAULT_FLOOR.parent}")
     floor = load_floor_map(path)
+    extra = sorted(set(floor.docks) - set(site.stations))
+    if extra:
+        raise FloorMapError(f"{path.name} does not fit the lane map: docks {extra} are no station"
+                            " of the lane map (set floor_map in the lane map)")
     for station_id, station in site.stations.items():
         dock = floor.docks.get(station_id)
         if dock is None or math.dist(dock, site.waypoint_pose(station.dock)) > 1e-9:

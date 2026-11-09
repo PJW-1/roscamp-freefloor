@@ -235,3 +235,40 @@ def test_a_floor_map_name_is_a_file_in_the_fleet_core_data(tmp_path):
         path.write_text(yaml.safe_dump(data), encoding="utf-8")
         with pytest.raises(FloorMapError, match="floor_map"):
             floor_map_for(load_lane_map(path))
+
+
+def copy_data(tmp_path, monkeypatch):
+    """A copy of fleet_core/data that floor_map_for reads instead."""
+    import shutil
+
+    from fleet_core.traffic.floor import floor_map as module
+    data = tmp_path / "data"
+    shutil.copytree(DEFAULT_FLOOR.parent, data)
+    monkeypatch.setattr(module, "DEFAULT_FLOOR", data / DEFAULT_FLOOR.name)
+    return data
+
+
+def test_a_floor_with_a_dock_the_lane_map_does_not_have_is_refused(tmp_path, monkeypatch):
+    """A floor dock is live: a robot starting near it would take its out line."""
+    import yaml
+    from fleet_core.traffic.floor.floor_map import floor_map_for
+    data = copy_data(tmp_path, monkeypatch)
+    floor = yaml.safe_load(WAREHOUSE_FLOOR.read_text(encoding="utf-8"))
+    floor["docks"]["SPARE"] = [3.0, 0.35]
+    (data / WAREHOUSE_FLOOR.name).write_text(yaml.safe_dump(floor), encoding="utf-8")
+    with pytest.raises(FloorMapError, match="SPARE"):
+        floor_map_for(load_lane_map(WAREHOUSE_LANES))
+
+
+def test_a_floor_map_name_that_links_out_of_the_data_folder_is_refused(tmp_path, monkeypatch):
+    from fleet_core.traffic.floor.floor_map import floor_map_for
+    data = copy_data(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / WAREHOUSE_FLOOR.name).write_text(
+        (data / WAREHOUSE_FLOOR.name).read_text(encoding="utf-8").replace(
+            "image: warehouse.pgm", f"image: {data / 'warehouse.pgm'}"), encoding="utf-8")
+    (data / WAREHOUSE_FLOOR.name).unlink()
+    (data / WAREHOUSE_FLOOR.name).symlink_to(outside / WAREHOUSE_FLOOR.name)
+    with pytest.raises(FloorMapError, match="floor_map"):
+        floor_map_for(load_lane_map(WAREHOUSE_LANES))
