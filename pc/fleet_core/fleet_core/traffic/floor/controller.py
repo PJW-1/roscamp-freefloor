@@ -48,6 +48,7 @@ from fleet_core.traffic.mission import (
     ERROR,
     HEARTBEAT_LOST,
     IDLE,
+    LOCALIZING,
     MOVE,
     NOT_PLACEABLE,
     ON_A_GOAL,
@@ -1222,7 +1223,8 @@ class FloorController(TrafficController):
             if end - leg.s <= 0.01 and not final:
                 return
             if final and math.dist((m.x, m.y), route.points[-1]) <= 0.01 and leg.s_sent >= end:
-                leg.done = True
+                if not self._active[m.name]:
+                    leg.done = True  # 취소한 옛 MoveTo도 끝났다(로봇이 섰다)
                 return
         elif m.goal.kind != MOVE:
             return
@@ -1261,11 +1263,11 @@ class FloorController(TrafficController):
         return points
 
     def _step_parked(self, m: _Mission) -> None:
-        """대기 입구가 비도록 빈 지점으로 계속 앞으로 간다. 한 번도 보고하지 않은 로봇이 있으면
-        그 로봇이 선 칸을 모르니 기다린다(첫 보고 전의 빈 칸은 빈 칸이 아닐 수 있다)."""
-        if any(not o.placed and not o.robot_state and o.fault != OUT_OF_SERVICE
+        """대기 입구가 비도록 빈 지점으로 계속 앞으로 간다. 자세를 믿을 보고를 아직 못 받은 로봇이
+        있으면 그 로봇이 선 칸을 모르니 기다린다(첫 보고 전의 빈 칸은 빈 칸이 아닐 수 있다)."""
+        if any(not o.placed and o.robot_state in ("", LOCALIZING) and o.fault != OUT_OF_SERVICE
                for o in self._missions.values()):
-            return  # 한 번도 보고하지 않은 로봇: 어디 섰는지 모른다
+            return  # 보고가 없거나 LOCALIZING뿐: 어디 섰는지 모른다
         if self._run_mode == RUN and self._park_goal(m, m.path[m.idx]):
             self._start_park_leg(m)
 

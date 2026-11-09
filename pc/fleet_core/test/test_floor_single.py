@@ -439,6 +439,31 @@ def test_a_new_leg_that_ends_where_the_robot_stands_stops_the_old_goal():
     assert back and (back[-1].x, back[-1].y) == (x, y) and m.phase == "TO_PARK"
 
 
+def test_a_new_leg_that_ends_within_a_centimetre_still_waits_for_the_old_goal_to_stop():
+    """Codex(5b5cb48): 1 cm 안이면 짧은 MoveTo 없이 바로 도착해 취소 결과 전에 도착했다."""
+    from fleet_core.common.commands import CancelCmd
+    core, now = bare_floor()
+    traffic = core.traffic
+    x, y = traffic.site.waypoint_pose("A")
+    report(core, "a", x, y)
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "B")
+    traffic.step("a")
+    east = moves_of(traffic.take_output())[-1]
+    report(core, "a", x + 0.005, y, state="MOVING")
+    traffic._start_leg(m, "TO_PARK", None, "A")
+    assert any(isinstance(c, CancelCmd) and c.goal_id == east.goal_id
+               for c in traffic.take_output())
+    for _ in range(2):
+        traffic.tick_progress(now[0])
+        traffic.step("a")
+    assert m.phase == "TO_PARK" and not traffic._legs["a"].done  # 옛 MoveTo가 아직 달린다
+    report(core, "a", x + 0.006, y, state="IDLE")  # 섰다
+    traffic.tick_progress(now[0])
+    traffic.step("a")
+    assert traffic._legs["a"].done  # 이제 도착(A는 주차 칸이 아니라 다음 tick에 주차 칸으로 간다)
+
+
 def test_a_parked_robot_moves_up_only_once_every_robot_is_on_the_map():
     """경기장 씨드 10: 첫 tick에 pinky2의 보고가 아직 없어 P-1이 빈 줄 알고 pinky3이 출발했다."""
     core, now = bare_floor(robots=("a", "b"))
@@ -447,6 +472,20 @@ def test_a_parked_robot_moves_up_only_once_every_robot_is_on_the_map():
     a = traffic._missions["a"]
     traffic.step("a")
     assert a.phase == "PARKED" and "a" not in traffic._legs  # b may stand on P-5 or P-6
+    report(core, "b", 1.0, 1.15)
+    traffic.step("a")
+    assert a.phase == "TO_PARK" and a.path[-1] == "P-6"
+
+
+def test_a_robot_that_reported_only_localizing_still_holds_the_parking_queue():
+    """Codex(5b5cb48): 첫 보고가 LOCALIZING이면 자세를 안 믿어 칸이 없는데 대기 칸 앞으로 갔다."""
+    core, now = bare_floor(robots=("a", "b"))
+    traffic = core.traffic
+    core.on_robot_state("b", 1.0, 1.15, 0.0, "LOCALIZING")
+    report(core, "a", *traffic.site.waypoint_pose("P-4"))
+    a = traffic._missions["a"]
+    traffic.step("a")
+    assert a.phase == "PARKED" and "a" not in traffic._legs  # b가 어디 섰는지 아직 모른다
     report(core, "b", 1.0, 1.15)
     traffic.step("a")
     assert a.phase == "TO_PARK" and a.path[-1] == "P-6"
