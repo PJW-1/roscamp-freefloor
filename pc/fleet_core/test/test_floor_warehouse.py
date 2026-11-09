@@ -61,3 +61,16 @@ def test_a_short_warehouse_run_finishes_on_the_free_floor(tmp_path, seed):
     # to) until one robot gets a new route; none may end in an isolation
     assert row["isolations"] == 0
     assert row["min_gap_m"] >= 2 * load_params().robot_radius_m
+
+
+def test_the_warehouse_start_that_stranded_a_pinky_has_a_path_to_the_outbound_dock():
+    """Gazebo run whB: pinky2 stood at (0.986, 1.033), a cell inside the rack margin, and found no
+    floor path to O for 1300 s while the other two waited for it."""
+    from fleet_core.traffic.floor.floor_map import floor_map_for
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    floor = floor_map_for(WAREHOUSE)
+    start = (0.986, 1.033)
+    assert floor.cell_of(*start) not in floor.clear
+    route = FloorPlanner(floor).leg(start, WAREHOUSE.waypoint_pose("O"), in_line="outbound_in")
+    assert route is not None and route.points[0] == start
+    assert route.fixed[-1][2] == "outbound_in"

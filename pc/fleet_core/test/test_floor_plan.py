@@ -162,3 +162,37 @@ def test_joining_the_line_from_a_cell_too_close_to_a_wall_is_refused():
     assert floor.cell_of(*start) not in floor.clear
     route = planner.leg(start, (1.6, 0.65), in_line="l")
     assert route is None or route.points[0] != start or route.fixed[0][0] > 0.0
+
+
+# ---- a start that drifted off clear floor ----------------------------------------------------
+# A pinky can stop a few cm into the wall margin (Gazebo warehouse run, 2026-11-09: 7 cm, after
+# stepping aside in a wait cycle). Its cell is free but not clear, and planning from it gave no
+# path on every retry, so the robot stood there for good.
+
+def box_floor():
+    return FloorMap({"bounds": [0, 0, 2, 1.4], "boxes": [[0.8, 0.9, 1.2, 1.4]], "cell_m": 0.1,
+                     "robot_radius_m": 0.08, "cell_margin_m": 0.05})
+
+
+def test_a_start_just_off_clear_floor_steps_onto_it_first():
+    floor = box_floor()
+    start = (1.0, 0.76)
+    assert floor.cell_of(*start) in floor.free and floor.cell_of(*start) not in floor.clear
+    path = FloorPlanner(floor).plan(start, (1.6, 0.4))
+    assert path is not None and path[0] == start
+    assert floor.cell_of(*path[1]) in floor.clear and math.dist(start, path[1]) <= 0.2
+    assert line_cells(floor, path[:2]) <= floor.free
+    assert on_clear_floor(floor, path[1:])
+
+
+def test_the_step_onto_clear_floor_avoids_cells_of_others():
+    floor = box_floor()
+    start = (1.0, 0.76)
+    nearest = floor.cell_of(*FloorPlanner(floor).plan(start, (1.6, 0.4))[1])
+    path = FloorPlanner(floor).plan(start, (1.6, 0.4), avoid=frozenset({nearest}))
+    assert path is not None and floor.cell_of(*path[1]) != nearest
+
+
+def test_a_start_inside_a_box_still_gives_none():
+    floor = box_floor()
+    assert FloorPlanner(floor).plan((1.0, 1.1), (1.6, 0.4)) is None

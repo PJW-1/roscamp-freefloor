@@ -18,6 +18,7 @@ LINE_COST = 4.0  # 고정 선 칸을 자유 경로가 지날 때의 거리 배�
 ARC_RADIUS_M = 0.15  # 꺾임을 둥글리는 원호 반지름(이보다 작게 줄 수 있다)
 ARC_STEP_M = 0.05
 JOIN_M = 0.12  # 이만큼 안에 있으면 들어가는 고정 선 위에 선 것으로 보고 그 자리에서 잇는다
+STEP_ONTO_CLEAR_M = 0.2  # a start this close to clear floor (stopped in a wall margin) steps onto it
 STRAIGHT = 1e-3  # 이보다 덜 꺾이면 곧은 것으로 친다(rad)
 NEIGHBOURS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
@@ -137,9 +138,16 @@ class FloorPlanner:
         """자유 바닥 위 start에서 goal까지 둥글린 꺾은선, 없으면 None."""
         floor = self.floor
         a, b = floor.cell_of(*start), floor.cell_of(*goal)
-        allowed = (floor.clear - avoid) | {a, b}
-        if a not in floor.clear or b not in floor.clear:
+        if b not in floor.clear:
             return None
+        if a not in floor.clear:
+            # stopped a few cm into a wall margin: one straight step back onto clear floor first
+            step = self._onto_clear(start, avoid)
+            if step is None:
+                return None
+            rest = self.plan(step, goal, avoid, penalty, s0 + math.dist(start, step))
+            return None if rest is None else [tuple(start), *rest]
+        allowed = (floor.clear - avoid) | {a, b}
         if math.dist(start, goal) < 1e-9:
             return [tuple(start)]
         cells = self.astar(a, b, allowed, penalty, s0)
@@ -148,6 +156,28 @@ class FloorPlanner:
         raw = [tuple(start)] + [floor.centre(c) for c in cells[1:-1]] + [tuple(goal)]
         short = self.shortcut(raw, allowed)
         return self.round_corners(short, allowed)
+
+    def _onto_clear(self, start, avoid=frozenset()):
+        """Centre of the nearest clear cell within STEP_ONTO_CLEAR_M that a straight step over
+        free floor reaches, None if there is none (or the start is not on free floor)."""
+        floor = self.floor
+        a = floor.cell_of(*start)
+        if a not in floor.free:
+            return None
+        reach = math.ceil(STEP_ONTO_CLEAR_M / floor.cell_m)
+        best = None
+        for di in range(-reach, reach + 1):
+            for dj in range(-reach, reach + 1):
+                cell = (a[0] + di, a[1] + dj)
+                if cell not in floor.clear or cell in avoid:
+                    continue
+                xy = floor.centre(cell)
+                d = math.dist(start, xy)
+                if d > STEP_ONTO_CLEAR_M or (best is not None and d >= best[0]):
+                    continue
+                if line_cells(floor, [tuple(start), xy]) <= floor.free:
+                    best = (d, xy)
+        return None if best is None else best[1]
 
     def astar(self, a, b, allowed, penalty=None, s0=0.0):
         floor = self.floor
