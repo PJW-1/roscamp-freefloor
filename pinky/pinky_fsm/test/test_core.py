@@ -902,14 +902,16 @@ def test_the_limit_never_rounds_above_what_can_stop(back_m):
     assert v <= math.sqrt(2 * 0.25 * fsm.distance_remaining(near_p5(back_m))) + 1e-12
 
 
-@pytest.mark.parametrize("back_m", [0.14, 0.16, 0.175])
-def test_the_limit_never_asks_more_than_the_nav2_desired_speed(back_m):
+def test_the_limit_never_asks_more_than_the_nav2_desired_speed():
     """RPP takes an absolute speed limit as its desired_linear_vel without comparing it to the
     configured one, so a limit of 0.26-0.29 m/s (0.13-0.18 m before the end) would speed up."""
     fsm = ready()
     fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
-    asked = limits(fsm.tick(1.2, near_p5(back_m), DRIVING, no_obstacle))
-    assert all(v == 0.0 or v <= nav2_desired_mps() for v in asked)
+    asked = []
+    for k in range(40):  # from 0.20 m before the end to the end, 5 mm apart
+        asked += limits(fsm.tick(1.1 + 0.01 * k, near_p5(0.20 - 0.005 * k), DRIVING, no_obstacle))
+    positive = [v for v in asked if v > 0.0]
+    assert positive and max(positive) <= nav2_desired_mps()
 
 
 def test_the_speed_cap_is_not_above_the_nav2_desired_speed():
