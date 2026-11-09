@@ -94,6 +94,8 @@ class FloorMap:
                             for name, points in (data.get("fixed_lines") or {}).items()}
         self.rolling_lines = self._read_rolling(data.get("rolling_lines") or [])
         self.robot_half_width_m = self._read_half_width(data.get("robot_half_width_m"))
+        # beside a straight run only: robot_half_width_m + side_margin_m (default cell_margin_m)
+        self.side_margin_m = self._read_side_margin(data.get("side_margin_m", self.cell_margin_m))
         self._ids = {}
         self._cells = {}
         for i in range(self.cols):
@@ -122,6 +124,14 @@ class FloorMap:
                 or not math.isfinite(value) or not 0 < value <= self.robot_radius_m):
             raise FloorMapError(f"robot_half_width_m {value!r} must be a number in "
                                 f"(0, robot_radius_m {self.robot_radius_m}]")
+        return float(value)
+
+    def _read_side_margin(self, value) -> float:
+        """곧게 달리는 동안 반폭 바깥으로 더 잠그는 여유. 0 이상, cell_margin_m 이하."""
+        if (isinstance(value, bool) or not isinstance(value, int | float)
+                or not math.isfinite(value) or not 0 <= value <= self.cell_margin_m):
+            raise FloorMapError(f"side_margin_m {value!r} must be a number in "
+                                f"[0, cell_margin_m {self.cell_margin_m}]")
         return float(value)
 
     @staticmethod

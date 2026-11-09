@@ -129,7 +129,14 @@ class FloorController(TrafficController):
         self.planner = FloorPlanner(self.floor)
         self._body = self.floor.robot_radius_m + self.floor.cell_margin_m
         half = self.floor.robot_half_width_m
-        self._side = min(self._body, half + self.floor.cell_margin_m) if half else self._body
+        # around the robot itself on a straight run: half width + cell_margin_m
+        self._near = min(self._body, half + self.floor.cell_margin_m) if half else self._body
+        # beside the line it locks ahead: half width + side_margin_m (default cell_margin_m)
+        self._side = min(self._near, half + self.floor.side_margin_m) if half else self._body
+        # a band of radius _side ends in a half circle; the square body's corners (half, +-half)
+        # stay inside it only when the band runs on this far past either end
+        self._cap = (max(0.0, half - math.sqrt(max(0.0, self._side ** 2 - half ** 2)))
+                     if half else 0.0)
         self._legs: dict[str, _Leg] = {}
         # robot -> goal id -> path of every MoveTo the robot may still follow (until its result)
         self._active: dict[str, dict[int, Route]] = {name: {} for name in robots}
@@ -208,7 +215,8 @@ class FloorController(TrafficController):
         """경로 a..b를 달리며 쓰는 칸: 곧은 데는 반폭(_side), 제자리에서 돌 수 있는 데는 몸 원."""
         if self._side >= self._body:
             return self._swept(route.between(a, b))
-        cells = self._ids(swept_cells(self.floor, route.between(a, b), self._side))
+        lo, hi = max(0.0, a - self._cap), min(route.length, b + self._cap)
+        cells = self._ids(swept_cells(self.floor, route.between(lo, hi), self._side))
         for s0, s1 in self._turn_spans(route):
             lo, hi = max(a, s0), min(b, s1)
             if lo <= hi + 1e-9:
@@ -221,7 +229,7 @@ class FloorController(TrafficController):
             leg = self._legs.get(m.name)
             if (leg is not None and leg.route is not None and leg.s > TURN_START_M
                     and not self._turning_at(leg.route, leg.s)):
-                return self._side
+                return self._near
         return self._body
 
     def _body_now(self, m: _Mission) -> set[str]:
@@ -229,9 +237,9 @@ class FloorController(TrafficController):
 
     def _drive_cells(self, m: _Mission, leg, end: float, points) -> set[str]:
         """leg.s..end를 달리고 보낼 path(points)를 따라가는 데 쥘 칸."""
-        reach = self._reach_now(m)
+        band = self._side if self._reach_now(m) < self._body else self._body
         return (self._lock_cells(leg.route, leg.s, end) | self._body_now(m)
-                | self._ids(swept_cells(self.floor, points, reach)))
+                | self._ids(swept_cells(self.floor, points, band)))
 
     def _zone(self, waypoint) -> str:
         """지점이 든 칸. 물려받은 대기 지점·commit 판단이 이 칸의 주인을 본다."""

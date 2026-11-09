@@ -22,10 +22,15 @@ cell_m: 0.03
 robot_radius_m: 0.08  # same as fleet_params.yaml
 cell_margin_m: 0.03   # floor_map.yaml has 0.05
 # Pinky drives differentially and never sideways: on a straight stretch a robot locks only its
-# half width + cell_margin_m (0.09 m) beside it. Where RPP may turn it in place (the start and
-# end of a leg, and from 0.25 m before a turn sharper than 0.25 rad) it locks the whole 0.11 m
-# circle. Half of the Nav2 footprint (pinky_nav_config nav2_params.yaml, a 12 cm square).
+# half width + cell_margin_m (0.09 m) around itself and half width + side_margin_m (0.08 m)
+# beside the line ahead, run on past each end far enough to hold the square's corners. Where
+# RPP may turn it in place (the start and end of a leg, and from 0.25 m before a turn sharper
+# than 0.25 rad) it locks the whole 0.11 m circle. Half of the Nav2 footprint (pinky_nav_config nav2_params.yaml, a 12 cm square).
 robot_half_width_m: 0.06
+# 0.02 (user, 2026-11-10; was cell_margin_m 0.03): the side cells looked too wide in RViz.
+# 0.01 failed the headless arena seeds with report noise (a true body over a cell not held);
+# 0.02 passes them. Bands of two robots on parallel lines keep the lines 0.16 m apart.
+side_margin_m: 0.02
 wall_margin_m: 0.01
 # Station dock poses: the dock waypoints of the lane map (a test compares them).
 docks:

@@ -368,6 +368,18 @@ def test_the_half_width_is_read_only_when_the_map_gives_it(floor):
     assert FloorMap(data).robot_half_width_m == 0.06
 
 
+def test_the_side_margin_is_the_cell_margin_unless_the_map_gives_it(floor):
+    assert floor.side_margin_m == floor.cell_margin_m
+    assert FloorMap(floor_data(side_margin_m=0.01)).side_margin_m == 0.01
+    assert FloorMap(floor_data(side_margin_m=0)).side_margin_m == 0.0
+
+
+@pytest.mark.parametrize("bad", [-0.01, 0.06, float("nan"), "0.01", True, None])
+def test_a_side_margin_outside_zero_to_the_cell_margin_is_refused(bad):
+    with pytest.raises(FloorMapError, match="side_margin_m"):
+        FloorMap(floor_data(side_margin_m=bad))
+
+
 @pytest.mark.parametrize("bad", [0.0, -0.01, 0.09, float("nan"), "0.06", True])
 def test_a_half_width_that_is_not_inside_the_radius_is_refused(bad):
     data = {"bounds": [0, 0, 2, 1], "cell_m": 0.1, "robot_radius_m": 0.08,

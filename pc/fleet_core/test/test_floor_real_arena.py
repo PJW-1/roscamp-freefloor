@@ -150,7 +150,9 @@ def test_a_straight_stretch_locks_only_the_half_width_but_a_corner_the_whole_cir
     from fleet_core.traffic.floor.planner import Route
     traffic = arena_traffic()
     side, body = traffic._side, traffic._body
-    assert (round(side, 6), round(body, 6)) == (0.09, 0.11)
+    # 앞길 옆은 반폭 + side_margin_m(0.06 + 0.02), 로봇 자리는 반폭 + cell_margin_m(0.06 + 0.03),
+    # 제자리에서 돌 곳은 반지름 + cell_margin_m(0.08 + 0.03)
+    assert (round(side, 6), round(traffic._near, 6), round(body, 6)) == (0.08, 0.09, 0.11)
     route = Route([(1.20, 0.925), (1.875, 0.925), (1.875, 0.25)])  # outbound_in, corner at 0.675
     cells = traffic._lock_cells(route, 0.1, 0.6)
     reach = FLOOR.cell_m / 8
@@ -161,14 +163,18 @@ def test_a_straight_stretch_locks_only_the_half_width_but_a_corner_the_whole_cir
     assert corner <= cells  # 꺾이기 전 RPP가 제자리에서 돌 수 있는 곳은 원 전체
 
 
-def test_the_robot_holds_only_its_half_width_beside_it_on_a_straight_line(monkeypatch):
+def one_quiet_robot(monkeypatch):
     data = yaml.safe_load((REPO / "sim" / "fleet_gz_sim" / "scenarios" / "gz_real_arena.yaml")
                           .read_text(encoding="utf-8"))
     # 잡음 없이: 보고가 옆으로 튀면 그 자리 둘레를 잡는 것은 맞다(관제는 보고 자리만 안다)
     data["robots"] = {"pinky1": {"start": "P-2", "speed_mps": SPEED, "pose_noise_m": 0.0}}
     data["orders"] = data["orders"][:1]
     monkeypatch.setattr(compare_floor, "OVERRIDES", dict(LOCKS))
-    world = compare_floor.build(data, "real_arena", 3, "freefloor")
+    return compare_floor.build(data, "real_arena", 3, "freefloor")
+
+
+def test_the_robot_holds_only_its_half_width_beside_it_on_a_straight_line(monkeypatch):
+    world = one_quiet_robot(monkeypatch)
     traffic = world.core.traffic
     seen = 0
     for _ in range(3000):
@@ -176,11 +182,34 @@ def test_the_robot_holds_only_its_half_width_beside_it_on_a_straight_line(monkey
         r = world.virtual["pinky1"]
         if 1.30 < r.x < 1.50 and abs(r.y - 0.925) < 0.02:  # outbound_in 북쪽 곧은 구간
             seen += 1
-            wide = beside(traffic, r.x, 0.925, traffic._side + FLOOR.cell_m / 8, 0.2)
+            wide = beside(traffic, r.x, 0.925, traffic._near + FLOOR.cell_m / 8, 0.2)
             assert not wide & traffic.zones.held_set("pinky1"), (r.x, r.y)
         if world.done():
             break
     assert seen > 5 and world.cell_violations == 0
+
+
+def test_ahead_on_a_straight_line_the_band_is_only_the_half_width_and_side_margin(monkeypatch):
+    """side_margin_m narrows the band locked ahead on a straight line (user, 2026-11-10: the
+    side cells looked too wide in RViz). Around the robot itself the lock stays half width +
+    cell_margin_m, and no step of the run drives the true body over a cell it does not hold."""
+    world = one_quiet_robot(monkeypatch)
+    traffic = world.core.traffic
+    assert traffic._side < traffic._near
+    ahead = 0.11  # past the robot's own 0.09 m circle, before the turn span at the corner
+    seen = 0
+    for _ in range(3000):
+        world.step()
+        r = world.virtual["pinky1"]
+        if 1.30 < r.x < 1.42 and abs(r.y - 0.925) < 0.02:  # outbound_in 북쪽 곧은 구간
+            held = traffic.zones.held_set("pinky1")
+            if FLOOR.cell_id(FLOOR.cell_of(r.x + ahead, 0.925)) in held:
+                seen += 1
+                wide = beside(traffic, r.x + ahead, 0.925, traffic._side + FLOOR.cell_m / 8, 0.2)
+                assert not wide & held, (r.x, r.y)
+        if world.done():
+            break
+    assert seen > 3 and world.cell_violations == 0
 
 
 def arena_core():
