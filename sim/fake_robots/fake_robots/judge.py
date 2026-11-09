@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import math
 import re
 
 RATE_PERIOD_S = 0.5  # robots.csv는 2 Hz로 줄여 쓴다
@@ -19,6 +20,7 @@ PLACING = "PLACING"
 FINAL_CODES = {"ORDER_SHIPPED": "SHIPPED", "ORDER_PARTIAL": "PARTIAL", "ORDER_HELD": "HELD"}
 ORDER_ID = re.compile(r"[^\s:,;]+")
 WORK_TASKS = frozenset({"TO_WORK", "FILL"})  # Assignment task types bound for work
+PARKED_RADIUS_M = 0.15  # free floor: the manager's arrival_tolerance_m around a parking spot
 
 
 def order_id_of(detail: str) -> str:
@@ -487,7 +489,13 @@ class ScenarioJudge:
             pose = self.poses.get(robot)
             if pose is None or pose[2] != "IDLE":
                 return False
-            if self._zone_of_pose(*self._position(robot)) not in self._waiting_zones:
+            position = self._position(robot)
+            if self.floor_zones:
+                # docking error is often wider than the lane half width (then a lane end)
+                spot = self.site.nearest_waypoint(*position, waypoints=self.site.parking)
+                if math.dist(position, self.site.waypoint_pose(spot)) > PARKED_RADIUS_M:
+                    return False
+            elif self._zone_of_pose(*position) not in self._waiting_zones:
                 return False
         return True
 

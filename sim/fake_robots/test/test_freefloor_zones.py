@@ -2,7 +2,7 @@
 from dataclasses import replace
 
 import pytest
-from conftest import GRID_MAP
+from conftest import GRID_MAP, REPO
 from fake_robots.judge import ScenarioJudge
 from fake_robots.safety_meter import SafetyMeter
 from fake_robots.scenario import parse_scenario
@@ -273,3 +273,48 @@ def test_lanes_read_laps_from_zones_not_assignments():
     assert j.direct_returns == 0
     lap(j, "pinky1", [OUT, LANE, WAITING, WORK], start=3.0)
     assert j.parked_while_backlog == 1 and j.direct_returns == 0
+
+
+# -- parked at the end on the free floor ------------------------------------------------------
+# A free-floor pinky stops within the manager's arrival tolerance (0.15 m) of its spot, often
+# farther than the 0.05 m lane half width of the warehouse map, where the nearest waypoint is a
+# lane end instead (6 cm left of P-3 is C4).
+WAREHOUSE = load_lane_map(REPO / "sim" / "fake_robots" / "maps" / "warehouse.yaml")
+WAREHOUSE_FLOOR = zone_space(WAREHOUSE, replace(load_params(), traffic_mode="freefloor"))
+P1, P3 = WAREHOUSE.waypoint_pose("P-1"), WAREHOUSE.waypoint_pose("P-3")
+BESIDE_P3 = (P3[0] - 0.06, P3[1])
+
+
+def at_the_end(space, pinky2_xy):
+    sc = parse_scenario({
+        "seed": 1, "speed_factor": 1.0, "timeout_s": 100,
+        "stock": {"arm1": {"A": 9}, "arm2": {"C": 9}},
+        "orders": [{"at_s": 0, "id": "O-1", "items": {"A": 1}}],
+        "robots": {"pinky1": {"start": "P-1"}, "pinky2": {"start": "P-3"}},
+        "faults": [], "expect": {},
+    }, WAREHOUSE)
+    j = ScenarioJudge(space, sc, margin_m=0.13, grace_s=1.0)
+    j.on_event(1.0, "INFO", "central", "ORDER_SHIPPED", "O-1 robot=pinky1")
+    for robot, (x, y) in {"pinky1": P1, "pinky2": pinky2_xy}.items():
+        j.on_robot_state(1.0, robot, x, y, "IDLE")
+        j.on_true_pose(robot, x, y)
+    return j
+
+
+def test_floor_a_pinky_beside_its_parking_spot_is_parked():
+    assert at_the_end(WAREHOUSE_FLOOR, BESIDE_P3).finished(2.0)
+
+
+def test_floor_a_pinky_on_a_lane_away_from_parking_is_not_parked():
+    assert not at_the_end(WAREHOUSE_FLOOR, WAREHOUSE.waypoint_pose("C4")).finished(2.0)
+
+
+def test_floor_a_moving_pinky_on_its_spot_is_not_parked():
+    j = at_the_end(WAREHOUSE_FLOOR, P3)
+    j.on_robot_state(1.5, "pinky2", *P3, "MOVING")
+    assert not j.finished(2.0)
+
+
+def test_lanes_keep_parking_to_the_zone_of_the_spot():
+    assert at_the_end(WAREHOUSE, P3).finished(2.0)
+    assert not at_the_end(WAREHOUSE, BESIDE_P3).finished(2.0)
