@@ -267,3 +267,47 @@ def test_headings_keep_every_way_a_cell_is_passed():
     cell = traffic.floor.cell_of(1.35, 0.85)
     xs = [d[0] for d in heads[cell]]
     assert max(xs) > 0.9 and min(xs) < -0.9
+
+
+def test_headings_reach_the_window_end():
+    """창(limit) 끝 지점까지 방향을 적는다."""
+    traffic, _ = floor({"a": (1.0, 0.8)})
+    heads = traffic._headings([(1.0, 0.8), (3.0, 0.8)], 0.18)
+    assert set(disk_cells(traffic.floor, 1.18, 0.8, traffic._body)) <= set(heads)
+
+
+def test_a_route_that_turns_back_meets_a_robot_head_on():
+    """내 길이 a와 같은 쪽으로 갔다가 되돌아온다: 되돌아오는 쪽에서 a와 마주 온다."""
+    traffic, _ = floor({"a": (1.3, 0.62), "b": (1.0, 0.8)})
+    driving(traffic, "a", (2.9, 0.62))
+    assert traffic._passing("a")
+    assert traffic._oncoming("b", Route([(1.0, 0.8), (2.0, 0.8), (1.5, 0.8)])) == {"a"}
+    assert traffic._oncoming("b", Route([(1.0, 0.8), (2.0, 0.8)])) == set()
+
+
+def test_a_waiting_leg_stuck_behind_a_passing_robot_waits_before_it_picks_another_spot(monkeypatch):
+    """대기 자리로 가다 지나가는 로봇에 막혀도 floor_pass_wait_s 서서 기다린 뒤에 다른 자리를 고른다."""
+    traffic, at = floor({"a": (2.3, 0.45), "b": (2.6, 0.8)})
+    driving(traffic, "a", (2.3, 1.15))
+    b, leg = _stuck_behind(traffic, at)
+    leg.waiting = True
+    picked = []
+    monkeypatch.setattr(traffic, "_plan", lambda m, leg: picked.append(traffic._clock()))
+    wait = traffic.params.floor_pass_wait_s
+    for t in (11.1, 12.2, 10.0 + wait - 0.1):
+        _tick(traffic, at, b, leg, t)
+    assert picked == []
+    _tick(traffic, at, b, leg, 10.0 + wait + 0.1)
+    assert picked == [10.0 + wait + 0.1]
+
+
+def test_a_waiting_leg_stuck_behind_a_standing_robot_picks_another_spot_as_before(monkeypatch):
+    traffic, at = floor({"a": (2.3, 0.45), "b": (2.6, 0.8)})
+    driving(traffic, "a", (2.3, 1.15))
+    standing(traffic, "a")
+    b, leg = _stuck_behind(traffic, at)
+    leg.waiting = True
+    picked = []
+    monkeypatch.setattr(traffic, "_plan", lambda m, leg: picked.append(traffic._clock()))
+    _tick(traffic, at, b, leg, 10.0 + traffic.params.floor_replan_s + 0.1)
+    assert picked == [10.0 + traffic.params.floor_replan_s + 0.1]

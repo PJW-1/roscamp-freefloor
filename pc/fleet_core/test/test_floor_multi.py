@@ -33,8 +33,8 @@ def test_the_lane_scenarios_finish_on_the_free_floor(scenario, seed):
 
 
 def _cycle_spans(monkeypatch):
-    """순환마다 (이어진 시간, 그동안 순환에 든 로봇의 비켜 서기 + 재계획 수).
-    1초 안에 다시 생기면 같은 순환이다(관제와 같다)."""
+    """순환마다 (이어진 시간, 순환에 든 뒤 그 로봇들이 한 비켜 서기 + 재계획 수).
+    1초 안에 다시 생기면 같은 순환이고, 한 번에 순환 하나만 본다(관제와 같다)."""
     from fleet_core.traffic.deadlock import find_cycle, wait_graph
     from fleet_core.traffic.floor.controller import BLOCK_OWNER
     real, spans = compare_floor.build, []
@@ -56,24 +56,26 @@ def _cycle_spans(monkeypatch):
             return done
 
         traffic._replan_if_stuck, traffic._sidestep = counted_replan, counted_sidestep
-        step, now = world.step, {"since": None, "seen": 0.0, "members": set(), "start": None}
+        step, now = world.step, {"since": None, "seen": 0.0, "members": set(), "acted": 0}
 
         def close():
-            acted = sum(acts[n] - now["start"][n] for n in now["members"])
-            spans.append((now["seen"] - now["since"], acted))
+            spans.append((now["seen"] - now["since"], now["acted"]))
             now["since"] = None
 
         def counted():
+            before = collections.Counter(acts)
             step()
             graph = wait_graph(traffic.zones)
             graph.pop(BLOCK_OWNER, None)
             if now["since"] is not None and world.t - now["seen"] > 1.0:
                 close()
-            cycle = find_cycle(graph)
+            cycle = set(find_cycle(graph) or ())
+            if now["since"] is not None:  # 이 단계 전부터 순환에 든 로봇의 행동만 센다
+                now["acted"] += sum(acts[n] - before[n] for n in now["members"])
             if cycle:
                 if now["since"] is None:
-                    now.update(since=world.t, members=set(), start=collections.Counter(acts))
-                now["members"] |= set(cycle)
+                    now.update(since=world.t, members=set(), acted=0)
+                now["members"] |= cycle
                 now["seen"] = world.t
 
         world.step, world.close_cycle = counted, lambda: now["since"] is not None and close()

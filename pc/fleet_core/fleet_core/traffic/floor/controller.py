@@ -711,14 +711,14 @@ class FloorController(TrafficController):
             if seg <= 0:
                 continue
             d = ((b[0] - a[0]) / seg, (b[1] - a[1]) / seg)
-            for k in range(math.ceil(seg / step) + 1):  # 조각 끝까지
-                t = min(seg, k * step)
-                if walked + t > limit:
-                    return out
+            for k in range(math.ceil(seg / step) + 1):
+                t = min(seg, k * step, limit - walked)  # 조각 끝, 창 끝까지
                 for c in disk_cells(self.floor, a[0] + d[0] * t, a[1] + d[1] * t, self._body):
                     ways = out.setdefault(c, [])
                     if d not in ways:
                         ways.append(d)
+                if walked + t >= limit - 1e-9:
+                    return out
             walked += seg
         return out
 
@@ -895,6 +895,10 @@ class FloorController(TrafficController):
                 or now - leg.planned_at < self.params.floor_replan_s
                 or route.fixed_at(leg.s) is not None):
             return  # inside a fixed line there is no other way
+        blockers = self._blockers(m.name)
+        if (blockers and all(self._passing(b) for b in blockers)
+                and now - leg.stuck_since < self.params.floor_pass_wait_s):
+            return  # 지나가는 로봇: 곧 비킨다. 돌아가지도 대기 자리를 바꾸지도 않고 서서 기다린다
         if leg.waiting:
             if m.goal:
                 self._cancel_goal(m)
@@ -902,10 +906,6 @@ class FloorController(TrafficController):
             self._plan(m, leg)  # another wait spot (or the line, if it is free now)
             self.metrics["replans"] += 1
             return
-        blockers = self._blockers(m.name)
-        if (blockers and all(self._passing(b) for b in blockers)
-                and now - leg.stuck_since < self.params.floor_pass_wait_s):
-            return  # 지나가는 로봇: 곧 비킨다. 돌아가지 않고 서서 기다린다
         mutual = [b for b in blockers if b in self._missions and self._waits_on(b, m.name)]
         if (now - leg.stuck_since < self.params.floor_pass_wait_s
                 and any(choose_retreat([m.name, b], self._priority) == b and self._can_go_around(b)
