@@ -1,0 +1,81 @@
+# 실제 경기장(real_arena, 2.05 x 1.05 m)용 관제 파라미터. fleet_params.yaml에서 잠금 크기 셋만
+# 줄였다(앞 잠금 0.25 m, 줄여 잡기 0.05 m, 뒤 칸 놓기 0.17 m). 로봇은 0.12 m/s로 달린다
+# (gz.launch.py nav_max_speed:=0.12, 실물은 Nav2 desired_linear_vel). 나머지는 같아야 한다
+# (test_floor_real_arena가 비교한다).
+# 정책 값. 추정 표시는 실제 코스에서 재야 한다.
+basket_capacity: 4            # 추정: 바구니 하나에 담는 최대 수량, 실제 바구니에 따라 다름
+ship_partial: true            # 일부만 담겨도 내보내고, 빈 바구니는 남긴다
+robot_radius_m: 0.08          # 추정: 핑키 몸체만, 뒤 트레이는 아직 미포함
+release_margin_extra_m: 0.05  # 시나리오 판정 전용: 반경 + 이 값 = 코스 이탈
+# 경로 위에서 뒤 구역은 보고가 나가는 레인을 따라 이만큼 지나면 놓는다. s = (p - p_i)·u.
+# 규칙 d >= r + eps + v * (tau + tick): 보고가 eps 틀리고 tau + tick 늦어도 몸이 구역을 지난다.
+# 0.08 + 0.03 + 0.2 * (0.2 + 0.1) = 0.17 m.
+# 또 d > 2r: 뒤 로봇이 방금 떠난 지점까지 올 수 있다. 앞 로봇이 eps 앞선 보고 직후 멈출 수
+# 있으면 d >= 2r + eps. eps와 tau를 실제 로봇에서 재기 전까지 추정이다.
+# 압박 표는 docs/worklog_2026-11-05.md.
+release_distance_m: 0.17
+release_confirm_samples: 3    # 해제 전에 그 거리를 지난 연속 보고 수
+lane_error_warn_m: 0.15       # 지금 레인에서 이만큼 벗어나면 경고하고 세움, e = |(p - p_i) - s·u|
+move_retry_limit: 2           # 첫 실패 뒤 재시도 수, 모두 세 번 시도
+move_retry_wait_s: 2.0        # 추정: 세 번 시도가 comm_timeout_s보다 길어 통신 끊김이 먼저 보인다
+stall_s: 6.0                  # 목표가 열린 채 이만큼 제자리면 멈춤. pinky_multi_sim과 같은 값
+stall_move_m: 0.05            # 매끄럽게 한 위치가 이보다 덜 움직이면 제자리. 위치 잡음 σ 0.03 m에도 버틴다
+stall_smooth_s: 1.0           # 위치를 매끄럽게 하는 시간 상수(지수 평균)
+dock_stall_s: 15.0            # 추정: 도킹은 천천히 맞추므로 더 길게 본다
+blocked_mark_s: 5.0           # 추정: BLOCKED가 이만큼 이어지면 레인을 막힘으로 표시하고 목표를 취소
+blocked_timeout_s: 60.0       # 추정: BLOCKED로 보고된 시간이 이만큼이면 ERROR(BLOCKED)
+blocked_rejoin_s: 10.0        # 풀린 뒤 이 안에 같은 레인에서 다시 막히면 막힌 시간을 이어 센다
+queue_gap_m: 0.6              # 추정: 같은 레인이나 다음 레인 앞 이 거리 안에 정상 로봇이 있으면 줄 서기
+detour_enabled: true          # 다음 구역을 서 있는 로봇이 쥐었거나 레인이 막혔으면 더 싼 길로 돌아간다. false면 줄을 선다
+station_wait_estimate_s: 30.0 # 추정: 스테이션이나 대기 칸에 선 로봇이 비키기까지 걸리는 시간
+detour_speed_mps: 0.2         # 추정: 대기 시간을 거리 벌점으로 바꾸는 속도. FakePinky 기본 속도(시나리오 speed_mps 0.2)
+arrival_tolerance_m: 0.15     # 추정: 목표 지점에 이만큼 가까워야 이동 성공으로 친다
+arrival_settle_s: 1.0         # 추정: 보고가 늦으니 성공 뒤 이만큼 기다린다
+startup_wait_s: 10.0          # 이때까지 보고 없는 로봇은 알린다
+comm_timeout_s: 3.0           # 추정
+heartbeat_period_s: 0.5       # /fleet/heartbeat 제안값. 프로세스를 보므로 실제 시계 기준
+heartbeat_timeout_s: 1.5      # 제안값: 이만큼(세 번) 못 받으면 로봇이 멈춘다
+recover_check_s: 1.0          # 추정
+arm_cancel_wait_s: 5.0        # 추정
+arm_retry_wait_s: 2.0         # 추정
+fill_timeout_s: 90.0          # 추정: 팔 두 대가 바구니 하나를 채움
+swap_timeout_s: 60.0          # 추정: arm3가 찬 바구니를 빼고 빈 바구니를 놓음
+cancel_retry_s: 1.0           # 추정: 취소한 goal 결과가 없으면 이 주기로 다시 요청
+cancel_warn_after: 5          # 결과 없이 이만큼 주기가 지나면 CANCEL_UNCONFIRMED.
+                              # 코어가 기다리는 팔을 늦었다고 하지 않게 arm_cancel_wait_s 이상
+report_retry_s: 2.0           # 추정: 답이 없으면 이만큼 뒤 주문 보고를 다시 보냄
+zone_wait_warn_s: 60.0        # 한 구역을 이만큼 기다리면 경고
+deadlock_grace_s: 5.0         # 교착 두 번째 단계 전 대기
+deadlock_unresolved_s: 30.0   # 제안: DEADLOCK_UNRESOLVED 뒤 같은 순환이 이만큼 이어지면 우선순위가 가장 낮은 로봇을 격리
+score_same_call: -4.0         # 이미 불린 로봇은 다른 로봇이 확실히 가깝지 않으면 호출을 유지
+score_distance_weight: 0.91   # 레인 거리 1 m당
+priority_at_station: 200
+priority_has_cargo: 100
+input_pose_margin_m: 1.0      # 웨이포인트 범위 밖으로 이보다 먼 보고 위치는 버린다
+off_lane_timeout_s: 20.0      # 레인을 벗어나 선 로봇이 이 안에 못 돌아오면 ERROR(OFF_LANE)
+lane_goal_mode: path          # path: 레인 폴리라인을 보내 FollowPath로 따르게 한다. point: 지점 하나(비교용)
+release_clear_of_floor: true  # 나가는 레인 s > d에 더해 구역의 다른 바닥 선에서도 d 이상이어야 놓는다(예각 합류)
+idle_watch_s: 10.0            # 제안: 주행 단계인데 goal도 구역 대기표도 없이 이만큼 서면 ROBOT_IDLE, 그 지점 goal을 다시 보낸다
+dispatch_retry_wait_s: 2.0    # 제안: 출고 호출이 실패하면 이만큼 뒤 다시 보낸다
+dispatch_retry_limit: 3       # 제안: 출고 호출 실패가 이 수를 넘으면 ERROR(DISPATCH_FAILED)
+mark_final_goal: true         # 제안(버전 2 4절, 계약 0.8-draft): 잠금 경계에서 끝나는 이동은 final_goal 거짓(핑키가 설 수 있는 속도로만 줄인다). 자유바닥은 칸 잠금 끝의 MoveTo가 모두 거짓
+self_recovery_limit_s: 45.0   # 제안: 로봇이 RECOVERING(자가 복구)을 이만큼 넘게 이어 보내면 BLOCKED로 본다. 핑키 FSM의 두 번 시도는 길어야 약 35 s
+traffic_mode: lanes           # 실험: lanes(레인 관제) 또는 freefloor(자유바닥, traffic/floor). 기본은 lanes
+# 자유바닥(traffic_mode: freefloor)에서만 쓴다. 지시서 제안값, 실측 전
+floor_lock_ahead_m: 0.25      # 제안: 경로를 따라 이만큼 앞 칸까지 미리 잠근다. 제동 거리 v·τ + v²/2a + 여유 이상
+floor_extend_step_m: 0.05     # 제안: 다 못 잡으면 이만큼 짧게 다시 한꺼번에 시도한다(감속)
+floor_replan_s: 1.0           # 제안: 잠금이 늘지 않으면 이 주기로 다른 길을 찾는다
+floor_plan_window_s: 8.0      # 제안: 다른 로봇의 예약을 이만큼 앞까지 본다(협조 계획)
+floor_pass_wait_s: 4.0        # 제안: 지나가는 로봇에 막히면 다른 길을 찾기 전에 이만큼 서서 기다린다(0.2 m/s로 몸 + 앞 잠금을 지나는 시간)
+eta_speed_mps: 0.2            # 추정(버전 2 ETA): ETA에 쓰는 평균 속도
+eta_turn_s_per_rad: 1.0       # 추정: 제자리 회전 시간(초/rad). RPP rotate_to_heading_angular_vel 1.0
+eta_turn_min_rad: 0.25        # 추정: 이보다 작은 꺾임은 달리면서 지난다(RPP rotate_to_heading_min_angle)
+eta_dock_s: 3.0               # 추정: 도킹 시간(가짜 시나리오 기본값)
+eta_fill_s_per_item: 4.0      # 추정: 채우기 품목당 팔 시간(가짜 시나리오 기본값)
+eta_fill_base_s: 4.0          # 추정: 첫 품목 전 준비 시간. 가짜 팔은 채우기에 품목 수 + 1번의 팔 시간이 걸린다(SimWorld 측정)
+eta_fill_items_default: 2     # 추정: 주문을 아직 모르는 로봇이 채울 품목 수
+eta_swap_s: 8.0               # 추정: 교환 시간(가짜 시나리오 기본값)
+floor_leave_s: 2.5            # 추정: 도크를 떠나기 시작해서 접근선이 빌 때까지(SimWorld 측정)
+floor_dock_schedule: false    # 제안: 켜면 접근선 순서를 ETA로 정하고, 앞 로봇이 비울 때에 맞춰 다음 로봇을 미리 출발시킨다
+floor_pre_admit_margin_s: 1.0 # 제안: 딱 맞는 때보다 이만큼 먼저 출발시킨다
+floor_dock_aging_s: 30.0      # 제안: 이만큼 기다린 로봇은 다시 먼저 온 순서로 앞에 둔다(굶김 방지)

@@ -1,0 +1,44 @@
+# Free-floor map for the real arena (2026-11-09): 2.05 x 1.05 m with four objects, two Pinkys.
+# The free floor is read from the arena map image. real_arena_fine.pgm is the same file as
+# sim/fleet_gz_sim/maps/real_arena_fine.pgm (a test compares them; rebuild both with
+# python3 -m fleet_gz_sim.arena --site real_arena). Coordinates are those of the lane map
+# sim/fake_robots/maps/real_arena.yaml, which names this file in its floor_map key.
+image: real_arena_fine.pgm
+resolution: 0.01
+origin: [-0.15, -0.15, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+# The gaps between the objects and the walls are 0.20-0.30 m, so a robot centre may come to
+# robot_radius_m + wall_margin_m (0.09 m) of a wall or an object. The cells are 3 cm: with 5 cm
+# cells no cell of the 0.25 m gap between block_long and box_small was clear.
+# A robot locks robot_radius_m + cell_margin_m (0.11 m) around it, against 0.13 m elsewhere: the
+# floor is too small for bigger locks, so the robots run slower (fleet_params_real_arena.yaml,
+# nav_max_speed 0.12 m/s). With 3 cm cells that locks about 520 cm2, less than 0.10 m did with
+# 5 cm cells; 2 cm failed headless runs with 3 cm report noise at the start (2 of 6 seeds).
+# The 3 cm margin is still below the AMCL error the warehouse sims measured (p95 0.08-0.10 m),
+# so two robots side by side can touch when both reports are off.
+cell_m: 0.03
+robot_radius_m: 0.08  # same as fleet_params.yaml
+cell_margin_m: 0.03   # floor_map.yaml has 0.05
+wall_margin_m: 0.01
+# Station dock poses: the dock waypoints of the lane map (a test compares them).
+docks:
+  WORK: [0.25, 0.50]
+  OUTBOUND: [1.875, 0.25]
+# Parking spots in driving order (lane map parking).
+parking:
+  - {id: P-1, x: 0.925, y: 0.20}
+  - {id: P-2, x: 0.575, y: 0.15}
+# WORK: in from the south (QW), out to the north (WN). OUTBOUND is a one-way loop: in along the
+# north wall and through the 0.25 m gap north of box_small; out south of table_2, up the middle
+# and through the 0.25 m gap between block_long and box_small to between bin and block_long (PS).
+# A whole station line is locked at once, so one robot at a time is in each gap, and a robot
+# leaving never meets one coming in. A robot waiting for a line may not stand on line cells.
+# The way out stops short of the parking spots, so a parked robot never holds one of its cells.
+fixed_lines:
+  work_in: [[0.25, 0.20], [0.25, 0.50]]
+  work_out: [[0.25, 0.50], [0.25, 0.925]]
+  outbound_in: [[1.20, 0.925], [1.875, 0.925], [1.875, 0.25]]
+  outbound_out: [[1.875, 0.25], [1.80, 0.165], [1.35, 0.165], [1.35, 0.45], [1.275, 0.525],
+                 [1.275, 0.555], [1.245, 0.585], [1.245, 0.615], [0.96, 0.615], [0.90, 0.575]]

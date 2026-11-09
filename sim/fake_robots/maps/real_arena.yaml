@@ -1,0 +1,49 @@
+# 실제 경기장 지도 (2026-11-09). 2.05 x 1.05 m, 장애물 넷(sim/fleet_gz_sim/sites/real_arena.yaml).
+# 핑키 2대용. 관제는 자유바닥(floor_map_real_arena.yaml)으로 돌고, 레인은 그 길을 그린 것이다.
+#  - WORK(W)는 서쪽 노랑·검정 사각형 자리. 남쪽 QW에서 들어와 북쪽 WN으로 나간다
+#  - OUTBOUND(O)는 동남쪽 노란 빗금 구역. 북쪽 벽을 따라 동쪽 끝(EN)까지 가서 남쪽으로 내려간다.
+#    상자 box_small 북쪽 0.25 m 틈(QO-EN)은 이 길뿐이라 들고 나는 로봇이 같은 길을 쓴다
+#  - 출고를 마친 로봇은 QO에서 가운데(PS)로 내려와 남서쪽 대기 칸을 지나 QW로 간다
+#  - 자유바닥에서는 OUTBOUND를 나올 때 table_2 남쪽, 가운데, block_long과 box_small 사이 틈을
+#    지나 PS로 간다(floor_map_real_arena.yaml outbound_out). 북쪽 틈은 들어가는 길로만 쓴다
+#  - 대기 칸 P-1, P-2는 남쪽 벽 쪽. WORK로 가는 길 위라 먼저 온 로봇이 먼저 나간다
+#
+#   y
+#  0.925  WN ------------------> QO <=====CORR=====> EN
+#          ^                    /                   ^ v
+#          ^   [bin]           /   [box_small]      ^ v  BAY
+#  0.5     W                  PS                    ^ v
+#          ^                   v  [block_long]      ^ v
+#  0.20   QW <- P-2 <------- P-1     [table_2]      O
+#        0.25  0.575      0.90 0.925 1.20          1.875  x
+floor_map: floor_map_real_arena.yaml  # free-floor map (traffic_mode freefloor), in fleet_core/data
+half_width_m: 0.05    # 추정: 레인에서 이 거리까지는 레인 위로 친다
+lane_entry_m: 0.25    # 레인 바닥이 시작되는 거리
+origin_m: [0.0, 0.0]
+bundle_two_way: true  # 양방향 쌍은 잠금 하나
+waypoints:
+  - {id: QW, x: 0.25, y: 0.20}     # WORK 대기 지점
+  - {id: W, x: 0.25, y: 0.50}      # WORK 도크
+  - {id: WN, x: 0.25, y: 0.925}    # 도크를 떠나 북쪽으로
+  - {id: QO, x: 1.20, y: 0.925}    # OUTBOUND 길 입구
+  - {id: EN, x: 1.875, y: 0.925}   # 북동 모서리
+  - {id: O, x: 1.875, y: 0.25}     # OUTBOUND 도크
+  - {id: PS, x: 0.90, y: 0.575}    # 상자 bin과 block_long 사이
+  - {id: P-1, x: 0.925, y: 0.20}
+  - {id: P-2, x: 0.575, y: 0.15}
+two_way:
+  CORR: [QO, EN]
+  BAY: [EN, O]
+lanes:
+  - {from: QW, to: W}
+  - {from: W, to: WN}
+  - {from: WN, to: QO}
+  - {from: QO, to: PS}
+  - {from: PS, to: P-1}
+  - {from: P-1, to: P-2}
+  - {from: P-2, to: QW}
+stations:
+  WORK: {dock: W, queue: [[QW, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[EN, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+# 주행 순서대로. 대기 로봇은 가장 깊은 빈 곳(P-2)으로 가므로 먼저 온 로봇이 먼저 나간다.
+parking: [P-1, P-2]

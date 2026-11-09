@@ -121,6 +121,30 @@ def test_a_bad_site_file_is_refused(tmp_path, change, message):
         arena.load_site(site_file(tmp_path, TOY.replace(*change)))
 
 
+NEAR_LANE_AB = "  - {name: crate, kind: block, x0: 1.60, y0: 1.30, x1: 1.80, y1: 1.40}\n"  # 0.15 m
+
+
+def test_a_site_keeps_lanes_the_default_distance_unless_it_says_otherwise(tmp_path):
+    assert arena.load_site(site_file(tmp_path, TOY)).lane_clearance_m == arena.CLEARANCE_M
+    near = arena.load_site(site_file(tmp_path, TOY + NEAR_LANE_AB))
+    with pytest.raises(ValueError, match="needs 0.25 m"):
+        arena.generate(tmp_path / "out", LANES, site=near)
+    small = arena.load_site(site_file(tmp_path, "lane_clearance_m: 0.10\n" + TOY + NEAR_LANE_AB))
+    assert small.lane_clearance_m == 0.10
+    arena.generate(tmp_path / "out", LANES, site=small)
+    assert "0.1 m" in (tmp_path / "out" / "worlds" / "toy.sdf").read_text(encoding="utf-8")
+    tight = arena.load_site(site_file(tmp_path, "lane_clearance_m: 0.20\n" + TOY + NEAR_LANE_AB))
+    with pytest.raises(ValueError, match="needs 0.2 m"):
+        arena.generate(tmp_path / "out", LANES, site=tight)
+
+
+@pytest.mark.parametrize("value", ["0", "-0.1", ".nan", ".inf", "wide", "true", "'0.1'",
+                                   pytest.param("1" + "0" * 400, id="huge")])
+def test_a_bad_lane_clearance_is_refused(tmp_path, value):
+    with pytest.raises(arena.SiteError, match="lane_clearance_m"):
+        arena.load_site(site_file(tmp_path, f"lane_clearance_m: {value}\n" + TOY))
+
+
 def test_a_site_world_and_maps_are_named_after_it(tmp_path):
     site = arena.load_site(site_file(tmp_path, TOY))
     out = tmp_path / "out"

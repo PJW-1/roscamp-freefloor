@@ -286,3 +286,59 @@ def test_an_install_of_links_into_one_data_folder_is_accepted(tmp_path, monkeypa
     monkeypatch.setattr(module, "DEFAULT_FLOOR", links / DEFAULT_FLOOR.name)
     floor = floor_map_for(load_lane_map(WAREHOUSE_LANES))
     assert floor.source_text == WAREHOUSE_FLOOR.read_text(encoding="utf-8")
+
+
+# ---- wall_margin_m: the clearance of clear cells, apart from the robot-to-robot margin ----
+
+
+def corridor_data(**changes):
+    """A 0.25 m wide east-west corridor (y 0.20 to 0.45) between two boxes."""
+    data = {"bounds": [0, 0, 1.5, 0.65], "boxes": [[0, 0, 1.5, 0.20], [0, 0.45, 1.5, 0.65]],
+            "cell_m": 0.05, "robot_radius_m": 0.08, "cell_margin_m": 0.05}
+    data.update(changes)
+    return data
+
+
+def test_wall_margin_defaults_to_the_cell_margin(floor):
+    assert floor.wall_margin_m == floor.cell_margin_m == 0.05
+    explicit = FloorMap(corridor_data(wall_margin_m=0.05))
+    default = FloorMap(corridor_data())
+    assert default.wall_margin_m == 0.05
+    assert explicit.clear == default.clear and explicit.free == default.free
+
+
+def test_default_clear_set_is_the_old_one_for_the_shipped_floor(floor):
+    body = floor.robot_radius_m + floor.cell_margin_m
+    assert floor.clear == frozenset(c for c in floor.free if floor._box_gap_to_wall(c) >= body)
+
+
+def test_a_narrow_gap_is_clear_only_with_a_small_wall_margin():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    wide, tight = FloorMap(corridor_data()), FloorMap(corridor_data(wall_margin_m=0.01))
+    assert not any(wide.cell_of(x, 0.325) in wide.clear for x in (0.3, 0.7, 1.1))
+    row = {tight.cell_of(x / 20 + 0.025, 0.325) for x in range(4, 26)}
+    assert row <= tight.clear and tight.clear > wide.clear
+    path = FloorPlanner(tight).plan((0.3, 0.325), (1.2, 0.325))
+    assert path is not None and path[0] == (0.3, 0.325) and path[-1] == (1.2, 0.325)
+    assert FloorPlanner(wide).plan((0.3, 0.325), (1.2, 0.325)) is None
+    for cell in tight.clear:
+        assert tight._box_gap_to_wall(cell) >= 0.08 + 0.01
+    assert tight.cell_margin_m == 0.05  # the robot-to-robot margin is untouched
+
+
+@pytest.mark.parametrize("bad", [-0.01, float("nan"), float("inf"), "wide", None, True,
+                                 "0.01", pytest.param(10 ** 400, id="huge")])
+def test_a_bad_wall_margin_is_refused(bad):
+    with pytest.raises(FloorMapError, match="wall_margin_m"):
+        FloorMap(corridor_data(wall_margin_m=bad))
+
+
+def test_the_lock_body_ignores_the_wall_margin():
+    from fleet_core.traffic.floor.controller import FloorController
+    site = load_lane_map()
+    for wall in (None, 0.01, 0.0):
+        extra = {} if wall is None else {"wall_margin_m": wall}
+        floor = FloorMap(corridor_data(**extra))
+        ctl = FloorController(site, load_params(), ["r1"], lambda: 0.0, floor=floor)
+        assert ctl._body == pytest.approx(0.13)
+        assert ctl.planner.floor.cell_margin_m == 0.05
