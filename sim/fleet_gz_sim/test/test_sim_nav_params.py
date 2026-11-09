@@ -94,6 +94,10 @@ def test_one_pinky_sends_lock_boundary_paths_to_the_through_rpp_by_default(tmp_p
 
     assert fsm_args()["through_controller_id"] == "FollowPathThrough"
     assert fsm_args(through_controller_id="")["through_controller_id"] == ""
+    # A speed cap also caps the FSM's lock-boundary speed limit: RPP takes that limit as its
+    # desired_linear_vel, so a limit above the cap would speed the robot up again.
+    assert "horizon_cap_mps" not in fsm_args()
+    assert fsm_args(nav_max_speed=0.12)["horizon_cap_mps"] == "0.12"
 
 
 def _rpp(data: dict, name: str) -> dict:
@@ -117,3 +121,23 @@ def test_sim_params_can_cap_both_rpp_speeds_and_change_nothing_else(tmp_path):
 def test_a_speed_cap_must_be_a_number_between_zero_and_the_robot_speed(tmp_path, bad):
     with pytest.raises(ValueError, match="max_speed"):
         launch_parts.sim_nav_params(NAV, tmp_path / "a.yaml", max_speed=bad)
+
+
+def test_sim_params_can_turn_the_rpp_collision_check_off_and_change_nothing_else(tmp_path):
+    """real_arena: gaps of 0.25 m leave 5 cm beside the footprint, and lidar noise (2 cm) marks
+    the wall inside it; RPP then stops for a collision ahead that is not there."""
+    off = yaml.safe_load(launch_parts.sim_nav_params(
+        NAV, tmp_path / "off.yaml", collision_detection=False).read_text(encoding="utf-8"))
+    plain = yaml.safe_load(launch_parts.sim_nav_params(
+        NAV, tmp_path / "plain.yaml").read_text(encoding="utf-8"))
+    for name in (launch_parts.THROUGH_CONTROLLER, "FollowPath"):
+        assert _rpp(off, name)["use_collision_detection"] is False
+        assert _rpp(plain, name)["use_collision_detection"] is True
+        _rpp(plain, name)["use_collision_detection"] = False
+    assert off == plain
+
+
+@pytest.mark.parametrize("bad", ["false", 0, 1, "no"])
+def test_the_collision_switch_takes_true_or_false_only(tmp_path, bad):
+    with pytest.raises(ValueError, match="collision_detection"):
+        launch_parts.sim_nav_params(NAV, tmp_path / "a.yaml", collision_detection=bad)

@@ -255,7 +255,7 @@ def test_sim_dock_stub_still_needs_an_isolated_network(made, monkeypatch):
 
 
 @pytest.mark.parametrize("name", ["sim_dock_stub", "fleet_check", "gui", "monitor",
-                                  "nav_composition"])
+                                  "nav_composition", "nav_collision_check"])
 def test_a_misspelt_switch_stops_the_launch(made, name):
     with pytest.raises(ValueError, match=name):
         run(made, **{name: "ture"})
@@ -599,6 +599,27 @@ def test_nav_max_speed_caps_both_rpps_of_every_robot(made, tmp_path):
                 "desired_linear_vel"] == 0.12, (ns, name)
             assert plain[ns]["controller_server"]["ros__parameters"][name][
                 "desired_linear_vel"] == 0.25, (ns, name)
+
+
+def test_nav_max_speed_also_caps_the_fsm_speed_limit_of_every_robot(made):
+    capped = {launch_args(i)["namespace"]: launch_args(i)
+              for i in includes(run(made, nav_max_speed="0.12"), "pinky_fsm.launch.py")}
+    assert set(capped) == set(ROBOTS)
+    assert all(args["horizon_cap_mps"] == "0.12" for args in capped.values())
+    plain = includes(run(made), "pinky_fsm.launch.py")
+    assert all("horizon_cap_mps" not in launch_args(i) for i in plain)
+
+
+def test_nav_collision_check_false_turns_the_rpp_check_off_for_every_robot(made, tmp_path):
+    off = nav2_files(run(made, nav_collision_check="false", result_dir=str(tmp_path / "o")))
+    plain = nav2_files(run(made, result_dir=str(tmp_path / "p")))
+    assert set(off) == set(plain) == set(ROBOTS)
+    for ns in ROBOTS:
+        for name in ("FollowPath", "FollowPathThrough"):
+            assert off[ns]["controller_server"]["ros__parameters"][name][
+                "use_collision_detection"] is False, (ns, name)
+            assert plain[ns]["controller_server"]["ros__parameters"][name][
+                "use_collision_detection"] is True, (ns, name)
 
 
 @pytest.mark.parametrize("bad", ["fast", "0", "-1", "nan"])

@@ -2,9 +2,11 @@
 # 로봇은 남쪽 대기 칸 P-1, P-2에서 출발해 서쪽 WORK와 동남쪽 OUTBOUND를 오간다. 동쪽 끝으로 가는
 # 길은 상자 box_small 북쪽 0.25 m 틈 하나라 한 번에 한 대만 지난다(OUTBOUND 접근선·출구선).
 # 자유바닥 전용이고, 도킹은 sim_dock_stub:=true가 있어야 끝까지 돈다. 바닥이 좁아 잠금을 줄인
-# 관제 파라미터(fleet_params_real_arena)와 느린 속도(0.12 m/s)로 돈다.
+# 관제 파라미터(fleet_params_real_arena)와 느린 속도(0.12 m/s)로 돈다. 틈 옆 여유가 5 cm라
+# 라이다 잡음이 벽을 발자국 안에 찍으므로 RPP 충돌 검사를 끈다(nav_collision_check:=false).
 #   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_real_arena traffic_mode:=freefloor \
-#       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.12
+#       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.12 \
+#       nav_collision_check:=false
 map: real_arena
 seed: 61
 speed_factor: 5.0

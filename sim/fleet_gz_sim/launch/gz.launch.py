@@ -67,6 +67,8 @@ ARGS = {
                             " result_dir/fleet_check.json에"),
     "nav_max_speed": ("", "두 RPP의 최고 속도(m/s). 비면 Nav2 설정 그대로(0.25)."
                           " real_arena는 0.12"),
+    "nav_collision_check": ("true", "false면 두 RPP의 충돌 검사를 끈다. 틈이 0.25 m인 real_arena에서"
+                                   " 라이다 잡음이 벽을 발자국 안에 찍어 멈추는 것을 막는다"),
     "nav_pass_through": ("true", "잠금 경계에서 끝나는 이동(final_goal 거짓)을 접근 감속 없는 둘째"
                                 " RPP(FollowPathThrough)로. false면 모두 FollowPath(둘 다 뜬다)"),
 }
@@ -233,6 +235,7 @@ def _start(context):
     params_file = params_for(params_file_of(value("fleet_params_file")), value("traffic_mode"),
                              value("result_dir"))
     max_speed = speed_of(value("nav_max_speed"))
+    collision_check = flag(value("nav_collision_check"), "nav_collision_check")
     # robots leave the lanes on the free floor: no lanes painted
     floor = traffic_mode_of(value("traffic_mode"), params_file) == "freefloor"
     actions = [*launch_parts.world(flag(value("gui"), "gui"), arena.world, lane_paint=not floor),
@@ -246,7 +249,8 @@ def _start(context):
                                       nav_map_fine=arena.nav_map_fine,
                                       through_controller_id=(launch_parts.THROUGH_CONTROLLER
                                                              if through else ""),
-                                      nav_max_speed=max_speed)
+                                      nav_max_speed=max_speed,
+                                      nav_collision_check=collision_check)
     if value("rviz") == "fleet":
         actions += fleet_rviz(robots, arena.lane_map, params_file=params_file)
     map_file = {"map_file": arena.lane_map} if arena.lane_map else {}

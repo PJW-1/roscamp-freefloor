@@ -128,14 +128,22 @@ THROUGH_CONTROLLER = "FollowPathThrough"
 
 
 def sim_nav_params(base: Path, out: Path, amcl: dict | None = None,
-                   max_speed: float | None = None) -> Path:
+                   max_speed: float | None = None,
+                   collision_detection: bool | None = None) -> Path:
     """base(실물 Nav2 설정)에 시뮬 AMCL 값을 덮어 out에 쓴다. base는 바꾸지 않는다.
-    max_speed가 있으면 두 RPP(FollowPath, FollowPathThrough)의 desired_linear_vel을 그 값으로."""
+    max_speed가 있으면 두 RPP(FollowPath, FollowPathThrough)의 desired_linear_vel을 그 값으로,
+    collision_detection이 있으면 두 RPP의 use_collision_detection을 그 값으로."""
     data = yaml.safe_load(base.read_text(encoding="utf-8"))
     data["amcl"]["ros__parameters"].update(SIM_AMCL if amcl is None else amcl)
+    controllers = data["controller_server"]["ros__parameters"]
+    rpps = [controllers[name] for name in ("FollowPath", THROUGH_CONTROLLER)]
+    if collision_detection is not None:
+        if not isinstance(collision_detection, bool):
+            raise ValueError(f"collision_detection must be True or False, "
+                             f"got {collision_detection!r}")
+        for rpp in rpps:
+            rpp["use_collision_detection"] = collision_detection
     if max_speed is not None:
-        controllers = data["controller_server"]["ros__parameters"]
-        rpps = [controllers[name] for name in ("FollowPath", THROUGH_CONTROLLER)]
         top = min(rpp["desired_linear_vel"] for rpp in rpps)
         if (isinstance(max_speed, bool) or not isinstance(max_speed, int | float)
                 or not 0 < max_speed <= top):
@@ -150,7 +158,7 @@ def sim_nav_params(base: Path, out: Path, amcl: dict | None = None,
 def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn", fsm=True,
           rviz=False, dock_aside=False, nav_composition=False, nav_map="",
           nav_map_fine="", through_controller_id=THROUGH_CONTROLLER,
-          nav_max_speed: float | None = None) -> list:
+          nav_max_speed: float | None = None, nav_collision_check: bool = True) -> list:
     """핑키 한 대: 모델, Nav2, pinky_fsm, RViz. 브리지는 bridge()에 이 로봇 이름을 넣는다.
 
     dock_aside: pinky_fsm의 dock 서버를 /<ns>/dock_fsm으로 비켜 둔다(시뮬 전용 도크 대역용).
@@ -158,7 +166,9 @@ def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn"
     nav_map, nav_map_fine: Nav2 지도 둘. 비면 lane_arena 지도.
     through_controller_id: 잠금 경계 경로에 쓸 controller(pinky_fsm). 비우면 모든 경로가
     FollowPath로 간다. Nav2는 두 controller를 늘 띄운다.
-    nav_max_speed: 두 RPP의 최고 속도(m/s). None이면 설정 파일 그대로."""
+    nav_max_speed: 두 RPP의 최고 속도(m/s). None이면 설정 파일 그대로. pinky_fsm이 잠금
+    경계에서 내는 속도 제한의 상한(horizon_cap_mps)도 이 값으로: RPP는 그 제한을 속도로 쓴다.
+    nav_collision_check: 거짓이면 두 RPP의 충돌 검사(use_collision_detection)를 끈다."""
     me, nav = share("fleet_gz_sim"), share("pinky_nav_config")
     x, y, yaw = str(x), str(y), str(yaw)
     description = ParameterValue(
@@ -183,16 +193,20 @@ def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn"
                 "params_file": str(sim_nav_params(
                     nav / "params" / "nav2_params.yaml",
                     Path(tempfile.gettempdir()) / f"nav2_params_sim_{ns}_{os.getpid()}.yaml",
-                    max_speed=nav_max_speed)),
+                    max_speed=nav_max_speed,
+                    collision_detection=None if nav_collision_check else False)),
             }.items()),
     ]
     if fsm:
+        fsm_args = {"namespace": ns, "use_sim_time": "true",
+                    "heartbeat_timeout_s": str(heartbeat_timeout_s),
+                    "through_controller_id": through_controller_id}
+        if nav_max_speed is not None:
+            fsm_args["horizon_cap_mps"] = str(nav_max_speed)
         include = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(share("pinky_fsm") / "launch" /
                                               "pinky_fsm.launch.py")),
-            launch_arguments={"namespace": ns, "use_sim_time": "true",
-                              "heartbeat_timeout_s": str(heartbeat_timeout_s),
-                              "through_controller_id": through_controller_id}.items())
+            launch_arguments=fsm_args.items())
         actions.append(GroupAction([SetRemap(f"/{ns}/dock", f"/{ns}/dock_fsm"), include])
                        if dock_aside else include)
     if rviz:

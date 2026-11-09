@@ -25,3 +25,10 @@ def defaults() -> dict:
 def test_lock_boundary_paths_use_the_through_controller_by_default():
     """pinky_nav_config loads FollowPathThrough next to FollowPath; "" switches it off."""
     assert defaults()["through_controller_id"] == "FollowPathThrough"
+
+
+def test_the_horizon_cap_defaults_to_the_fsm_params():
+    """A slower robot (a smaller Nav2 desired_linear_vel) passes its speed here: RPP takes the
+    lock-boundary limit as its speed, so the limit must never be above the robot's speed."""
+    from pinky_fsm.core import FsmParams
+    assert float(defaults()["horizon_cap_mps"]) == FsmParams().horizon_cap_mps
