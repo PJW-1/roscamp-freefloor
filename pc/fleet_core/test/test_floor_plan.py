@@ -196,3 +196,14 @@ def test_the_step_onto_clear_floor_avoids_cells_of_others():
 def test_a_start_inside_a_box_still_gives_none():
     floor = box_floor()
     assert FloorPlanner(floor).plan((1.0, 1.1), (1.6, 0.4)) is None
+
+
+def test_when_the_nearest_clear_cell_leads_nowhere_the_next_one_is_tried():
+    floor = box_floor()
+    start = (1.0, 0.76)
+    nearest = floor.cell_of(*FloorPlanner(floor).plan(start, (1.6, 0.4))[1])
+    ring = {(nearest[0] + di, nearest[1] + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)}
+    walled_in = frozenset(ring - {nearest})  # others hold every cell around it
+    path = FloorPlanner(floor).plan(start, (1.6, 0.4), avoid=walled_in)
+    assert path is not None and path[0] == start
+    assert floor.cell_of(*path[1]) not in ring
