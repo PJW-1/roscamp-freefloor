@@ -1,0 +1,20 @@
+# 8자 경기장 (2026-11-10). 실제 경기장(real_arena.yaml)과 같은 벽 안 2.05 x 1.05 m에 섬 둘을
+# 놓아 바닥이 두 섬을 도는 8자가 된다. 서쪽 섬은 H자(위·아래 주차 칸), 동쪽 섬은 거꾸로 된 U자
+# (아래 주차 칸)라 방이 대칭이 아니다(AMCL).
+#   둘레 통로 0.30 m: 서(x 0.00-0.30, WORK), 동(x 1.75-2.05, OUTBOUND), 남(y 0.00-0.30),
+#   북(y 0.75-1.05). 가운데 통로 0.55 m(x 0.75-1.30)는 두 고리가 만나 길이 엇갈리는 곳이다.
+#   주차 칸은 너비 0.30 m, 깊이 0.20 m(서쪽 섬 위·아래)와 0.25 m(동쪽 섬 아래). 서 있는 로봇이
+#   통로를 막지 않는다.
+# 레인은 표시용이고 관제는 자유바닥(pc/fleet_core/fleet_core/data/floor_map_figure8_arena.yaml)으로 돈다.
+lane_map: figure8_arena        # sim/fake_robots/maps/의 이름
+lane_clearance_m: 0.12         # real_arena와 같다
+bounds_m: [0.0, 0.0, 2.05, 1.05] # 벽 안쪽 면(real_arena와 같다)
+boxes:
+  # 서쪽 섬 x 0.30-0.75, y 0.30-0.75: 기둥 둘과 가운데 판. 판 위·아래가 주차 칸 P-2, P-1
+  - {name: west_post_w, kind: block, x0: 0.30, y0: 0.30, x1: 0.35, y1: 0.75}
+  - {name: west_post_e, kind: block, x0: 0.65, y0: 0.30, x1: 0.75, y1: 0.75}
+  - {name: west_board, kind: block, x0: 0.35, y0: 0.50, x1: 0.65, y1: 0.55}
+  # 동쪽 섬 x 1.30-1.75, y 0.30-0.75: 기둥 둘과 윗판. 윗판 아래가 주차 칸 P-3
+  - {name: east_post_w, kind: block, x0: 1.30, y0: 0.30, x1: 1.40, y1: 0.75}
+  - {name: east_post_e, kind: block, x0: 1.70, y0: 0.30, x1: 1.75, y1: 0.75}
+  - {name: east_top, kind: block, x0: 1.40, y0: 0.55, x1: 1.70, y1: 0.75}

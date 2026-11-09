@@ -1,0 +1,70 @@
+# 8자 경기장 지도 (2026-11-10). 실제 경기장과 같은 벽(2.05 x 1.05 m)에 섬 둘
+# (sim/fleet_gz_sim/sites/figure8_arena.yaml). 핑키 3대용. 관제는 자유바닥
+# (floor_map_figure8_arena.yaml)으로 돌고, 레인은 그 길을 그린 것이다.
+#  - WORK(W)는 서쪽 통로 가운데, OUTBOUND(O)는 동쪽 통로 가운데. 둘 다 북쪽(QW, QO)에서 들어와
+#    남쪽(WS, OS)으로 나간다
+#  - WORK를 나온 로봇은 남쪽 통로 서쪽 반을 지나 가운데 통로를 북동쪽으로 올라 QO로 간다.
+#    OUTBOUND를 나온 로봇은 남쪽 통로 동쪽 반을 지나 가운데 통로를 북서쪽으로 올라 QW로 간다.
+#    두 길은 가운데(X)에서 엇갈린다: 로봇들이 8자를 그린다
+#  - 주차 칸은 섬에 판 자리다(통로를 막지 않는다). P-3은 동쪽 섬 아래(OUTBOUND를 나와 처음 만남),
+#    P-1은 서쪽 섬 아래, P-2는 서쪽 섬 위(WORK 들어가는 QW 바로 앞, 가장 깊은 칸)
+#
+#   y
+#  0.90  QW <---- T2 <---- MNW         MNE ------------> QO
+#        v        ^          ^         /                  v
+#        v       P-2          \       /                   v
+#  0.525 W     [west]          \  X  /     [east]         O
+#        v       P-1          /       \     P-3           v
+#        v        ^          /         \     ^            v
+#  0.15  WS ----> B1 ----> MSW         MSE <---- B3 <---- OS
+#       0.15     0.50     0.90  1.025 1.15     1.55      1.90  x
+floor_map: floor_map_figure8_arena.yaml  # free-floor map (traffic_mode freefloor), in fleet_core/data
+half_width_m: 0.05    # 추정: 레인에서 이 거리까지는 레인 위로 친다
+lane_entry_m: 0.25    # 레인 바닥이 시작되는 거리
+origin_m: [0.0, 0.0]
+# 양방향 쌍은 주차 칸 셋뿐이다. 묶지 않는다: 칸이 혼자 한 구역이어야 시나리오 출발 자리가 되고,
+# 막다른 칸이라 레인 위에는 그 칸을 쥔 로봇만 있다
+bundle_two_way: false
+waypoints:
+  - {id: QW, x: 0.15, y: 0.90}     # WORK 대기 지점(북서 모서리)
+  - {id: W, x: 0.15, y: 0.525}     # WORK 도크
+  - {id: WS, x: 0.15, y: 0.15}     # 도크를 떠나 남쪽으로(남서 모서리)
+  - {id: B1, x: 0.50, y: 0.15}     # P-1 입구
+  - {id: MSW, x: 0.90, y: 0.15}    # 가운데 통로 남서
+  - {id: X, x: 1.025, y: 0.525}    # 가운데: 두 길이 엇갈리는 곳
+  - {id: MNE, x: 1.15, y: 0.90}    # 가운데 통로 북동
+  - {id: QO, x: 1.90, y: 0.90}     # OUTBOUND 대기 지점(북동 모서리)
+  - {id: O, x: 1.90, y: 0.525}     # OUTBOUND 도크
+  - {id: OS, x: 1.90, y: 0.15}     # 도크를 떠나 남쪽으로(남동 모서리)
+  - {id: B3, x: 1.55, y: 0.15}     # P-3 입구
+  - {id: MSE, x: 1.15, y: 0.15}    # 가운데 통로 남동
+  - {id: MNW, x: 0.90, y: 0.90}    # 가운데 통로 북서
+  - {id: T2, x: 0.50, y: 0.90}     # P-2 입구
+  - {id: P-1, x: 0.50, y: 0.38}    # 서쪽 섬 아래 칸
+  - {id: P-2, x: 0.50, y: 0.67}    # 서쪽 섬 위 칸
+  - {id: P-3, x: 1.55, y: 0.43}    # 동쪽 섬 아래 칸
+lanes:
+  - {from: QW, to: W}
+  - {from: W, to: WS}
+  - {from: WS, to: B1}
+  - {from: B1, to: MSW}
+  - {from: MSW, to: X}
+  - {from: X, to: MNE}
+  - {from: MNE, to: QO}
+  - {from: QO, to: O}
+  - {from: O, to: OS}
+  - {from: OS, to: B3}
+  - {from: B3, to: MSE}
+  - {from: MSE, to: X}
+  - {from: X, to: MNW}
+  - {from: MNW, to: T2}
+  - {from: T2, to: QW}
+two_way:  # 주차 칸은 막다른 곳이라 같은 레인으로 들고 난다
+  BAY1: [B1, P-1]
+  BAY2: [T2, P-2]
+  BAY3: [B3, P-3]
+stations:
+  WORK: {dock: W, queue: [[QW, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[QO, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+# 주행 순서대로. 대기 로봇은 가장 깊은 빈 칸(P-2, QW 앞)으로 간다.
+parking: [P-3, P-1, P-2]

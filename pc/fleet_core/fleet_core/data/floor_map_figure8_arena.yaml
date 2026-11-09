@@ -1,0 +1,41 @@
+# Free-floor map for the figure-8 arena (2026-11-10): the real arena's walls (2.05 x 1.05 m) with
+# two islands, so the floor runs round both like an 8; three Pinkys. figure8_arena_fine.pgm is
+# the same file as sim/fleet_gz_sim/maps/figure8_arena_fine.pgm (a test compares them; rebuild
+# both with python3 -m fleet_gz_sim.arena --site figure8_arena). Coordinates are those of the
+# lane map sim/fake_robots/maps/figure8_arena.yaml, which names this file in its floor_map key.
+image: figure8_arena_fine.pgm
+resolution: 0.01
+origin: [-0.15, -0.15, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+# Same robot, cells and margins as floor_map_real_arena.yaml (see there): 3 cm cells, a robot
+# centre may come to 0.09 m of a wall, a robot locks 0.11 m round it (0.09 m beside it on a
+# straight stretch). The corridors round the islands are 0.30 m, so 3-4 cells of clear floor
+# across; the middle corridor is 0.55 m, room for two robots side by side.
+cell_m: 0.03
+robot_radius_m: 0.08
+cell_margin_m: 0.03
+robot_half_width_m: 0.06
+wall_margin_m: 0.01
+# Station dock poses: the dock waypoints of the lane map (a test compares them).
+docks:
+  WORK: [0.15, 0.525]
+  OUTBOUND: [1.90, 0.525]
+# Parking spots in driving order (lane map parking). Each sits in a bay cut into an island, off
+# every line and clear of the corridor in front of it.
+parking:
+  - {id: P-3, x: 1.55, y: 0.43}
+  - {id: P-1, x: 0.50, y: 0.38}
+  - {id: P-2, x: 0.50, y: 0.67}
+# Both stations: in from the north, out to the south, along the west and east corridors. A robot
+# leaving WORK takes the south corridor east and goes up the middle to the north-east corner; a
+# robot leaving OUTBOUND takes the south corridor west and goes up the middle to the north-west
+# corner. The two ways cross in the middle: the robots drive an 8. Every line is one way and the
+# way in and the way out share only the dock end, so the lines roll like the floor.
+fixed_lines:
+  work_in: [[0.15, 0.90], [0.15, 0.525]]
+  work_out: [[0.15, 0.525], [0.15, 0.15]]
+  outbound_in: [[1.90, 0.90], [1.90, 0.525]]
+  outbound_out: [[1.90, 0.525], [1.90, 0.15]]
+rolling_lines: [work_in, work_out, outbound_in, outbound_out]
