@@ -413,3 +413,24 @@ def test_when_the_first_way_around_cannot_start_the_second_is_tried(monkeypatch)
     traffic._extend(a, legs["a"])
     traffic._replan_if_stuck(a, legs["a"], False)
     assert len(calls) == 2 and legs["a"].route is north
+
+
+def test_a_wait_spot_whose_way_cannot_start_is_skipped(monkeypatch):
+    """대기 자리로 가는 길의 첫 구간이 남의 칸에 닿으면 그 자리를 건너뛰고 다음 자리로 간다
+    (order_burst 씨드 15: 대기 다리가 출발할 수 없는 자리를 1초마다 다시 골랐다)."""
+    traffic, _ = floor({"a": (0.6, 1.6), "b": (1.8, 0.45)})
+    a = traffic._missions["a"]
+    driving(traffic, "b", (1.8, 1.15))
+    leg = _Leg(None, (0.9, 1.05), in_line="work_in")
+    leg.waiting = True
+    traffic._legs["a"] = leg
+    into_b = Route([(1.8, 0.6), (0.6, 0.75)])  # b의 칸 안에서 출발한다: 잡을 수 없다
+    tried = []
+
+    def route(m, start, goal, *args, **kw):
+        tried.append(goal)
+        return into_b if len(tried) == 1 else Route([start, goal])
+
+    monkeypatch.setattr(traffic, "_route", route)
+    traffic._plan_wait(a, leg, None)
+    assert len(tried) >= 2 and leg.route is not into_b and leg.route.points[-1] == tried[-1]

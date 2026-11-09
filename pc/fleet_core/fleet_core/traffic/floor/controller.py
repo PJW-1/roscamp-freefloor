@@ -671,8 +671,8 @@ class FloorController(TrafficController):
             if not self._standing_cells(*spot).isdisjoint(banned):
                 continue
             route = self._route(m, start, spot, out_line, cautious=True)
-            if route is None:
-                continue
+            if route is None or not self._can_start(m.name, route):
+                continue  # 첫 구간이 남의 칸에 닿는 길로는 못 간다: 다음 자리
             leg.route = route
             leg.s = leg.s_lock = leg.s_sent = 0.0
             leg.stuck_since = None
