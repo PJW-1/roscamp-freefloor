@@ -79,7 +79,8 @@ class FsmParams:
     # √(2·a·d)로 제한한다. 숫자는 추정이다(실측 a 전). 한계 이상이면 제한하지 않는다
     horizon_decel_mps2: float = 0.25
     horizon_min_mps: float = 0.05
-    horizon_cap_mps: float = 0.3
+    # RPP takes an absolute limit as desired_linear_vel (no min), so never above nav2's 0.25
+    horizon_cap_mps: float = 0.25
 
 
 @dataclass(frozen=True)

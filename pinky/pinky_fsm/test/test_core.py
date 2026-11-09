@@ -894,12 +894,34 @@ def test_a_fresh_fsm_lifts_any_limit_left_from_before_a_restart():
     assert limits(fsm.tick(0.1, (*P3, NORTH), STILL, no_obstacle)) == []
 
 
-@pytest.mark.parametrize("back_m", [0.135, 0.07, 0.03])
+@pytest.mark.parametrize("back_m", [0.12, 0.07, 0.03])
 def test_the_limit_never_rounds_above_what_can_stop(back_m):
     fsm = ready()
     fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
     [v] = limits(fsm.tick(1.2, near_p5(back_m), DRIVING, no_obstacle))
     assert v <= math.sqrt(2 * 0.25 * fsm.distance_remaining(near_p5(back_m))) + 1e-12
+
+
+@pytest.mark.parametrize("back_m", [0.14, 0.16, 0.175])
+def test_the_limit_never_asks_more_than_the_nav2_desired_speed(back_m):
+    """RPP takes an absolute speed limit as its desired_linear_vel without comparing it to the
+    configured one, so a limit of 0.26-0.29 m/s (0.13-0.18 m before the end) would speed up."""
+    fsm = ready()
+    fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
+    asked = limits(fsm.tick(1.2, near_p5(back_m), DRIVING, no_obstacle))
+    assert all(v == 0.0 or v <= nav2_desired_mps() for v in asked)
+
+
+def test_the_speed_cap_is_not_above_the_nav2_desired_speed():
+    assert FsmParams().horizon_cap_mps <= nav2_desired_mps()
+
+
+def nav2_desired_mps() -> float:
+    import yaml
+    from conftest import REPO
+    nav2 = yaml.safe_load((REPO / "pinky" / "pinky_nav_config" / "params" / "nav2_params.yaml")
+                          .read_text(encoding="utf-8"))
+    return nav2["controller_server"]["ros__parameters"]["FollowPath"]["desired_linear_vel"]
 
 
 # ---- pass-through controller: every FollowPath goal says whether its end is final -----------
