@@ -2,7 +2,7 @@
 
 브랜치 `freefloor-route`. 출발점은 `freefloor-eta` cea88b2다. 설정 하나(`floor_pass_wait_s`)가 늘었고, 켜고 끄는 플래그는 없다. 바뀐 동작은 항상 켜져 있다.
 
-숫자는 모두 머리 없는 가짜 세계(FloorWorld, `tools/compare_floor.py`)에서 나왔다. Gazebo는 눈으로 보는 확인만 했다(아래 'Gazebo').
+'측정'과 '실제 경기장 병합'의 숫자는 머리 없는 가짜 세계(FloorWorld, `tools/compare_floor.py`)에서 나왔다. Gazebo는 16c4d92로 한 번만 돌렸다(아래 'Gazebo').
 
 ## 왜
 
