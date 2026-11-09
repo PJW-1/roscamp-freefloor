@@ -384,3 +384,30 @@ def test_a_robot_on_its_way_still_keeps_the_cells_within_the_release_distance():
         report(core, "a", 1.0, 1.15, state="MOVING", times=1)
         traffic.tick_progress(now[0])
     assert behind <= traffic.zones.held_set("a")
+
+
+def test_a_robot_on_a_cell_that_is_clear_only_by_the_small_wall_margin_moves_on():
+    """Its 0.13 m lock disk reaches wall cells (0.11 m away): nothing may raise, it still leaves."""
+    import yaml
+    from fleet_core.traffic.floor.floor_map import DEFAULT_FLOOR, FloorMap
+    data = yaml.safe_load(DEFAULT_FLOOR.read_text(encoding="utf-8"))
+    data["wall_margin_m"] = 0.01
+    floor = FloorMap(data, DEFAULT_FLOOR.parent)
+    plain = load_floor_map()
+    start = (0.80, 2.29)  # 0.11 m from the north wall
+    cell = floor.cell_of(*start)
+    assert cell in floor.clear and cell not in plain.clear
+    world = FloorWorld(seed=1, robots={"pinky1": {"start": "P-3", "speed_mps": 0.20,
+                                                  "pose_noise_m": 0.0}},
+                       orders=list(ORDER), floor=floor)
+    world.virtual["pinky1"].x, world.virtual["pinky1"].y = start
+    ctl = world.core.traffic
+    assert ctl._body == pytest.approx(0.13)
+    reached_wall = False
+    for _ in range(600):
+        world.step()
+        held = ctl.zones.held_by("pinky1")
+        reached_wall = reached_wall or any(floor.cell_at(c) not in floor.free for c in held)
+    assert reached_wall  # the lock disk did reach blocked cells, and that was fine
+    r = world.virtual["pinky1"]
+    assert math.dist((r.x, r.y), start) > 0.3  # moved off and stopped at a spot

@@ -2,7 +2,7 @@
 
 칸 (i, j)는 열 i, 행 j다. 칸 원점은 지도 원점(이미지 왼쪽 아래)이고 칸 이름은 "c<i>_<j>"다.
   - free: 칸 전체가 빈 바닥이다.
-  - clear: 로봇 중심이 서도 되는 칸. 칸 사각형 어디서든 가장 가까운 막힌 곳까지 반지름 + 여유 이상.
+  - clear: 로봇 중심이 서도 되는 칸. 칸 사각형 어디서든 막힌 곳까지 반지름 + wall_margin_m(없으면 cell_margin_m) 이상.
     계획기는 점이 어느 칸에 드는지만 보므로 칸 중심이 아니라 칸 전체가 안전해야 한다.
 고정 선(fixed_lines)은 좁은 곳·도킹 접근·출고 앞에서 따라야 하는 선과 방향이다. 점 순서가 방향이다.
 """
@@ -74,6 +74,8 @@ class FloorMap:
         self.cell_m = float(data["cell_m"])
         self.robot_radius_m = float(data["robot_radius_m"])
         self.cell_margin_m = float(data["cell_margin_m"])
+        # wall clearance of clear cells; robot-to-robot spacing keeps using cell_margin_m
+        self.wall_margin_m = self._read_wall_margin(data.get("wall_margin_m", self.cell_margin_m))
         self._occupied_px, self.px_m, self.origin, size = self._read_occupancy(data, base)
         per = self.cell_m / self.px_m
         if abs(per - round(per)) > 1e-9 or round(per) < 1:
@@ -93,11 +95,21 @@ class FloorMap:
                 self._ids[(i, j)] = f"c{i}_{j}"
                 self._cells[f"c{i}_{j}"] = (i, j)
         self.free = frozenset(c for c in self._ids if self._cell_free(c))
-        body = self.robot_radius_m + self.cell_margin_m
-        self.clear = frozenset(c for c in self.free if self._box_gap_to_wall(c) >= body)
+        wall = self.robot_radius_m + self.wall_margin_m
+        self.clear = frozenset(c for c in self.free if self._box_gap_to_wall(c) >= wall)
         self._check()
 
     # ---- reading ------------------------------------------------------------------------
+
+    @staticmethod
+    def _read_wall_margin(value) -> float:
+        try:
+            margin = float(value)
+        except (TypeError, ValueError):
+            raise FloorMapError(f"wall_margin_m {value!r} is not a number") from None
+        if not math.isfinite(margin) or margin < 0:
+            raise FloorMapError(f"wall_margin_m {value!r} must be a finite number >= 0")
+        return margin
 
     @staticmethod
     def _read_occupancy(data, base):
