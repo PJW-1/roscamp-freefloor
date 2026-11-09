@@ -434,7 +434,7 @@ class FloorController(TrafficController):
             return
         leg.route = route
         leg.s = leg.s_lock = leg.s_sent = 0.0
-        leg.stuck_since = None
+        leg.stuck_since = leg.no_way_since = None
         if (leg.admitted and self._line_held(leg.in_line, m.name)
                 and self._stop_before_line(leg) is None):
             # 선 칸·주차 지점 밖에 설 곳이 없는 길: 미리 출발하지 않고 대기 자리에서 기다린다
@@ -704,19 +704,21 @@ class FloorController(TrafficController):
         return self.planner.leg(start, goal, out_line, in_line, frozenset(avoid), penalty)
 
     def _headings(self, points, limit: float) -> dict:
-        """꺾은선 앞 limit m를 몸 반지름으로 쓸 때 칸 (i, j) -> 진행 방향 단위 벡터."""
+        """꺾은선 앞 limit m를 몸 반지름으로 쓸 때 칸 (i, j) -> 그 칸을 지나는 진행 방향들(단위 벡터)."""
         out, walked, step = {}, 0.0, self.floor.cell_m / 2
         for a, b in zip(points, points[1:], strict=False):
             seg = math.dist(a, b)
             if seg <= 0:
                 continue
             d = ((b[0] - a[0]) / seg, (b[1] - a[1]) / seg)
-            for k in range(int(seg / step) + 1):
+            for k in range(math.ceil(seg / step) + 1):  # 조각 끝까지
                 t = min(seg, k * step)
                 if walked + t > limit:
                     return out
                 for c in disk_cells(self.floor, a[0] + d[0] * t, a[1] + d[1] * t, self._body):
-                    out.setdefault(c, d)
+                    ways = out.setdefault(c, [])
+                    if d not in ways:
+                        ways.append(d)
             walked += seg
         return out
 
@@ -730,11 +732,10 @@ class FloorController(TrafficController):
             if name == robot or not self._passing(name):
                 continue
             ahead = leg.route.between(leg.s, min(leg.route.length, leg.s + reach))
-            for c, d in self._headings(ahead, reach).items():
-                md = mine.get(c)
-                if md is not None and md[0] * d[0] + md[1] * d[1] < -0.5:
-                    out.add(name)
-                    break
+            theirs = self._headings(ahead, reach)
+            if any(md[0] * d[0] + md[1] * d[1] < -0.5
+                   for c, ways in theirs.items() for d in ways for md in mine.get(c, ())):
+                out.add(name)
         return out
 
     def _inflate(self, cells) -> set:

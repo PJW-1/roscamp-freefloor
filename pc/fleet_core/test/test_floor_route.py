@@ -4,6 +4,7 @@ from dataclasses import replace
 
 from fleet_core.common.params import load_params
 from fleet_core.manager import FleetManager
+from fleet_core.traffic.floor.cells import disk_cells
 from fleet_core.traffic.floor.controller import _Leg
 from fleet_core.traffic.floor.planner import Route
 from fleet_core.traffic.lane_map import load_lane_map
@@ -239,3 +240,30 @@ def test_a_failed_way_around_is_remembered_until_the_lock_grows(monkeypatch):
     assert legs["a"].no_way_since == 10.0 + traffic.params.floor_replan_s + 0.1
     traffic._replan_if_stuck(a, legs["a"], True)  # 잠금이 늘었다
     assert legs["a"].no_way_since is None
+
+
+def test_a_new_route_clears_the_failed_way_around():
+    """다른 계기로 새 길을 받으면 예전에 길을 못 찾은 기록은 지운다(상대가 헛짚지 않게)."""
+    traffic, _ = floor({"a": (1.6, 0.8)})
+    a = traffic._missions["a"]
+    leg = driving(traffic, "a", (2.6, 0.8))
+    leg.no_way_since = 5.0
+    traffic._plan(a, leg)
+    assert leg.route is not None and leg.no_way_since is None
+
+
+def test_headings_reach_the_end_of_a_short_last_piece():
+    """꺾은선 끝까지 방향을 적는다(마지막 조각이 표본 간격의 배수가 아니어도)."""
+    traffic, _ = floor({"a": (1.0, 0.8)})
+    end = (1.18, 0.8)
+    heads = traffic._headings([(1.0, 0.8), end], 5.0)
+    assert set(disk_cells(traffic.floor, *end, traffic._body)) <= set(heads)
+
+
+def test_headings_keep_every_way_a_cell_is_passed():
+    """되돌아오는 길은 같은 칸을 두 방향으로 지난다: 두 방향을 다 적는다."""
+    traffic, _ = floor({"a": (1.0, 0.8)})
+    heads = traffic._headings([(1.0, 0.8), (1.5, 0.8), (1.2, 0.8)], 5.0)
+    cell = traffic.floor.cell_of(1.35, 0.85)
+    xs = [d[0] for d in heads[cell]]
+    assert max(xs) > 0.9 and min(xs) < -0.9

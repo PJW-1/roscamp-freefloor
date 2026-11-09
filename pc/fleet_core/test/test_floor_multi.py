@@ -2,6 +2,7 @@
 
 시나리오는 레인 관제와 같은 파일·같은 시작 자리다(tools/compare_floor.py).
 """
+import collections
 import sys
 from pathlib import Path
 
@@ -32,32 +33,47 @@ def test_the_lane_scenarios_finish_on_the_free_floor(scenario, seed):
 
 
 def _cycle_spans(monkeypatch):
-    """순환마다 (이어진 시간, 그동안 비켜 서기 + 재계획 수). 1초 안에 다시 생기면 같은 순환(관제와 같다)."""
+    """순환마다 (이어진 시간, 그동안 순환에 든 로봇의 비켜 서기 + 재계획 수).
+    1초 안에 다시 생기면 같은 순환이다(관제와 같다)."""
     from fleet_core.traffic.deadlock import find_cycle, wait_graph
     from fleet_core.traffic.floor.controller import BLOCK_OWNER
     real, spans = compare_floor.build, []
 
     def build(*args):
         world = real(*args)
-        step, now = world.step, {"since": None, "seen": 0.0, "acts": 0}
+        traffic = world.core.traffic
+        acts = collections.Counter()
+        replan, sidestep = traffic._replan_if_stuck, traffic._sidestep
 
-        def acts():
-            m = world.core.traffic.metrics
-            return m["sidesteps"] + m["replans"]
+        def counted_replan(m, leg, grew):
+            before = traffic.metrics["replans"]
+            replan(m, leg, grew)
+            acts[m.name] += traffic.metrics["replans"] - before
+
+        def counted_sidestep(m, cycle):
+            done = sidestep(m, cycle)
+            acts[m.name] += bool(done)
+            return done
+
+        traffic._replan_if_stuck, traffic._sidestep = counted_replan, counted_sidestep
+        step, now = world.step, {"since": None, "seen": 0.0, "members": set(), "start": None}
 
         def close():
-            spans.append((now["seen"] - now["since"], acts() - now["acts"]))
+            acted = sum(acts[n] - now["start"][n] for n in now["members"])
+            spans.append((now["seen"] - now["since"], acted))
             now["since"] = None
 
         def counted():
             step()
-            graph = wait_graph(world.core.traffic.zones)
+            graph = wait_graph(traffic.zones)
             graph.pop(BLOCK_OWNER, None)
             if now["since"] is not None and world.t - now["seen"] > 1.0:
                 close()
-            if find_cycle(graph):
+            cycle = find_cycle(graph)
+            if cycle:
                 if now["since"] is None:
-                    now["since"], now["acts"] = world.t, acts()
+                    now.update(since=world.t, members=set(), start=collections.Counter(acts))
+                now["members"] |= set(cycle)
                 now["seen"] = world.t
 
         world.step, world.close_cycle = counted, lambda: now["since"] is not None and close()
