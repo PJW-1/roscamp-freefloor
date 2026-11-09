@@ -97,7 +97,7 @@ def test_a_robot_resting_at_the_dock_still_holds_its_line(dx, dy):
     body, d = traffic._body, traffic.params.release_distance_m
     band = {c for c in traffic._ids(disk_cells(traffic.floor, x, y, d + 0.05))
             if body + 0.01 < traffic.floor.box_distance(traffic.floor.cell_at(c), x, y) < d - 0.01}
-    band -= traffic.zones.held_set("b")
+    band -= traffic.zones.held_set("b") | traffic.zones.held_set("a")  # 새로 잡는 칸만: 셈이 0부터
     assert band and traffic.zones.acquire_all("a", band | traffic.zones.held_set("a"))
     report(REST_RELEASE_SAMPLES - 1)
     assert band <= traffic.zones.held_set("a")

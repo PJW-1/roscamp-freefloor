@@ -198,15 +198,16 @@ def test_a_robot_with_no_approach_line_has_no_line_eta():
 def _watch(scenario, seed):
     """도크의 로봇 하나만 접근선을 쥐고 그 선으로 가는 로봇도 없을 때의 예측(시각 + 빌 시각)과
     그 로봇이 선 칸을 다 놓은 시각. 그 뒤 다른 로봇이 곧바로 잡을 수 있어 선 전체가 비는 시각은 아니다.
-    seen: 스테이션에 선 횟수(visits), 예측을 맞춰 본 머묾(stays), 쥔 로봇이 있는데 빈 선·모름으로
-    본 횟수(wrong), 끝날 때 아직 안 놓은 머묾(pending)."""
+    seen: 스테이션에 선 횟수(visits), 예측을 맞춰 본 머묾 번호(stays), 쥔 로봇이 있는데 빈 선·모름으로
+    본 횟수(wrong), 끝날 때 아직 안 놓은 머묾 번호(pending). 머묾 번호는 스테이션에 설 때마다 하나."""
     data = compare_floor.baseline.load_scenario(scenario)
     world = compare_floor.build(data, "lane_map", seed, "freefloor")
     traffic = world.core.traffic
     preds: dict[str, list] = {}
     errors, left = [], []
-    seen = {"visits": 0, "stays": 0, "wrong": 0, "pending": 0}
+    seen = {"visits": 0, "stays": [], "wrong": 0, "pending": []}
     phase: dict[str, str] = {}
+    visit: dict[str, int] = {}  # 로봇 -> 지금 머묾 번호
     step = world.step
 
     def watched():
@@ -214,6 +215,7 @@ def _watch(scenario, seed):
         for n, m in traffic._missions.items():
             if m.phase == AT_STATION and phase.get(n) != AT_STATION:
                 seen["visits"] += 1
+                visit[n] = seen["visits"]
             phase[n] = m.phase
         for line, ids in traffic._line_ids.items():
             if not line.endswith("_in"):
@@ -227,19 +229,20 @@ def _watch(scenario, seed):
                 if free_in is None or free_in == math.inf:
                     seen["wrong"] += 1
                 else:
-                    preds.setdefault((line, docked[0]), []).append(world.t + free_in)
+                    key = (line, docked[0], visit[docked[0]])
+                    preds.setdefault(key, []).append(world.t + free_in)
             for n in docked:
                 s = world.core.station_left_s(n)
                 if s is not None:
                     left.append((n, world.t, s))
             for key in [k for k in preds if k[0] == line and k[1] not in holders]:
-                seen["stays"] += 1
+                seen["stays"].append(key[2])
                 errors.extend(abs(at - world.t) for at in preds.pop(key))
 
     world.step = watched
     while world.t < 400 and not world.all_orders_final():
         world.step()
-    seen["pending"] = len(preds)
+    seen["pending"] = [k[2] for k in preds]
     reports = [t for t, c in world.commands if type(c).__name__ == "ReportOrderCmd"]
     return (errors, left, max(reports, default=None),
             [(round(t, 3), repr(c)) for t, c in world.commands], seen)
@@ -250,8 +253,10 @@ def test_the_line_free_time_is_predicted_within_a_few_seconds(scenario, seed):
     """도크의 로봇이 선 칸을 다 놓는 시각. 머묾마다 맞춰 보고, 빠진 머묾이 없다."""
     errors, *_, seen = _watch(scenario, seed)
     assert seen["wrong"] == 0
-    assert seen["pending"] <= 1  # 주문이 다 끝날 때 도크에 선 로봇
-    assert seen["stays"] + seen["pending"] == seen["visits"] >= 10
+    assert len(seen["pending"]) <= 1  # 주문이 다 끝날 때 도크에 선 로봇
+    # 머묾마다 한 번씩: 빠지거나 두 번 센 머묾이 없다
+    assert sorted(seen["stays"] + seen["pending"]) == list(range(1, seen["visits"] + 1))
+    assert seen["visits"] >= 10
     assert statistics.median(errors) < 2.0
     assert max(errors) < 6.0
 
