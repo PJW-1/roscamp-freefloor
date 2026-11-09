@@ -34,8 +34,9 @@ parking:
 # WORK: in from the south (QW), out to the north (WN). OUTBOUND is a one-way loop: in along the
 # north wall and through the 0.25 m gap north of box_small; out south of table_2, up the middle
 # and through the 0.25 m gap between block_long and box_small to between bin and block_long (PS).
-# A whole station line is locked at once, so one robot at a time is in each gap, and a robot
-# leaving never meets one coming in. A robot waiting for a line may not stand on line cells.
+# Every line is one way and the way in and the way out share only the dock end, so no robot
+# meets another head-on on a line: the lines roll like the floor (rolling_lines). A robot locks
+# floor_lock_ahead_m ahead on a line too, and the next robot queues on the line behind it.
 # The way out stops short of the parking spots, so a parked robot never holds one of its cells.
 fixed_lines:
   work_in: [[0.25, 0.20], [0.25, 0.50]]
@@ -43,3 +44,4 @@ fixed_lines:
   outbound_in: [[1.20, 0.925], [1.875, 0.925], [1.875, 0.25]]
   outbound_out: [[1.875, 0.25], [1.80, 0.165], [1.35, 0.165], [1.35, 0.45], [1.275, 0.525],
                  [1.275, 0.555], [1.245, 0.585], [1.245, 0.615], [0.96, 0.615], [0.90, 0.575]]
+rolling_lines: [work_in, work_out, outbound_in, outbound_out]

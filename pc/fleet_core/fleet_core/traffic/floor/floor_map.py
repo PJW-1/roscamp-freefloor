@@ -5,6 +5,8 @@
   - clear: 로봇 중심이 서도 되는 칸. 칸 사각형 어디서든 막힌 곳까지 반지름 + wall_margin_m(없으면 cell_margin_m) 이상.
     계획기는 점이 어느 칸에 드는지만 보므로 칸 중심이 아니라 칸 전체가 안전해야 한다.
 고정 선(fixed_lines)은 좁은 곳·도킹 접근·출고 앞에서 따라야 하는 선과 방향이다. 점 순서가 방향이다.
+고정 선은 통째로 잠근다(양방향 통로에서 마주 오지 않게). rolling_lines에 적은 선은 한 방향만 다니는
+선이라 바닥처럼 잠금 앞 거리만큼만 굴려 잠그고, 접근선 한 대 규칙도 쓰지 않는다(뒤 로봇이 선 위에 줄 선다).
 """
 from __future__ import annotations
 
@@ -88,6 +90,7 @@ class FloorMap:
                         for spot in data.get("parking") or []]
         self.fixed_lines = {name: FixedLine(name, tuple(tuple(map(float, p)) for p in points))
                             for name, points in (data.get("fixed_lines") or {}).items()}
+        self.rolling_lines = self._read_rolling(data.get("rolling_lines") or [])
         self._ids = {}
         self._cells = {}
         for i in range(self.cols):
@@ -100,6 +103,13 @@ class FloorMap:
         self._check()
 
     # ---- reading ------------------------------------------------------------------------
+
+    def _read_rolling(self, names) -> frozenset:
+        if not isinstance(names, list) or any(n not in self.fixed_lines for n in names
+                                              if isinstance(n, str)) \
+                or not all(isinstance(n, str) for n in names):
+            raise FloorMapError(f"rolling_lines {names!r} must list fixed line names")
+        return frozenset(names)
 
     @staticmethod
     def _read_wall_margin(value) -> float:

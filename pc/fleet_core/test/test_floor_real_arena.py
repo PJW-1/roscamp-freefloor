@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 from fleet_core.common.params import DEFAULT_PARAMS as DEFAULT_PARAMS_FILE
+from fleet_core.common.commands import MoveCmd
 from fleet_core.traffic.floor.cells import disk_cells, swept_cells
 from fleet_core.traffic.floor.floor_map import DEFAULT_FLOOR, floor_map_for
 from fleet_core.traffic.lane_map import load_lane_map
@@ -103,6 +104,11 @@ def test_the_rehearsal_runs_three_pinkys_at_fifteen_centimetres_a_second():
                                       / "gz_real_arena.yaml").read_text(encoding="utf-8")
 
 
+def test_every_station_line_here_is_one_way_so_it_rolls_like_the_floor():
+    """두 출입선은 끝(도크)만 나눈다: 같은 선을 마주 오는 로봇이 없어 통째로 잠그지 않는다."""
+    assert FLOOR.rolling_lines == frozenset(FLOOR.fixed_lines)
+
+
 def test_docks_and_parking_are_the_lane_map_waypoints():
     for station, pose in FLOOR.docks.items():
         assert math.dist(pose, LANES.waypoint_pose(LANES.stations[station].dock)) < 1e-9
@@ -159,3 +165,7 @@ def test_three_pinkys_ship_the_first_six_orders_on_the_real_arena(tmp_path, monk
     assert row["finished"], {k: row[k] for k in ("error", "end_s", "orders_shipped")}
     assert row["orders_shipped"] == 6
     assert world.cell_violations == 0
+    # 선 안에서도 잠금 앞 거리만큼만 보낸다(선 끝까지 한 번에 보내지 않는다)
+    ahead = world.core.params.floor_lock_ahead_m + 0.1
+    for move in world.commands_of(MoveCmd):
+        assert sum(math.dist(a[:2], b[:2]) for a, b in itertools.pairwise(move.path)) <= ahead

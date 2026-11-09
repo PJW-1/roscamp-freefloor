@@ -411,3 +411,38 @@ def test_a_robot_on_a_cell_that_is_clear_only_by_the_small_wall_margin_moves_on(
     assert reached_wall  # the lock disk did reach blocked cells, and that was fine
     r = world.virtual["pinky1"]
     assert math.dist((r.x, r.y), start) > 0.3  # moved off and stopped at a spot
+
+
+# ---- real arena, three robots (2026-11-09) -----------------------------------------------
+
+
+def test_a_new_leg_that_ends_where_the_robot_stands_stops_the_old_goal():
+    """경기장 씨드 10: P-1로 가던 MoveTo가 남은 채 도착 허용 거리 안의 P-3으로 다시 골랐다.
+    옛 MoveTo가 로봇을 14 cm 더 끌고 가 주차 칸 밖에서 '주차됨'이 됐다."""
+    from fleet_core.common.commands import CancelCmd
+    core, now = bare_floor()
+    traffic = core.traffic
+    x, y = traffic.site.waypoint_pose("A")
+    report(core, "a", x, y)
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "B")  # east
+    traffic.step("a")
+    east = moves_of(traffic.take_output())[-1]
+    report(core, "a", x + 0.05, y, state="MOVING")
+    traffic._start_leg(m, "TO_PARK", None, "A")  # back to where it stands
+    out = traffic.take_output()
+    assert any(isinstance(c, CancelCmd) and c.goal_id == east.goal_id for c in out)
+    assert m.goal is None
+
+
+def test_a_parked_robot_moves_up_only_once_every_robot_is_on_the_map():
+    """경기장 씨드 10: 첫 tick에 pinky2의 보고가 아직 없어 P-1이 빈 줄 알고 pinky3이 출발했다."""
+    core, now = bare_floor(robots=("a", "b"))
+    traffic = core.traffic
+    report(core, "a", *traffic.site.waypoint_pose("P-4"))
+    a = traffic._missions["a"]
+    traffic.step("a")
+    assert a.phase == "PARKED" and "a" not in traffic._legs  # b may stand on P-5 or P-6
+    report(core, "b", 1.0, 1.15)
+    traffic.step("a")
+    assert a.phase == "TO_PARK" and a.path[-1] == "P-6"

@@ -342,3 +342,21 @@ def test_the_lock_body_ignores_the_wall_margin():
         ctl = FloorController(site, load_params(), ["r1"], lambda: 0.0, floor=floor)
         assert ctl._body == pytest.approx(0.13)
         assert ctl.planner.floor.cell_margin_m == 0.05
+
+
+def test_fixed_lines_are_locked_whole_unless_the_map_says_rolling(floor):
+    assert floor.rolling_lines == frozenset()
+    data = {"bounds": [0, 0, 2, 1], "cell_m": 0.1, "robot_radius_m": 0.08,
+            "cell_margin_m": 0.05, "fixed_lines": {"one_way": [[0.3, 0.5], [1.7, 0.5]]},
+            "rolling_lines": ["one_way"]}
+    assert FloorMap(data).rolling_lines == frozenset({"one_way"})
+
+
+@pytest.mark.parametrize("bad", [["nowhere"], "one_way", [1]])
+def test_a_rolling_line_that_is_not_a_fixed_line_is_refused(bad):
+    data = {"bounds": [0, 0, 2, 1], "cell_m": 0.1, "robot_radius_m": 0.08,
+            "cell_margin_m": 0.05, "fixed_lines": {"one_way": [[0.3, 0.5], [1.7, 0.5]]},
+            "rolling_lines": bad}
+    with pytest.raises(FloorMapError, match="rolling_lines"):
+        FloorMap(data)
+

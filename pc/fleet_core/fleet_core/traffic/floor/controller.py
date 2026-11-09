@@ -49,6 +49,7 @@ from fleet_core.traffic.mission import (
     MOVE,
     NOT_PLACEABLE,
     ON_A_GOAL,
+    OUT_OF_SERVICE,
     PARKED,
     PLACEMENT_CONFLICT,
     RUN,
@@ -421,6 +422,8 @@ class FloorController(TrafficController):
             self._plan_wait(m, leg, out_line)
             return
         if math.dist(start, leg.goal_xy) <= self.params.arrival_tolerance_m and not out_line:
+            if m.goal and m.goal.kind == MOVE:
+                self._cancel_goal(m)  # 옛 MoveTo가 로봇을 목표 밖으로 끌고 가지 않게
             leg.route = Route([leg.goal_xy])
             leg.done = m.goal is None
             return
@@ -447,7 +450,9 @@ class FloorController(TrafficController):
 
     def _admitted(self, m: _Mission, leg: _Leg) -> bool:
         """leg가 접근선에 들어가도 되나: 다른 로봇이 그 선으로 가는 중이 아니고 선 칸을 쥐지 않았고
-        먼저 기다리기 시작한 로봇이 없을 때."""
+        먼저 기다리기 시작한 로봇이 없을 때. 한 방향 선(rolling_lines)은 늘 된다: 칸 잠금이 줄을 세운다."""
+        if leg.in_line in self.floor.rolling_lines:
+            return True
         if self.params.floor_dock_schedule:
             leg.admitted = self._admitted_in_time(m, leg)
             return leg.admitted
@@ -608,7 +613,8 @@ class FloorController(TrafficController):
         설 자리가 없으면 None: 보통 다리처럼 줄을 선다. 계획 때 설 자리가 없으면 _plan이
         미리 출발을 거둔다. 선이 비면 다음 tick에 선 끝까지 한 번에 잡는다.
         """
-        if not leg.admitted or leg.in_line is None or leg.route is None:
+        if (not leg.admitted or leg.in_line is None or leg.route is None
+                or leg.in_line in self.floor.rolling_lines):
             return None
         if not self._line_held(leg.in_line, m.name):
             return None
@@ -1092,7 +1098,8 @@ class FloorController(TrafficController):
         return holder is not None and holder != m.name
 
     def _candidates(self, leg: _Leg, cap: float | None = None) -> list[float]:
-        """Lock ends to try, best first. Inside a fixed line: its end, else stop before it."""
+        """Lock ends to try, best first. Inside a fixed line: its end, else stop before it.
+        A rolling (one-way) line rolls like the floor."""
         route = leg.route
         want = min(route.length, leg.s + self.params.floor_lock_ahead_m)
         if cap is not None:
@@ -1102,8 +1109,11 @@ class FloorController(TrafficController):
             ends.append(e)
             e -= self.params.floor_extend_step_m
         out: list[float] = []
+        rolling = self.floor.rolling_lines
         for e in ends:
-            for s0, s1, _ in route.fixed:
+            for s0, s1, line in route.fixed:
+                if line in rolling:
+                    continue  # 한 방향 선: 바닥처럼 굴린다
                 if s0 + 1e-9 < e < s1 - 1e-9 and leg.s_lock < s1 - 1e-9:
                     picks = [s1] + ([s0] if s0 > leg.s_lock + 1e-9 else [])
                     break
@@ -1181,7 +1191,10 @@ class FloorController(TrafficController):
         return points
 
     def _step_parked(self, m: _Mission) -> None:
-        """대기 입구가 비도록 빈 지점으로 계속 앞으로 간다."""
+        """대기 입구가 비도록 빈 지점으로 계속 앞으로 간다. 아직 맵에 안 오른 로봇이 있으면
+        그 로봇이 선 칸을 모르니 기다린다(첫 보고 전의 빈 칸은 빈 칸이 아닐 수 있다)."""
+        if any(not o.placed and o.fault != OUT_OF_SERVICE for o in self._missions.values()):
+            return
         if self._run_mode == RUN and self._park_goal(m, m.path[m.idx]):
             self._start_park_leg(m)
 
