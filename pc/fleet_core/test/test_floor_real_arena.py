@@ -1,6 +1,7 @@
 """Free-floor on the real arena (2.05 x 1.05 m, four objects): the floor map fits the Gazebo map
 and the lane map, the whole floor is one piece, and parked or waiting robots leave the station
 lines free."""
+import itertools
 import math
 import sys
 from pathlib import Path
@@ -87,8 +88,19 @@ def test_a_parked_robot_leaves_the_station_lines_and_the_other_spot_free():
     bodies = {spot: set(disk_cells(FLOOR, x, y, BODY)) for spot, (x, y) in FLOOR.parking}
     for spot, cells in bodies.items():
         assert not cells & line_cells, spot
-    (_, one), (_, other) = bodies.items()
-    assert not one & other
+    for (a, one), (b, other) in itertools.combinations(bodies.items(), 2):
+        assert not one & other, (a, b)
+
+
+def test_the_rehearsal_runs_three_pinkys_at_fifteen_centimetres_a_second():
+    """실전은 늘 3대다: 대기 칸 셋, 시나리오 로봇 셋, 0.15 m/s."""
+    assert [spot for spot, _ in FLOOR.parking] == ["P-3", "P-1", "P-2"]
+    data = yaml.safe_load((REPO / "sim" / "fleet_gz_sim" / "scenarios" / "gz_real_arena.yaml")
+                          .read_text(encoding="utf-8"))
+    assert sorted(data["robots"]) == ["pinky1", "pinky2", "pinky3"]
+    assert {spec["start"] for spec in data["robots"].values()} == {"P-1", "P-2", "P-3"}
+    assert "nav_max_speed:=0.15" in (REPO / "sim" / "fleet_gz_sim" / "scenarios"
+                                      / "gz_real_arena.yaml").read_text(encoding="utf-8")
 
 
 def test_docks_and_parking_are_the_lane_map_waypoints():
@@ -109,11 +121,12 @@ def test_station_lines_start_and_end_where_the_lane_map_says():
 
 
 PARAMS = DEFAULT_PARAMS_FILE.parent / "fleet_params_real_arena.yaml"
+SPEED = 0.15  # gz.launch.py nav_max_speed:=0.15
 LOCKS = {"floor_lock_ahead_m": 0.25, "floor_extend_step_m": 0.05, "release_distance_m": 0.17}
 
 
 def test_the_real_arena_params_change_only_the_lock_sizes():
-    """Small locks for a small floor; robots run slower (nav_max_speed 0.12 m/s) to match."""
+    """Small locks for a small floor; robots run slower (nav_max_speed 0.15 m/s) to match."""
     base = yaml.safe_load(DEFAULT_PARAMS_FILE.read_text(encoding="utf-8"))
     mine = yaml.safe_load(PARAMS.read_text(encoding="utf-8"))
     assert set(mine) == set(base)
@@ -130,11 +143,11 @@ import compare_floor  # noqa: E402
 
 
 @pytest.mark.parametrize("seed", [1, 2])
-def test_two_pinkys_ship_the_first_six_orders_on_the_real_arena(tmp_path, monkeypatch, seed):
+def test_three_pinkys_ship_the_first_six_orders_on_the_real_arena(tmp_path, monkeypatch, seed):
     data = yaml.safe_load((REPO / "sim" / "fleet_gz_sim" / "scenarios" / "gz_real_arena.yaml")
                           .read_text(encoding="utf-8"))
     for spec in data["robots"].values():
-        spec.update(speed_mps=0.12, pose_noise_m=0.03)
+        spec.update(speed_mps=SPEED, pose_noise_m=0.03)
     data["orders"] = data["orders"][:6]
     data["timeout_s"] = 600
     data["expect"] = {"orders_shipped": 6}

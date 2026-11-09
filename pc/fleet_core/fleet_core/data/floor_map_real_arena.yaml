@@ -1,4 +1,4 @@
-# Free-floor map for the real arena (2026-11-09): 2.05 x 1.05 m with four objects, two Pinkys.
+# Free-floor map for the real arena (2026-11-09): 2.05 x 1.05 m with four objects, three Pinkys.
 # The free floor is read from the arena map image. real_arena_fine.pgm is the same file as
 # sim/fleet_gz_sim/maps/real_arena_fine.pgm (a test compares them; rebuild both with
 # python3 -m fleet_gz_sim.arena --site real_arena). Coordinates are those of the lane map
@@ -26,8 +26,9 @@ wall_margin_m: 0.01
 docks:
   WORK: [0.25, 0.50]
   OUTBOUND: [1.875, 0.25]
-# Parking spots in driving order (lane map parking).
+# Parking spots in driving order (lane map parking). P-3 sits south of bin, off every line.
 parking:
+  - {id: P-3, x: 0.60, y: 0.45}
   - {id: P-1, x: 0.925, y: 0.20}
   - {id: P-2, x: 0.575, y: 0.15}
 # WORK: in from the south (QW), out to the north (WN). OUTBOUND is a one-way loop: in along the

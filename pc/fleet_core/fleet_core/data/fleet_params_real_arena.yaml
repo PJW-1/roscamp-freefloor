@@ -1,6 +1,6 @@
 # 실제 경기장(real_arena, 2.05 x 1.05 m)용 관제 파라미터. fleet_params.yaml에서 잠금 크기 셋만
-# 줄였다(앞 잠금 0.25 m, 줄여 잡기 0.05 m, 뒤 칸 놓기 0.17 m). 로봇은 0.12 m/s로 달린다
-# (gz.launch.py nav_max_speed:=0.12, 실물은 Nav2 desired_linear_vel). 나머지는 같아야 한다
+# 줄였다(앞 잠금 0.25 m, 줄여 잡기 0.05 m, 뒤 칸 놓기 0.17 m). 로봇은 0.15 m/s로 달린다
+# (gz.launch.py nav_max_speed:=0.15, 실물은 Nav2 desired_linear_vel). 나머지는 같아야 한다
 # (test_floor_real_arena가 비교한다).
 # 정책 값. 추정 표시는 실제 코스에서 재야 한다.
 basket_capacity: 4            # 추정: 바구니 하나에 담는 최대 수량, 실제 바구니에 따라 다름
