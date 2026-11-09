@@ -2,7 +2,7 @@
 
 `traffic_mode: freefloor`로 바꾸면 레인 대신 0.1 m 칸 잠금과 바닥 경로로 핑키를 움직인다. 주문, 로봇 계약, 시나리오는 레인 관제와 같다. 기본값은 `lanes`이고, `lanes`는 실험 전과 똑같이 돈다(기존 시험을 하나도 고치지 않고 모두 통과).
 
-모든 숫자는 머리 없는 가짜 세계(SimWorld/FloorWorld, FakePinky 동작 모델)에서 나왔다. Gazebo와 실물 로봇에서는 돌리지 않았다.
+'결과'의 숫자는 머리 없는 가짜 세계(SimWorld/FloorWorld, FakePinky 동작 모델)에서 나왔다. Gazebo 결과는 'Gazebo로 돌려 보기' 끝에 따로 적었다. 실물 로봇에서는 돌리지 않았다.
 
 ## 돌려 보기
 
@@ -46,6 +46,15 @@ ros2 launch fleet_gz_sim gz.launch.py scenario:=basic_orders traffic_mode:=freef
 - 결과는 `result_dir`에 시나리오 판정과 `fleet_check.json`(로봇 사이 최소 거리, 정지 횟수, 쥔 칸 밖 위치 수)으로 남는다. 시나리오가 끝나면 launch가 끝난다.
 - 도메인은 53~60, `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`. launch가 격리를 확인하고 아니면 멈춘다.
 - `nav_pass_through`(기본 `true`): 잠금 경계에서 끝나는 이동(`final_goal` 거짓)은 접근 감속이 없는 둘째 RPP `FollowPathThrough`(`approach_velocity_scaling_dist` 0.05 m)로 달리고, 경계 앞 감속은 pinky_fsm speed_limit만 맡는다. 두 controller는 실물 설정(pinky_nav_config)에 함께 있다. `false`면 pinky_fsm의 `through_controller_id`를 비워 모든 이동이 `FollowPath`로 간다(비교용).
+- 창고 Gazebo 결과(`scenario:=gz_warehouse_nonstop traffic_mode:=freefloor sim_dock_stub:=true`, 주문 15건, 같은 기계, 2026-11-09):
+
+  | 런 | 출고 | 마지막 출고 | 움직일 때 평균 속도 | 0.2 m/s 넘는 비율 | DEADLOCK_UNRESOLVED | ERROR 이벤트 |
+  |---|---|---|---|---|---|---|
+  | B 전(`nav_pass_through` 없음) | 15/15 | 840 s | 0.133 m/s | 5% | 1 | 10 |
+  | B 기본(066ecee) | 15/15 | 807 s | 0.162 m/s | 43% | 0 | 0 |
+
+  B 기본 런의 대기 순환(DEADLOCK_DETECTED, 이제 WARN) 19번은 모두 풀렸다. 벽 여유 칸에 선 로봇이 길을 못 찾고 서 있던 멈춤(10/15에서 멈춤)은 clear 칸으로 한 걸음 옮겨 고쳤다.
+- 남은 문제, 대기 칸: 세 런 모두 마지막 로봇이 대기 칸 0.25~0.27 m 앞에서 섰다 가다를 끝까지 되풀이해 시나리오가 시간 초과로 실패한다(판정은 대기 칸 0.15 m 안). 선 로봇은 `release_distance_m`(0.2 m) 안의 칸을 놓지 않는데 몸 칸은 반지름 + 여유 0.13 m다. 그래서 0.35 m 간격 대기 칸에서 앞 로봇이 지나온 칸이 다음 자리의 몸 칸과 겹친다. 곁길(x 2.30에서 3.70 사이)에는 간격을 넓힐 자리가 없다.
 
 ## 결과 (52737c1, Windows python, 같은 기계에서 연달아)
 
@@ -76,6 +85,6 @@ ros2 launch fleet_gz_sim gz.launch.py scenario:=basic_orders traffic_mode:=freef
 
 ## 남은 일
 
-- Gazebo·실물 확인. 노드(`fleet_manager`)는 `traffic_mode`를 읽지만 바닥 지도 파일 인자는 없고 기본 `floor_map.yaml`을 쓴다. ROS 판정기는 레인 기준이다.
+- 실물 확인. 창고 대기 칸 교착(위 'Gazebo로 돌려 보기').
 - 조용히 선 로봇 감시(P4)와 특징 지도 좁은 통로 시나리오(P5)는 하지 않았다.
 - 칸 여유와 위치 오차, 감속 정책, 도크 앞 대기 자리 수는 실측으로 정해야 한다.
