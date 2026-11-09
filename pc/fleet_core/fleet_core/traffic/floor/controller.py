@@ -67,6 +67,7 @@ SIDESTEP_HOLD_S = 3.0  # how long it stays aside before planning its leg again
 YIELD_AHEAD_M = 1.2  # 서로 막았을 때 돌아가는 로봇이 비켜 갈 상대의 앞길(비켜 서기와 같은 거리)
 PLANS_PER_TICK = 1  # one plan can take ~10 ms: the other robots plan on the next ticks
 WAIT_SPOT_M = (0.3, 1.2)  # a robot waiting for an approach line stands this far from its start
+WAIT_TRIES = 8  # 출발할 수 없는 대기 자리 길을 이만큼 보면 그만 찾는다
 # a robot at rest lets go down to its body only after this many reports in a row: noise drawn
 # anew for each report (sigma 0.03 m) crosses the 5 cm body margin about 1 time in 20
 REST_RELEASE_SAMPLES = 10
@@ -666,18 +667,29 @@ class FloorController(TrafficController):
         spots = sorted((c for c in self.floor.clear
                         if near <= math.dist(line_start, self.floor.centre(c)) <= far),
                        key=lambda c: math.dist(line_start, self.floor.centre(c)))
+        first, stuck_ways = None, 0
         for cell in spots:
             spot = self.floor.centre(cell)
             if not self._standing_cells(*spot).isdisjoint(banned):
                 continue
             route = self._route(m, start, spot, out_line, cautious=True)
-            if route is None or not self._can_start(m.name, route):
-                continue  # 첫 구간이 남의 칸에 닿는 길로는 못 간다: 다음 자리
-            leg.route = route
-            leg.s = leg.s_lock = leg.s_sent = 0.0
-            leg.stuck_since = None
+            if route is None:
+                continue
+            if not self._can_start(m.name, route):
+                first = first or route  # 첫 구간이 남의 칸에 닿는다: 출발할 수 있는 다음 자리를 본다
+                stuck_ways += 1
+                if stuck_ways >= WAIT_TRIES:
+                    break  # 계획 비용: 더 보지 않는다
+                continue
+            first = route
+            break
+        if first is None:
+            leg.route = None  # nowhere to wait now: try again after floor_replan_s
             return
-        leg.route = None  # nowhere to wait now: try again after floor_replan_s
+        # 출발할 수 있는 자리가 없으면 처음 찾은 길(예전대로): 칸을 기다려 교착 처리에 보인다
+        leg.route = first
+        leg.s = leg.s_lock = leg.s_sent = 0.0
+        leg.stuck_since = None
 
     def _route(self, m: _Mission, start, goal, out_line=None, in_line=None, extra=frozenset(),
                cautious=False):

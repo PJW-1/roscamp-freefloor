@@ -434,3 +434,22 @@ def test_a_wait_spot_whose_way_cannot_start_is_skipped(monkeypatch):
     monkeypatch.setattr(traffic, "_route", route)
     traffic._plan_wait(a, leg, None)
     assert len(tried) >= 2 and leg.route is not into_b and leg.route.points[-1] == tried[-1]
+
+
+def test_when_no_wait_spot_can_start_the_first_way_is_kept(monkeypatch):
+    """출발할 수 있는 대기 자리가 없으면 예전처럼 처음 찾은 길로 간다: 칸을 기다려 교착 처리에 보인다."""
+    traffic, _ = floor({"a": (0.6, 1.6), "b": (1.8, 0.45)})
+    a = traffic._missions["a"]
+    driving(traffic, "b", (1.8, 1.15))
+    leg = _Leg(None, (0.9, 1.05), in_line="work_in")
+    leg.waiting = True
+    traffic._legs["a"] = leg
+    ways = []
+
+    def route(m, start, goal, *args, **kw):
+        ways.append(Route([(1.8, 0.6), goal]))  # 모두 b의 칸 안에서 출발한다
+        return ways[-1]
+
+    monkeypatch.setattr(traffic, "_route", route)
+    traffic._plan_wait(a, leg, None)
+    assert 2 <= len(ways) <= 8 and leg.route is ways[0]  # 계획 비용: 8곳까지만 본다
