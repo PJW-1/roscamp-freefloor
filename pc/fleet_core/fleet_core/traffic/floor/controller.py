@@ -218,7 +218,8 @@ class FloorController(TrafficController):
         lo, hi = max(0.0, a - self._cap), min(route.length, b + self._cap)
         cells = self._ids(swept_cells(self.floor, route.between(lo, hi), self._side))
         for s0, s1 in self._turn_spans(route):
-            lo, hi = max(a, s0), min(b, s1)
+            # within _cap of a span the band's run-on reaches it (a route end stops the run-on)
+            lo, hi = max(a - self._cap, s0), min(b + self._cap, s1)
             if lo <= hi + 1e-9:
                 cells |= self._swept(route.between(lo, max(lo, hi)))
         return cells

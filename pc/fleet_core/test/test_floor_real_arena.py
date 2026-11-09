@@ -163,6 +163,21 @@ def test_a_straight_stretch_locks_only_the_half_width_but_a_corner_the_whole_cir
     assert corner <= cells  # 꺾이기 전 RPP가 제자리에서 돌 수 있는 곳은 원 전체
 
 
+def test_a_band_that_stops_within_its_run_on_of_a_route_end_takes_the_end_circle():
+    """The band runs on _cap past both ends, but not past the route's own ends, where only the
+    turning circle holds the square body's corners: it must join as soon as the band comes
+    within _cap of an end, not only when it reaches it (Codex review, 2026-11-10)."""
+    from fleet_core.traffic.floor.planner import Route
+    traffic = arena_traffic()
+    assert traffic._cap > 0.002
+    route = Route([(1.20, 0.925), (1.60, 0.925)])
+    end = {FLOOR.cell_id(c) for c in disk_cells(FLOOR, 1.60, 0.925, traffic._body)}
+    start = {FLOOR.cell_id(c) for c in disk_cells(FLOOR, 1.20, 0.925, traffic._body)}
+    assert end <= traffic._lock_cells(route, 0.15, route.length - 0.001)
+    assert start <= traffic._lock_cells(route, 0.001, 0.25)
+    assert not end & traffic._lock_cells(route, 0.15, route.length - 3 * traffic._body)
+
+
 def one_quiet_robot(monkeypatch):
     data = yaml.safe_load((REPO / "sim" / "fleet_gz_sim" / "scenarios" / "gz_real_arena.yaml")
                           .read_text(encoding="utf-8"))
