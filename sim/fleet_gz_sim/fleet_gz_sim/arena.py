@@ -58,6 +58,7 @@ class Site:
     inside: tuple[float, float, float, float]  # 벽 안쪽 (x0, y0, x1, y1)
     features: tuple[Box, ...]
     lane_map: str = ""  # sim/fake_robots/maps/의 이름, ""는 기본 레인 지도
+    lane_clearance_m: float = CLEARANCE_M  # 레인에서 벽·상자까지 최소 거리
 
     @property
     def map_origin(self) -> tuple[float, float]:
@@ -126,7 +127,7 @@ def load_site(path) -> Site:
         raise SiteError(f"{path}: {e.problem}") from e
     if not isinstance(data, dict):
         raise SiteError(f"{path}: expected a mapping")
-    extra = set(data) - {"lane_map", "bounds_m", "boxes"}
+    extra = set(data) - {"lane_map", "bounds_m", "boxes", "lane_clearance_m"}
     if extra:
         raise SiteError(f"{path}: unknown keys {sorted(extra)}")
     try:
@@ -137,7 +138,13 @@ def load_site(path) -> Site:
         raise SiteError(f"{path}: bounds_m must be finite numbers")
     if x1 <= x0 or y1 <= y0:
         raise SiteError(f"{path}: bounds_m is empty")
-    site = Site(path.stem, (x0, y0, x1, y1), (), str(data.get("lane_map") or ""))
+    try:
+        clearance_m = float(data.get("lane_clearance_m", CLEARANCE_M))
+    except (TypeError, ValueError) as e:
+        raise SiteError(f"{path}: lane_clearance_m must be a number") from e
+    if not (math.isfinite(clearance_m) and clearance_m > 0):
+        raise SiteError(f"{path}: lane_clearance_m must be a finite number above 0")
+    site = Site(path.stem, (x0, y0, x1, y1), (), str(data.get("lane_map") or ""), clearance_m)
     names = {b.name for b in walls(site)}
     features = []
     for raw in data.get("boxes") or []:
@@ -148,7 +155,7 @@ def load_site(path) -> Site:
             raise SiteError(f"{path}: box {box.name} is outside bounds_m")
         names.add(box.name)
         features.append(box)
-    return Site(site.name, site.inside, tuple(features), site.lane_map)
+    return Site(site.name, site.inside, tuple(features), site.lane_map, clearance_m)
 
 
 def _site_box(path: Path, raw) -> Box:
@@ -340,7 +347,7 @@ def world_sdf(lane_map, render_engine: str = "ogre2", site: Site = LANE_ARENA) -
     return f"""<?xml version="1.0"?>
 <!-- 생성 파일: {_command(site, xml=True)} 로 다시 만든다. 손으로 고치지 않는다.
      월드 좌표 = 지도 좌표 = lane_map.yaml 좌표. 레인은 바닥 그림이고 벽·상자는 레인에서
-     {CLEARANCE_M} m 넘게 떨어져 있다. -->
+     {site.lane_clearance_m} m 넘게 떨어져 있다. -->
 <sdf version="1.9">
   <world name="{WORLD}">
     <physics name="4ms" type="ignored">
@@ -391,8 +398,9 @@ def world_sdf(lane_map, render_engine: str = "ogre2", site: Site = LANE_ARENA) -
 
 def generate(out: Path, lane_map, render_engine: str = "ogre2", site: Site = LANE_ARENA) -> None:
     value, lane, box = min_clearance(lane_map, site)
-    if value < CLEARANCE_M - 1e-9:  # 0.25 m exactly is allowed despite float rounding
-        raise ValueError(f"{lane} is {value:.3f} m from {box} (needs {CLEARANCE_M} m)")
+    need = site.lane_clearance_m
+    if value < need - 1e-9:  # 0.25 m exactly is allowed despite float rounding
+        raise ValueError(f"{lane} is {value:.3f} m from {box} (needs {need} m)")
     (out / "worlds").mkdir(parents=True, exist_ok=True)
     (out / "maps").mkdir(parents=True, exist_ok=True)
     (out / "worlds" / f"{site.name}.sdf").write_text(world_sdf(lane_map, render_engine, site),
