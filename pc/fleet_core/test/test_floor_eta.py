@@ -2,12 +2,17 @@
 import math
 import statistics
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from fleet_core.common.params import load_params
+from fleet_core.manager import FleetManager
+from fleet_core.orders.orchestrator import FILL
+from fleet_core.traffic.floor.controller import BLOCK_OWNER
 from fleet_core.traffic.floor.eta import route_s
-from fleet_core.traffic.mission import AT_STATION
+from fleet_core.traffic.lane_map import load_lane_map
+from fleet_core.traffic.mission import AT_STATION, ERROR
 from test_floor_multi import two_robot_floor
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
@@ -92,6 +97,57 @@ def test_a_waiting_robot_reaches_the_line_start_from_its_wait_spot():
     assert least <= eta <= least + math.pi * traffic.params.eta_turn_s_per_rad + 1e-9
 
 
+def _floor_at(names_xy):
+    params = replace(load_params(), traffic_mode="freefloor")
+    now = [0.0]
+    core = FleetManager(load_lane_map(), params, list(names_xy), lambda: now[0])
+    for _ in range(3):
+        for name, (x, y) in names_xy.items():
+            core.on_robot_state(name, x, y, 0.0, "IDLE")
+    core.traffic._plan_budget = 99
+
+    def at(t):  # 교통은 매니저가 tick마다 굳힌 시각을 본다
+        now[0] = core._time = t
+
+    return core, now, at
+
+
+def test_a_line_held_by_an_isolated_robot_frees_at_an_unknown_time():
+    traffic = two_robot_floor()
+    traffic._missions["a"].fault = ERROR  # a는 work_in 칸을 쥔 채 격리됐다
+    assert traffic.line_free_in("work_in") == math.inf
+
+
+def test_a_line_with_cells_marked_blocked_frees_at_an_unknown_time():
+    traffic = two_robot_floor()
+    cell = sorted(traffic._line_ids["outbound_in"])[0]
+    assert traffic.zones.acquire_all(BLOCK_OWNER, {cell})
+    assert traffic.line_free_in("outbound_in") == math.inf
+
+
+def test_a_robot_that_has_not_moved_off_the_dock_still_needs_the_whole_leave_time():
+    """다리를 만든 시각은 출발이 아니다: 계획·잠금이 늦으면 도크에 그대로 있다."""
+    core, _, at = _floor_at({"a": (1.05, 1.55), "b": (2.6, 0.8)})
+    traffic = core.traffic
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_OUTBOUND", None, "O")
+    assert traffic._legs["a"].out_line == "work_out"
+    at(30.0)
+    assert traffic.line_free_in("work_in") == pytest.approx(traffic.params.floor_leave_s)
+
+
+def test_the_station_work_left_reads_the_tick_time_not_the_live_clock(monkeypatch):
+    """교통과 같은 굳힌 시각: 기록을 다시 돌려도 같은 값."""
+    core, now, at = _floor_at({"a": (1.05, 1.55)})
+    monkeypatch.setattr(core.orchestrator, "station_job", lambda robot: (FILL, 2, 10.0))
+    at(12.0)
+    p = core.params
+    want = p.eta_fill_base_s + 2 * p.eta_fill_s_per_item - 2.0
+    assert core.station_left_s("a") == pytest.approx(want)
+    now[0] = 15.0  # 다음 입력 전
+    assert core.station_left_s("a") == pytest.approx(want)
+
+
 def test_a_robot_with_no_approach_line_has_no_line_eta():
     traffic = two_robot_floor()
     traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")
@@ -130,34 +186,41 @@ def _watch(scenario, seed):
     while world.t < 400 and not world.all_orders_final():
         world.step()
     reports = [t for t, c in world.commands if type(c).__name__ == "ReportOrderCmd"]
-    return errors, left, max(reports, default=None)
+    return (errors, left, max(reports, default=None),
+            [(round(t, 3), repr(c)) for t, c in world.commands])
 
 
 @pytest.mark.parametrize("scenario,seed", [("basic_orders", 1), ("order_burst", 2)])
 def test_the_line_free_time_is_predicted_within_a_few_seconds(scenario, seed):
-    errors, _, _ = _watch(scenario, seed)
+    errors = _watch(scenario, seed)[0]
     assert errors
     assert statistics.median(errors) < 2.0
     assert max(errors) < 6.0
 
 
 def test_the_station_work_left_counts_down_during_a_stay():
-    _, left, _ = _watch("basic_orders", 1)
+    left = _watch("basic_orders", 1)[1]
     assert left
-    stays, last = [], {}
+    stays, open_ = [], {}  # 로봇마다 지금 머무는 구간
     for name, t, s in left:
-        if name in last and t - last[name][0] < 0.5:
-            stays[last[name][1]].append(s)
+        k = open_.get(name)
+        if k is not None and t - stays[k][-1][0] < 0.5:
+            stays[k].append((t, s))
         else:
-            stays.append([s])
-        last[name] = (t, len(stays) - 1)
+            stays.append([(t, s)])
+            open_[name] = len(stays) - 1
+    assert len(stays) >= 4
     for stay in stays:
-        assert stay[-1] <= stay[0]
+        values = [s for _, s in stay]
+        assert all(b <= a + 1e-6 for a, b in zip(values, values[1:], strict=False)), values
 
 
 def test_watching_the_predictions_does_not_change_the_run():
-    """ETA는 보기만 한다: 매 단계 물어도 결과가 같다."""
-    _, _, finish = _watch("basic_orders", 1)
-    row, _ = compare_floor.run("lane_map", "basic_orders", 1, "freefloor")
-    assert row["finished"]
-    assert finish == pytest.approx(row["finish_s"])
+    """ETA는 보기만 한다: 매 단계 물어도 보낸 명령이 모두 같다."""
+    watched = _watch("basic_orders", 1)[3]
+    data = compare_floor.baseline.load_scenario("basic_orders")
+    world = compare_floor.build(data, "lane_map", 1, "freefloor")
+    while world.t < 400 and not world.all_orders_final():
+        world.step()
+    assert world.all_orders_final()
+    assert [(round(t, 3), repr(c)) for t, c in world.commands] == watched

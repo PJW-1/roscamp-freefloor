@@ -101,7 +101,7 @@ class FleetManager:
                  else p.eta_swap_s)
         if sent is None:
             return total
-        return max(1.0, total - (self._clock() - sent))  # 시간이 지난 일은 곧 끝난다고 봄
+        return max(1.0, total - (self._frozen() - sent))  # 시간이 지난 일은 곧 끝난다고 봄
 
     @property
     def zones(self):

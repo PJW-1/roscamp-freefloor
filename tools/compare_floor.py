@@ -25,7 +25,7 @@ invariants instead of lane checks. Extra columns, filled for both modes:
     placement_outside  freefloor: robots whose true body stuck out of their cells before their
                     first MoveTo (placed from a report off by more than the cell margin)
     line_idle_s     freefloor: 도크 접근선이 비어 있는데 그 선으로 가려는 로봇이 있던 시간(선 합)
-    pre_admits      freefloor: 선이 비기 전에 미리 출발시킨 횟수(floor_dock_schedule)
+    pre_admits      freefloor: 선이 비기 전에 차례를 준 횟수(floor_dock_schedule). 출발 성공 수는 아니다
 
     --set KEY=VALUE  freefloor 실행의 파라미터를 바꾼다(여러 번 가능). 예: --set floor_dock_schedule=true
 """
@@ -86,8 +86,8 @@ def _line_idle(traffic) -> int:
     for line, ids in traffic._line_ids.items():
         if not line.endswith("_in"):
             continue
-        if any(ids & traffic.zones.held_set(r) for r in traffic._missions):
-            continue
+        if any(traffic.zones.holder(c) is not None for c in ids):
+            continue  # 로봇이나 막힘 표시가 쥠
         if any(leg.in_line == line and traffic._in_service(r) for r, leg in traffic._legs.items()):
             n += 1
     return n
