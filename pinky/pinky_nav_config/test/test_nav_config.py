@@ -45,6 +45,22 @@ def test_the_through_controller_is_followpath_without_the_approach_slow_down():
         k: v for k, v in normal.items() if k != "approach_velocity_scaling_dist"}
 
 
+def test_no_obstacle_beside_the_path_slows_the_robot():
+    """Jazzy RPP scales the speed by cost_scaling_gain * d / cost_scaling_dist when d, the
+    distance it reads from the cost under the robot, is below cost_scaling_dist, and d is at
+    least the inscribed radius (half the 12 cm footprint) until the robot touches. With 0.6 m
+    a box within the 0.15 m inflation pinned the robot to the 0.05 m/s floor in every arena gap
+    (user, 2026-11-10): the scaling may no longer cut the speed short of a touch."""
+    c = params("controller_server")
+    footprint = yaml.safe_load(params("local_costmap", "local_costmap")["footprint"])
+    inscribed = min(max(abs(x) for x, _ in footprint), max(abs(y) for _, y in footprint))
+    for name in ("FollowPath", "FollowPathThrough"):
+        rpp = c[name]
+        assert rpp["use_cost_regulated_linear_velocity_scaling"] is True
+        assert rpp["cost_scaling_dist"] == 0.05
+        assert rpp["cost_scaling_gain"] * inscribed / rpp["cost_scaling_dist"] >= 1.0, name
+
+
 def test_goal_checker_is_tighter_than_the_arrival_tolerance():
     c = params("controller_server")
     assert c["goal_checker_plugins"] == ["general_goal_checker"]

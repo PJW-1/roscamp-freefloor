@@ -132,7 +132,10 @@ controller_server:
       rotate_to_heading_min_angle: 0.25
       max_angular_accel: 3.2
       max_robot_pose_search_dist: 1.4875
-      cost_scaling_dist: 0.6
+      # 0.05 (user, 2026-11-10; was 0.6): RPP reads d >= the 0.06 m inscribed radius until the
+      # robot touches, so 1.5 * d / 0.05 > 1 and a box beside the path no longer pins the robot
+      # to regulated_linear_scaling_min_speed (0.05 m/s) inside the 0.15 m inflation
+      cost_scaling_dist: 0.05
       cost_scaling_gain: 1.5
       inflation_cost_scaling_factor: 3.0
       interpolate_curvature_after_goal: false
@@ -170,7 +173,7 @@ controller_server:
       rotate_to_heading_min_angle: 0.25
       max_angular_accel: 3.2
       max_robot_pose_search_dist: 1.4875
-      cost_scaling_dist: 0.6
+      cost_scaling_dist: 0.05
       cost_scaling_gain: 1.5
       inflation_cost_scaling_factor: 3.0
       interpolate_curvature_after_goal: false
