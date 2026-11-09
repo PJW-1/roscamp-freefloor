@@ -166,6 +166,15 @@ def test_a_robot_pushed_off_the_exit_line_still_needs_the_whole_leave_time():
                                                              abs=0.05)
 
 
+def test_an_exit_line_of_no_length_counts_the_whole_leave_time(monkeypatch):
+    core, _, _ = _floor_at({"a": (1.05, 1.55), "b": (2.6, 0.8)})
+    traffic = core.traffic
+    traffic._start_leg(traffic._missions["a"], "TO_OUTBOUND", None, "O")
+    import fleet_core.traffic.floor.controller as floor_controller
+    monkeypatch.setattr(floor_controller, "_along", lambda points, xy: (0.0, 0.0))
+    assert traffic.line_free_in("work_in") == pytest.approx(traffic.params.floor_leave_s)
+
+
 def test_the_station_work_left_reads_the_tick_time_not_the_live_clock(monkeypatch):
     """교통과 같은 굳힌 시각: 기록을 다시 돌려도 같은 값."""
     core, now, at = _floor_at({"a": (1.05, 1.55)})

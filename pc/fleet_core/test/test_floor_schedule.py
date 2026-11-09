@@ -143,6 +143,10 @@ def test_a_robot_standing_at_its_stop_stays_queued_through_a_whole_drive_tick(mo
     assert b.goal is None
     assert not traffic.zones.acquire_all("a", set(traffic.zones.held_set("b")))
     assert set(find_cycle(wait_graph(traffic.zones))) == {"a", "b"}
+    traffic.take_output()
+    traffic._check_deadlock(1.0)  # 다음 tick의 교착 검사가 본다
+    codes = [c.code for c in traffic.take_output() if type(c).__name__ == "EventOut"]
+    assert "DEADLOCK_DETECTED" in codes
 
 
 def test_a_robot_sent_early_does_not_queue_until_its_move_to_the_stop_ends(monkeypatch):
@@ -222,11 +226,17 @@ def test_only_one_robot_holds_the_turn_while_its_plan_waits_for_budget():
 
 def test_a_robot_sent_early_enters_the_line_once_it_frees(monkeypatch):
     traffic, _, leg = _sent_early_at_the_line(monkeypatch)
+    b = traffic._missions["b"]
+    traffic._drive(b)  # 서서 줄을 섰다
     for cell in list(traffic.zones.held_set("a")):
         traffic.zones.release("a", cell)
-    assert traffic._extend(traffic._missions["b"], leg)
+    traffic.take_output()
+    traffic._drive(b)
     assert leg.s_lock == pytest.approx(leg.route.fixed[0][1])
     assert line_cells(traffic) <= traffic.zones.held_set("b")
+    assert b.goal is not None  # 선 끝(도크)까지 MoveTo를 보냈다
+    moves = [c for c in traffic.take_output() if type(c).__name__ == "MoveCmd"]
+    assert moves and moves[-1].robot == "b"
 
 
 def test_a_robot_on_the_line_that_may_stay_long_keeps_the_next_one_waiting(monkeypatch):
