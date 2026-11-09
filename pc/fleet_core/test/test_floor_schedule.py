@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fleet_core.common.params import load_params
 from fleet_core.manager import FleetManager
-from fleet_core.traffic.deadlock import wait_graph
+from fleet_core.traffic.deadlock import find_cycle, wait_graph
 from fleet_core.traffic.lane_map import load_lane_map
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
@@ -125,6 +125,19 @@ def test_a_robot_sent_early_queues_on_the_line_once_it_stands_at_its_stop(monkey
     assert leg.s_lock == pytest.approx(cap)
     assert set(traffic.zones.waited_cells("b")) & line_cells(traffic)
     assert "a" in wait_graph(traffic.zones)["b"]
+    # a가 떠나며 b의 칸을 기다리면 순환이 보인다
+    assert not traffic.zones.acquire_all("a", set(traffic.zones.held_set("b")))
+    assert set(find_cycle(wait_graph(traffic.zones))) == {"a", "b"}
+
+
+def test_a_robot_sent_early_does_not_queue_while_it_still_holds_exit_line_cells(monkeypatch):
+    """설 자리에 거의 왔어도 지나온 출구선 칸을 아직 놓지 않았으면 줄을 서지 않는다."""
+    traffic, _, leg = _sent_early_at_the_line(monkeypatch)
+    only_out = traffic._line_ids["work_out"] - traffic._line_ids["work_in"]
+    cell = next(c for c in sorted(only_out) if traffic.zones.holder(c) is None)
+    assert traffic.zones.acquire_all("b", {cell})
+    traffic._extend(traffic._missions["b"], leg)
+    assert not set(traffic.zones.waited_cells("b")) & line_cells(traffic)
 
 
 def test_a_robot_sent_early_waits_at_the_line_start_without_replanning(monkeypatch):

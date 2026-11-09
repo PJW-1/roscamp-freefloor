@@ -153,6 +153,19 @@ def test_the_leave_time_shrinks_with_the_way_gone_along_the_exit_line():
                                                              abs=0.1)
 
 
+def test_a_robot_pushed_off_the_exit_line_still_needs_the_whole_leave_time():
+    """출구선 방향으로 간 거리만 센다: 옆으로 밀려 도크에서 멀어진 것은 나간 것이 아니다."""
+    core, _, _ = _floor_at({"a": (1.05, 1.55), "b": (2.6, 0.8)})
+    traffic = core.traffic
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_OUTBOUND", None, "O")
+    (x0, y0), (x1, y1) = traffic.floor.fixed_lines["work_out"].points[:2]
+    d = math.hypot(x1 - x0, y1 - y0)
+    a.x, a.y = x0 - 0.3 * (y1 - y0) / d, y0 + 0.3 * (x1 - x0) / d  # 출구선에 수직으로 0.3 m
+    assert traffic.line_free_in("work_in") == pytest.approx(traffic.params.floor_leave_s,
+                                                             abs=0.05)
+
+
 def test_the_station_work_left_reads_the_tick_time_not_the_live_clock(monkeypatch):
     """교통과 같은 굳힌 시각: 기록을 다시 돌려도 같은 값."""
     core, now, at = _floor_at({"a": (1.05, 1.55)})

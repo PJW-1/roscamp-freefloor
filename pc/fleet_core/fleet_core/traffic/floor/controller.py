@@ -90,6 +90,21 @@ class _Leg:
     early: bool = True  # 시간창: 선이 비기 전에 출발해도 되나(설 자리가 없던 다리는 끔)
 
 
+def _along(points, xy) -> tuple[float, float]:
+    """꺾은선 위로 xy를 투영한 거리(처음부터, 0~길이)와 꺾은선 길이."""
+    best, base, total = (math.inf, 0.0), 0.0, 0.0
+    for a, b in zip(points, points[1:], strict=False):
+        seg = math.dist(a, b)
+        if seg > 0:
+            t = ((xy[0] - a[0]) * (b[0] - a[0]) + (xy[1] - a[1]) * (b[1] - a[1])) / seg ** 2
+            t = min(1.0, max(0.0, t))
+            q = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+            best = min(best, (math.dist(q, xy), base + t * seg))
+        base += seg
+    total = base
+    return best[1], total
+
+
 class FloorController(TrafficController):
     def __init__(self, site, params, robots, clock, next_goal_id=None, floor=None):
         super().__init__(site, params, robots, clock, next_goal_id)
@@ -486,10 +501,9 @@ class FloorController(TrafficController):
                     return math.inf  # 팔 일 없이 서 있음: 다음 주문을 기다림
                 left = self._work_s(station)  # 방금 닿음: 팔 일이 곧 온다
             return left + p.floor_leave_s
-        if leg is not None and leg.out_line:  # 도크를 떠나는 중: 출구선을 나간 만큼 줄인다
+        if leg is not None and leg.out_line:  # 도크를 떠나는 중: 출구선을 따라 나간 만큼 줄인다
             pts = self.floor.fixed_lines[leg.out_line].points  # 다리를 만든 시각은 출발이 아니다
-            length = sum(math.dist(a, b) for a, b in zip(pts, pts[1:], strict=False))
-            gone = math.dist((m.x, m.y), pts[0])
+            gone, length = _along(pts, (m.x, m.y))
             return p.floor_leave_s * max(0.0, 1.0 - gone / length) if length > 0 else 0.0
         if leg is not None:  # 선 칸에서 다른 곳으로 출발
             return p.floor_leave_s
@@ -945,8 +959,10 @@ class FloorController(TrafficController):
     def _extend(self, m: _Mission, leg: _Leg) -> bool:
         cap = self._line_cap(m, leg)
         if cap is not None and leg.s_lock >= cap - 1e-9:
-            if cap - leg.s > self.params.floor_extend_step_m:
-                self.zones.cancel_all_requests(m.name)  # 아직 가는 중: 줄을 서지 않는다
+            if (cap - leg.s > self.params.floor_extend_step_m
+                    or not self.zones.held_set(m.name).isdisjoint(self._stand_ban[leg.in_line])):
+                # 아직 가는 중이거나 지나온 다른 선 칸을 아직 쥠: 줄을 서지 않는다
+                self.zones.cancel_all_requests(m.name)
                 return False
             end = next(b for _, b, line in leg.route.fixed if line == leg.in_line)
             cells = self._swept(leg.route.between(leg.s, end)) | self._body_cells(m.x, m.y)
