@@ -12,6 +12,7 @@
 #       QW <-+(T1)    |(교차)   +--(T2)--> QO              TUN: T1 <==> T2 (양방향)
 #        ^            v
 #        +--- P-3 <-- P-2 <-- P-1                          대기 줄
+floor_map: feature_floor_map.yaml  # free-floor map (traffic_mode freefloor), in fleet_core/data
 half_width_m: 0.05    # 추정: 레인에서 이 거리까지는 레인 위로 친다
 lane_entry_m: 0.25    # 레인 바닥이 시작되는 거리
 origin_m: [0.0, 0.0]

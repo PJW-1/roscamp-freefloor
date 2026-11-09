@@ -504,3 +504,29 @@ def test_an_obstacle_schedule_is_checked_against_the_scenario_map(made):
         run(made, scenario="gz_warehouse", obstacles="roam")  # roam의 레인은 창고 지도에 없다
     with pytest.raises(ScheduleError):
         run(made, obstacles="warehouse")
+
+
+def test_free_floor_on_the_warehouse_gives_every_floor_user_one_lane_map_and_params(made,
+                                                                                   tmp_path):
+    """The floor map follows the lane map (floor_map_for), so one lane map and one params copy
+    for every node that reads cells means one floor map."""
+    from ament_index_python.packages import get_package_share_directory
+    from fleet_core.common.params import load_params
+    from fleet_core.traffic.floor.floor_map import DEFAULT_FLOOR
+    from fleet_gz_sim.fleet_setup import load_zone_space
+    lane_map = str(Path(get_package_share_directory("fake_robots")) / "maps" / "warehouse.yaml")
+    out = tmp_path / "result"
+    actions = run(made, scenario="gz_warehouse", traffic_mode="freefloor", result_dir=str(out),
+                  sim_dock_stub="true")
+    every = [*nodes(actions), *nodes(after_ready(actions))]
+    floor_users = {"fleet_manager_node", "scenario_monitor_node", "fleet_check", "fleet_view"}
+    used = {n.kw["executable"]: params(n) for n in every if n.kw["executable"] in floor_users}
+    assert set(used) == floor_users
+    [params_file] = {p["params_file"] for p in used.values()}
+    assert Path(params_file).parent == out
+    assert load_params(params_file).traffic_mode == "freefloor"
+    for executable, p in used.items():
+        assert p.get("map_file", p.get("lane_map")) == lane_map, executable
+    space = load_zone_space(lane_map, params_file)
+    warehouse = DEFAULT_FLOOR.parent / "floor_map_warehouse.yaml"
+    assert space.floor.source_text == warehouse.read_text(encoding="utf-8")

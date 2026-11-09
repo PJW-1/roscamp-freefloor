@@ -43,10 +43,9 @@ import baseline  # noqa: E402
 from fake_robots.scenario import parse_scenario  # noqa: E402
 from fleet_core.common.commands import SHIPPED, ReportOrderCmd  # noqa: E402
 from fleet_core.common.params import load_params  # noqa: E402
-from fleet_core.traffic.floor.floor_map import DEFAULT_FLOOR, load_floor_map  # noqa: E402
+from fleet_core.traffic.floor.floor_map import floor_map_for  # noqa: E402
 from floor_world import FloorWorld  # noqa: E402
 
-FLOORS = {"lane_map": "floor_map", "feature_map": "feature_floor_map"}
 MODES = ("lanes", "freefloor")
 EXTRA = ["min_gap_m", "path_m", "tick_ms_mean", "tick_ms_max", "tick_ms_p99", "slowdowns",
          "replans", "sidesteps", "deadlocks", "unresolved", "isolations", "violations",
@@ -56,11 +55,9 @@ EXTRA = ["min_gap_m", "path_m", "tick_ms_mean", "tick_ms_max", "tick_ms_p99", "s
 def build(data, map_, seed, traffic_mode):
     if traffic_mode == "lanes":
         return baseline.build_world(data, map_, seed, "path")
-    floor_name = FLOORS.get(baseline.map_name(map_))
-    if floor_name is None:
-        raise ValueError(f"no floor map for {map_}")
     world_faults, _ = baseline._faults(data)
     site = baseline.load_map(map_)
+    floor = floor_map_for(site)  # the lane map names its floor map (FloorMapError if it fits none)
     parsed = parse_scenario(data, site)
     stock: dict[str, int] = {}
     for items in parsed.stock.values():
@@ -73,7 +70,7 @@ def build(data, map_, seed, traffic_mode):
                       arm_s_per_item=parsed.arm.seconds_per_item,
                       swap_step_s=parsed.arm.swap_seconds / 2, dock_s=parsed.dock.duration_s,
                       gaussian_noise=True,
-                      floor=load_floor_map(DEFAULT_FLOOR.parent / f"{floor_name}.yaml"))
+                      floor=floor)
 
 
 def _timed(world, store):

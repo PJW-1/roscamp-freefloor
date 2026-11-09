@@ -33,7 +33,7 @@ from fleet_core.common.commands import MoveCmd
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.deadlock import choose_retreat, find_cycle, wait_graph
 from fleet_core.traffic.floor.cells import CellLocks, disk_cells, swept_cells
-from fleet_core.traffic.floor.floor_map import load_floor_map
+from fleet_core.traffic.floor.floor_map import floor_map_for
 from fleet_core.traffic.floor.planner import FloorPlanner, Route
 from fleet_core.traffic.mission import (
     AT_STATION,
@@ -87,7 +87,7 @@ class _Leg:
 class FloorController(TrafficController):
     def __init__(self, site, params, robots, clock, next_goal_id=None, floor=None):
         super().__init__(site, params, robots, clock, next_goal_id)
-        self.floor = floor or load_floor_map()
+        self.floor = floor or floor_map_for(site)
         if self.floor.robot_radius_m < params.robot_radius_m:
             raise ValueError(f"the floor map radius {self.floor.robot_radius_m} m is smaller "
                              f"than the fleet radius {params.robot_radius_m} m")

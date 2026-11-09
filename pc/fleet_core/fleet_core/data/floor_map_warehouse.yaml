@@ -1,0 +1,34 @@
+# Free-floor map for the warehouse (experiment, 2026-11-09). The free floor is read from the
+# Gazebo warehouse map image. warehouse.pgm is the same file as sim/fleet_gz_sim/maps/warehouse.pgm
+# (a test compares them; rebuild both with python3 -m fleet_gz_sim.arena --site warehouse).
+# Coordinates are those of the warehouse lane map (sim/fake_robots/maps/warehouse.yaml), which
+# names this file in its floor_map key, and of the Gazebo world.
+image: warehouse.pgm
+resolution: 0.05
+origin: [-0.15, -0.15, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+cell_m: 0.10
+robot_radius_m: 0.08  # same as fleet_params.yaml
+cell_margin_m: 0.05   # same as floor_map.yaml
+# Station dock poses: the dock waypoints of the lane map (a test compares them).
+docks:
+  WORK: [0.45, 1.95]
+  OUTBOUND: [5.55, 1.95]
+# Parking spots in driving order (lane map parking).
+parking:
+  - {id: P-1, x: 3.35, y: 3.15}
+  - {id: P-2, x: 3.00, y: 3.15}
+  - {id: P-3, x: 2.65, y: 3.15}
+# Fixed lines, picked as in floor_map.yaml: the lane into each dock from its queue and the lane
+# out of the dock (QS->W, W->WU, QOS->O, O->G2; OUTBOUND also has O->OU, the lane map's other way
+# out, but a station has one out line). As in feature_floor_map.yaml, the narrow two-way passage
+# TUN (A2-C2, 0.5 m between rack rows) gets one line per direction over the same cells.
+fixed_lines:
+  work_in: [[0.45, 1.15], [0.45, 1.95]]
+  work_out: [[0.45, 1.95], [0.45, 2.75]]
+  outbound_in: [[5.55, 1.15], [5.55, 1.95]]
+  outbound_out: [[5.55, 1.95], [5.10, 1.95]]
+  tunnel_east: [[0.90, 1.95], [2.30, 1.95]]
+  tunnel_west: [[2.30, 1.95], [0.90, 1.95]]

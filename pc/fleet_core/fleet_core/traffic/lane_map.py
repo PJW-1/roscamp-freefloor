@@ -81,6 +81,9 @@ def _segment_distance(a1, a2, b1, b2) -> float:
 class LaneMap:
     def __init__(self, data: dict, source_text: str = "", bundle_two_way: bool | None = None):
         self.source_text = source_text
+        # free-floor map for traffic_mode freefloor: a file name in fleet_core/data, "" means the
+        # default floor_map.yaml (floor_map_for). Lanes mode never reads it.
+        self.floor_map = str(data.get("floor_map") or "")
         self.origin = tuple(float(v) for v in data["origin_m"])
         self.half_width = float(data["half_width_m"])
         self.lane_entry = float(data["lane_entry_m"])

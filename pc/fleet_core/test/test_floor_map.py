@@ -155,3 +155,83 @@ def test_a_cut_pgm_header_is_refused_not_looped(tmp_path):
     yaml_path = write_pgm(tmp_path / "m.pgm", b"P5\n4", [])
     with pytest.raises(FloorMapError, match="header"):
         load_floor_map(yaml_path)
+
+
+# ---- warehouse floor and choosing the floor map by lane map ------------------------------
+
+WAREHOUSE_LANES = REPO / "sim" / "fake_robots" / "maps" / "warehouse.yaml"
+WAREHOUSE_FLOOR = DEFAULT_FLOOR.parent / "floor_map_warehouse.yaml"
+
+
+def test_the_warehouse_image_is_the_gazebo_map_byte_for_byte():
+    shipped = DEFAULT_FLOOR.parent / "warehouse.pgm"
+    gazebo = REPO / "sim" / "fleet_gz_sim" / "maps" / "warehouse.pgm"
+    assert shipped.read_bytes() == gazebo.read_bytes()
+
+
+def test_the_warehouse_floor_has_the_gazebo_map_origin_and_size():
+    import yaml
+    gazebo = yaml.safe_load((REPO / "sim" / "fleet_gz_sim" / "maps" / "warehouse.yaml")
+                            .read_text(encoding="utf-8"))
+    floor = load_floor_map(WAREHOUSE_FLOOR)
+    assert floor.bounds()[:2] == tuple(gazebo["origin"][:2])
+    assert floor.px_m == gazebo["resolution"]
+    assert (floor.cols, floor.rows) == (63, 43)  # 126 x 86 px of 0.05 m
+
+
+def test_the_warehouse_floor_matches_the_warehouse_lane_map():
+    floor = load_floor_map(WAREHOUSE_FLOOR)
+    lanes = load_lane_map(WAREHOUSE_LANES)
+    assert set(floor.docks) == set(lanes.stations)
+    for name, station in lanes.stations.items():
+        assert floor.docks[name] == lanes.waypoint_pose(station.dock)
+    assert [spot for spot, _ in floor.parking] == list(lanes.parking)
+    for spot, pose in floor.parking:
+        assert pose == lanes.waypoint_pose(spot)
+    ends = {(lane.ax, lane.ay, lane.bx, lane.by) for lane in lanes.lanes.values()}
+    for line in floor.fixed_lines.values():
+        for a, b in zip(line.points, line.points[1:], strict=False):
+            assert (*a, *b) in ends, f"{line.name} {a}->{b} is not a lane in its direction"
+    for name, station in lanes.stations.items():
+        dock = lanes.waypoint_pose(station.dock)
+        [(queue_from, queue_to)] = station.queue
+        line_in = floor.fixed_lines[f"{name.lower()}_in"]
+        line_out = floor.fixed_lines[f"{name.lower()}_out"]
+        assert line_in.points == (lanes.waypoint_pose(queue_from), lanes.waypoint_pose(queue_to))
+        assert line_in.end == dock and line_out.start == dock
+    east, west = floor.fixed_lines["tunnel_east"], floor.fixed_lines["tunnel_west"]
+    assert east.points == tuple(reversed(west.points))
+    assert {east.start, east.end} == {lanes.waypoint_pose("A2"), lanes.waypoint_pose("C2")}
+
+
+def test_each_lane_map_names_its_floor_map():
+    from fleet_core.traffic.floor.floor_map import floor_map_for
+    feature = load_lane_map(REPO / "sim" / "fake_robots" / "maps" / "feature_map.yaml")
+    for site, floor_file in [(load_lane_map(), DEFAULT_FLOOR),
+                             (feature, FEATURE_FLOOR),
+                             (load_lane_map(WAREHOUSE_LANES), WAREHOUSE_FLOOR)]:
+        assert floor_map_for(site).source_text == floor_file.read_text(encoding="utf-8")
+
+
+def test_a_lane_map_without_a_fitting_floor_map_is_refused(tmp_path):
+    """The warehouse lane map without its floor_map key would get the lane_arena floor."""
+    import yaml
+    from fleet_core.traffic.floor.floor_map import floor_map_for
+    data = yaml.safe_load(WAREHOUSE_LANES.read_text(encoding="utf-8"))
+    data.pop("floor_map")
+    path = tmp_path / "lanes.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(FloorMapError, match="does not fit the lane map"):
+        floor_map_for(load_lane_map(path))
+
+
+def test_a_floor_map_name_is_a_file_in_the_fleet_core_data(tmp_path):
+    import yaml
+    from fleet_core.traffic.floor.floor_map import floor_map_for
+    data = yaml.safe_load(WAREHOUSE_LANES.read_text(encoding="utf-8"))
+    for name in ("../data/floor_map_warehouse.yaml", "nowhere.yaml"):
+        data["floor_map"] = name
+        path = tmp_path / "lanes.yaml"
+        path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        with pytest.raises(FloorMapError, match="floor_map"):
+            floor_map_for(load_lane_map(path))

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 
 from fleet_core.common.params import load_params
 from fleet_core.traffic.floor.cells import disk_cells, sample_line
-from fleet_core.traffic.floor.floor_map import load_floor_map
+from fleet_core.traffic.floor.floor_map import floor_map_for
 from fleet_core.traffic.lane_map import load_lane_map
 from legacy_core import FleetCore
 from sim_world import DT, LINE_TOLERANCE_M, SimWorld
@@ -31,7 +31,7 @@ class FloorWorld(SimWorld):
         self.site = self.site or load_lane_map()
         self.params = replace(self.params or load_params(), traffic_mode="freefloor")
         super().__post_init__()
-        self.floor = self.floor or load_floor_map()
+        self.floor = self.floor or floor_map_for(self.site)
         self.core = FleetCore(self.site, self.params, list(self.robots), lambda: self.t,
                               floor=self.floor)
         self.frames: list[dict] = []

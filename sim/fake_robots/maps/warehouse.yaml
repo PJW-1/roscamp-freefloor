@@ -23,6 +23,7 @@
 #         ^     v               ^      |        v               ^     ^
 #  0.35  WS <- A0 ---> B0 ---> C0 ---> D0 ---> E0 ---> F0 ---> G0 -> ES
 #       0.45  0.9     1.6     2.3     3.0     3.7     4.4     5.1   5.55  x
+floor_map: floor_map_warehouse.yaml  # free-floor map (traffic_mode freefloor), in fleet_core/data
 half_width_m: 0.05    # 추정: 레인에서 이 거리까지는 레인 위로 친다
 lane_entry_m: 0.25    # 레인 바닥이 시작되는 거리
 origin_m: [0.0, 0.0]
