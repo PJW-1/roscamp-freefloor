@@ -19,7 +19,7 @@ def params(node, sub=None):
 
 def test_controller_uses_rpp_with_the_agreed_start_values():
     c = params("controller_server")
-    assert c["controller_plugins"] == ["FollowPath"]
+    assert c["controller_plugins"] == ["FollowPath", "FollowPathThrough"]
     assert c["failure_tolerance"] == 1.0
     rpp = c["FollowPath"]
     assert rpp["plugin"] == "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
@@ -30,6 +30,19 @@ def test_controller_uses_rpp_with_the_agreed_start_values():
     assert rpp["desired_linear_vel"] == 0.25
     assert rpp["use_collision_detection"] is True
     assert rpp["max_allowed_time_to_collision_up_to_carrot"] == 0.6
+
+
+def test_the_through_controller_is_followpath_without_the_approach_slow_down():
+    """pinky_fsm sends paths that end at a lock boundary (MoveTo.final_goal false) to
+    FollowPathThrough. Jazzy RPP always applies the approach constraint, so only a short
+    approach_velocity_scaling_dist turns it off; every other key must match FollowPath."""
+    c = params("controller_server")
+    normal, through = c["FollowPath"], c["FollowPathThrough"]
+    assert through["approach_velocity_scaling_dist"] == 0.05
+    assert normal["approach_velocity_scaling_dist"] == 0.6
+    assert set(through) == set(normal)
+    assert {k: v for k, v in through.items() if k != "approach_velocity_scaling_dist"} == {
+        k: v for k, v in normal.items() if k != "approach_velocity_scaling_dist"}
 
 
 def test_goal_checker_is_tighter_than_the_arrival_tolerance():
