@@ -95,6 +95,10 @@ class PinkyFsmNode(Node):
         declare("backup_action", "backup")
         declare("clear_costmap_service", "local_costmap/clear_entirely_local_costmap")
         declare("controller_id", "FollowPath")
+        # Controller for paths that end at a lock boundary (MoveTo.final_goal false): an RPP
+        # without the approach slow-down, so the speed limit is the only slow-down there.
+        # Empty = off: every path uses controller_id, as before. Nav2 must load this plugin
+        declare("through_controller_id", "")
         declare("goal_checker_id", "general_goal_checker")
         declare("progress_checker_id", "progress_checker")
         declare("odom_topic", "odom")
@@ -115,6 +119,7 @@ class PinkyFsmNode(Node):
         self._pose_timeout = float(get("pose_timeout_s").value)
         self._nav_ids = (get("controller_id").value, get("goal_checker_id").value,
                          get("progress_checker_id").value)
+        self._through_id = get("through_controller_id").value
         self._fsm = PinkyFsm(FsmParams(
             **{name: float(get(name).value) for name in _FLOAT_PARAMS},
             **{name: int(get(name).value) for name in _INT_PARAMS}))
@@ -348,6 +353,10 @@ class PinkyFsmNode(Node):
             ps.pose.orientation.z, ps.pose.orientation.w = qz, qw
             path.poses.append(ps)
         controller, checker, progress = self._nav_ids
+        if self._through_id and not cmd.final_goal:
+            # Nav2 switches controllers on a preempting goal (controller_server
+            # updateGlobalPath), and the speed limit reaches every loaded controller
+            controller = self._through_id
         goal = FollowPath.Goal(path=path, controller_id=controller, goal_checker_id=checker,
                                progress_checker_id=progress)
         self._nav_pending.add(cmd.seq)

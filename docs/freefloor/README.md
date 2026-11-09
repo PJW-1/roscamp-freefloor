@@ -42,6 +42,7 @@ ros2 launch fleet_gz_sim gz.launch.py scenario:=basic_orders traffic_mode:=freef
 - 화면 없이: `gui:=false rviz:=none`. 레인과 비교: `traffic_mode:=lanes`(또는 빼기).
 - 결과는 `result_dir`에 시나리오 판정과 `fleet_check.json`(로봇 사이 최소 거리, 정지 횟수, 쥔 칸 밖 위치 수)으로 남는다. 시나리오가 끝나면 launch가 끝난다.
 - 도메인은 53~60, `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`. launch가 격리를 확인하고 아니면 멈춘다.
+- `nav_pass_through`(기본 `true`): 칸 잠금 경계에서 끝나는 이동(`final_goal` 거짓)은 RPP 접근 감속(`approach_velocity_scaling_dist` 0.6 m)이 없는 둘째 controller `FollowPathThrough`(0.05 m)로 달리고, 경계 앞 감속은 pinky_fsm의 speed_limit √(2·a·d)만 맡는다. 마지막 지점으로 가는 이동은 지금처럼 `FollowPath`다. launch가 로봇의 `nav2_params.yaml`에 이 controller만 더한 사본을 `<result_dir>/nav2_params.yaml`로 만들어 Nav2에 준다(실물 설정은 그대로). `nav_pass_through:=false`면 로봇 설정 그대로 final_goal 속도 제한만 쓴다(같은 빌드로 비교).
 
 ## 결과 (52737c1, Windows python, 같은 기계에서 연달아)
 

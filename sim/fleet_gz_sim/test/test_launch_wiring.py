@@ -449,3 +449,77 @@ def test_the_params_copy_never_writes_through_a_hard_link_to_its_source(gz, tmp_
     with pytest.raises(ValueError, match="fleet_params_file"):
         gz.params_for(str(mine), "freefloor", str(out))
     assert mine.read_text(encoding="utf-8") == "traffic_mode: lanes  # mine\n"
+
+
+def test_the_freefloor_copy_marks_partial_moves_unless_the_file_says_otherwise(gz, tmp_path):
+    """Without mark_final_goal the dataclass default (false) would mark every move final, and the
+    pass-through controller would never be used."""
+    import yaml
+    mine = tmp_path / "mine.yaml"
+    mine.write_text("traffic_mode: lanes\n", encoding="utf-8")
+    copy = yaml.safe_load(Path(gz.params_for(str(mine), "freefloor", str(tmp_path / "a")))
+                          .read_text(encoding="utf-8"))
+    assert copy == {"traffic_mode": "freefloor", "mark_final_goal": True}
+    mine.write_text("traffic_mode: lanes\nmark_final_goal: false\n", encoding="utf-8")
+    copy = yaml.safe_load(Path(gz.params_for(str(mine), "freefloor", str(tmp_path / "b")))
+                          .read_text(encoding="utf-8"))
+    assert copy["mark_final_goal"] is False, "an explicit choice is kept"
+    lanes = yaml.safe_load(Path(gz.params_for(str(mine), "lanes", str(tmp_path / "c")))
+                           .read_text(encoding="utf-8"))
+    assert lanes == {"traffic_mode": "lanes", "mark_final_goal": False}
+
+
+# -- pass-through RPP: no approach slow-down for moves that end at a lock boundary -------------
+
+THROUGH = "FollowPathThrough"
+
+
+def nav2_source() -> dict:
+    import yaml
+    from ament_index_python.packages import get_package_share_directory
+    path = (Path(get_package_share_directory("pinky_nav_config")) / "params"
+            / "nav2_params.yaml")
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def test_gazebo_gives_every_nav2_a_second_rpp_without_the_approach_slow_down(made, tmp_path):
+    import yaml
+    out = tmp_path / "result"
+    actions = run(made, result_dir=str(out))
+    files = {launch_args(i)["params_file"] for i in includes(actions, "nav2.launch.py")}
+    assert len(includes(actions, "nav2.launch.py")) == 3
+    [path] = files
+    assert Path(path).parent == out
+    given, used = nav2_source(), yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    server, base = used["controller_server"]["ros__parameters"], given["controller_server"]
+    base = base["ros__parameters"]
+    assert server["controller_plugins"] == [*base["controller_plugins"], THROUGH]
+    assert server[THROUGH] == {**base["FollowPath"], "approach_velocity_scaling_dist": 0.05}
+    assert server["FollowPath"] == base["FollowPath"], "final goals keep the normal RPP"
+    without = {k: v for k, v in server.items() if k not in (THROUGH, "controller_plugins")}
+    assert without == {k: v for k, v in base.items() if k != "controller_plugins"}
+    assert {k: v for k, v in used.items() if k != "controller_server"} == \
+        {k: v for k, v in given.items() if k != "controller_server"}
+    fsms = includes(actions, "pinky_fsm.launch.py")
+    assert len(fsms) == 3
+    assert {launch_args(i)["through_controller_id"] for i in fsms} == {THROUGH}
+
+
+def test_nav_pass_through_false_runs_the_robot_config_unchanged(made, tmp_path):
+    """A (flag only) against B (flag + through controller) on the same build."""
+    actions = run(made, nav_pass_through="false", result_dir=str(tmp_path / "result"))
+    navs = includes(actions, "nav2.launch.py")
+    assert len(navs) == 3 and all("params_file" not in launch_args(i) for i in navs)
+    fsms = includes(actions, "pinky_fsm.launch.py")
+    assert {launch_args(i)["through_controller_id"] for i in fsms} == {""}
+    assert not (tmp_path / "result" / "nav2_params.yaml").exists()
+
+
+def test_a_misspelt_pass_through_switch_stops_the_launch(made):
+    with pytest.raises(ValueError, match="nav_pass_through"):
+        run(made, nav_pass_through="ture")
+
+
+def test_the_pinky_fsm_launch_takes_the_through_controller_id():
+    need("pinky_fsm")
+    assert "through_controller_id" in declared("pinky_fsm.launch.py")

@@ -43,6 +43,7 @@ class FakeNav(Node):
         self.index = 0
         self.v = 0.0
         self.goals = []  # (시각, 점 수)
+        self.controller_ids = []  # FollowPath controller_id of each accepted goal
         self.cancels = []  # 시각
         self.speed_log = []  # (시각, 선속도)
         self.obstacle: tuple[float, float] | None = None
@@ -109,6 +110,7 @@ class FakeNav(Node):
                          for p in handle.request.path.poses]
             self.index = 0
             self.goals.append((time.monotonic(), len(self.path)))
+            self.controller_ids.append(handle.request.controller_id)
             self._blocked_since = None
         handle.execute()
 

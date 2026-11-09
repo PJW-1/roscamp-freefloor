@@ -87,6 +87,9 @@ class SendPath:
     """Nav2 FollowPath에 이 경로를 보낸다. 달리는 목표는 취소하지 않는다(안내 2.1)."""
     seq: int
     poses: list[Pose] = field(compare=False)
+    # False when the path ends at a lock boundary, not at the mission end (MoveTo.final_goal).
+    # The node may then use a controller without the approach slow-down
+    final_goal: bool = True
 
 
 @dataclass(frozen=True)
@@ -479,7 +482,7 @@ class PinkyFsm:
         g.last_send = now
         self._nav_running = True
         poses = poses_along(g.route.rest(g.s), g.target[2], self.p.path_step_m)
-        return [SendPath(g.seq, poses)]
+        return [SendPath(g.seq, poses, final_goal=g.final_goal)]
 
     def _end_active(self, reason: str, stop: bool) -> list:
         g = self._active
