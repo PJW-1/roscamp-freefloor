@@ -19,7 +19,6 @@ PLACING = "PLACING"
 FINAL_CODES = {"ORDER_SHIPPED": "SHIPPED", "ORDER_PARTIAL": "PARTIAL", "ORDER_HELD": "HELD"}
 ORDER_ID = re.compile(r"[^\s:,;]+")
 WORK_TASKS = frozenset({"TO_WORK", "FILL"})  # Assignment task types bound for work
-STATION_TASKS = WORK_TASKS | {"TO_OUTBOUND", "SWAP"}  # anything but WAIT
 
 
 def order_id_of(detail: str) -> str:
@@ -235,7 +234,24 @@ class ScenarioJudge:
         return spot
 
     def on_assignments(self, t: float, tasks: dict[str, str]) -> None:
-        """Latest task type per robot from /fleet/assignments."""
+        """Latest task type per robot from /fleet/assignments.
+
+        Free floor laps: the task after SWAP at the outbound dock decides. A work task is a
+        direct return; WAIT while every robot could be called is parking with a backlog.
+        """
+        if self.floor_zones:
+            for robot, task in tasks.items():
+                prev = self._tasks.get(robot)
+                if prev != "SWAP" or task == prev:
+                    continue
+                if task in WORK_TASKS:
+                    self.direct_returns += 1
+                elif task == "WAIT":
+                    unbound = self._unbound_on_board()
+                    if unbound >= len(self.scenario.robots):
+                        self.parked_while_backlog += 1
+                        self._violate(t, f"{robot} sent to WAIT after outbound with {unbound} "
+                                         "unbound orders waiting")
         self._tasks = dict(tasks)
 
     def on_board(self, order_ids: list[str]) -> None:
@@ -343,28 +359,19 @@ class ScenarioJudge:
         미배정 주문이 로봇 수 이상이면 모든 로봇이 호출되므로
         대기 루프에 들어갈 까닭이 없다.
         """
+        if self.floor_zones:
+            return  # free-floor routes cross zones freely; laps come from on_assignments
         if self._last_zone.get(robot) == zone:
             return
         self._last_zone[robot] = zone
-        # free-floor routes cross zones freely: a zone counts only if it fits the robot's task
-        task = self._tasks.get(robot) if self.floor_zones else None
         if zone in self._out_zones:
             self._from_outbound.add(robot)
         elif robot not in self._from_outbound:
             return
         elif zone in self._work_zones:
-            if task is not None and task not in WORK_TASKS:
-                # passing by on another errand; look again next tick while it stays here
-                del self._last_zone[robot]
-                return
             self._from_outbound.discard(robot)
             self.direct_returns += 1
         elif zone in self._waiting_zones:
-            if task in STATION_TASKS:
-                # crossing or queueing on the way to a station, not parking; a task that turns
-                # to WAIT (or arrives late) while the robot stays here is seen next tick
-                del self._last_zone[robot]
-                return
             self._from_outbound.discard(robot)
             unbound = self._unbound_on_board()
             if unbound >= len(self.scenario.robots):

@@ -195,10 +195,10 @@ def test_judge_on_a_blocked_cell_is_off_course():
 
 
 # -- laps on the free floor ----------------------------------------------------------------
-# Free-floor routes are not tied to lanes: a pinky sent to the work station may cross a
-# parking zone or wait on it for the dock line. The lap count then follows the manager's task
-# for the robot: entering a parking zone counts as parking only when the robot has no station
-# task, and reaching the work zone counts as a direct return only when it was sent there.
+# There is no waiting loop on the free floor, and a docked pinky can sit a few cm beside the
+# narrow lane zone of its dock (warehouse half width 0.05 m), so laps are not read from zones.
+# They come from the manager's task for each robot (/fleet/assignments): after SWAP at the
+# outbound dock, TO_WORK is a direct return, WAIT while orders wait is parking with a backlog.
 WAITING = (3, 4)  # P-6 on the grid map
 OUT = (9, 3)  # Z-OUT dock
 WORK = (5, 3)  # Z-WORK dock
@@ -214,72 +214,63 @@ def lap(j, robot, cells, start=1.0):
         t += 1.0
 
 
-def backlog_judge(space=SPACE):
+def backlog_judge(space=SPACE, board=("O-1", "O-2")):
     j = ScenarioJudge(space, scenario(), margin_m=0.13, grace_s=1.0)
-    j.on_board(["O-1", "O-2"])  # two unbound orders, two robots
+    j.on_board(list(board))  # two unbound orders, two robots: both should be called
     return j
 
 
-def test_floor_crossing_a_parking_zone_on_the_way_to_work_is_not_parking():
+def tasks(j, t, *steps):
+    """Feed one assignment message per step, as the monitor does on every change."""
+    for k, step in enumerate(steps):
+        j.on_assignments(t + k, step)
+
+
+def test_floor_outbound_then_to_work_is_a_direct_return():
     j = backlog_judge()
-    j.on_assignments(0.5, {"pinky1": "TO_WORK"})
-    lap(j, "pinky1", [OUT, LANE, WAITING, WORK])
+    tasks(j, 1.0, {"pinky1": "TO_OUTBOUND"}, {"pinky1": "SWAP"}, {"pinky1": "TO_WORK"},
+          {"pinky1": "FILL"})
+    assert j.direct_returns == 1 and j.parked_while_backlog == 0
+
+
+def test_floor_outbound_then_wait_with_a_backlog_is_a_violation():
+    j = backlog_judge()
+    tasks(j, 1.0, {"pinky1": "SWAP"}, {"pinky1": "WAIT"})
+    assert j.parked_while_backlog == 1 and j.direct_returns == 0
+    assert any("pinky1" in v and "WAIT" in v for v in j.violations)
+
+
+def test_floor_outbound_then_wait_with_fewer_orders_than_robots_is_allowed():
+    j = backlog_judge(board=("O-1",))
+    tasks(j, 1.0, {"pinky1": "SWAP"}, {"pinky1": "WAIT"})
     assert j.parked_while_backlog == 0
-    assert j.direct_returns == 1
 
 
-def test_floor_waiting_with_a_backlog_still_counts_as_parking():
+def test_floor_a_call_from_parking_is_not_a_direct_return():
     j = backlog_judge()
-    j.on_assignments(0.5, {"pinky1": "WAIT"})
-    lap(j, "pinky1", [OUT, LANE, WAITING])
-    assert j.parked_while_backlog == 1
-
-
-def test_floor_passing_the_work_zone_on_another_errand_is_no_direct_return():
-    j = backlog_judge()
-    j.on_assignments(0.5, {"pinky1": "WAIT"})
-    lap(j, "pinky1", [OUT, LANE, WORK])
+    tasks(j, 1.0, {"pinky1": "SWAP"}, {"pinky1": "WAIT"}, {"pinky1": "TO_WORK"})
     assert j.direct_returns == 0
 
 
-def test_floor_without_assignments_falls_back_to_zones():
+def test_floor_a_repeated_message_counts_once():
     j = backlog_judge()
-    lap(j, "pinky1", [OUT, LANE, WAITING])
-    assert j.parked_while_backlog == 1
+    tasks(j, 1.0, {"pinky1": "SWAP", "pinky2": "WAIT"}, {"pinky1": "TO_WORK", "pinky2": "WAIT"},
+          {"pinky1": "TO_WORK", "pinky2": "TO_WORK"})
+    assert j.direct_returns == 1
 
 
-def test_lanes_ignore_assignments_for_laps():
+def test_floor_laps_are_not_read_from_zones():
+    """A pinky that crosses a parking zone on its way to work (gz_nonstop, pinky3 on P-3) is
+    not parking, and a dock pose beside the zone does not lose a lap."""
+    j = backlog_judge()
+    tasks(j, 0.0, {"pinky1": "SWAP"}, {"pinky1": "TO_WORK"})
+    lap(j, "pinky1", [OUT, LANE, WAITING, WORK], start=3.0)
+    assert j.parked_while_backlog == 0 and j.direct_returns == 1
+
+
+def test_lanes_read_laps_from_zones_not_assignments():
     j = backlog_judge(SITE)
-    j.on_assignments(0.5, {"pinky1": "TO_WORK"})
-    lap(j, "pinky1", [OUT, LANE, WAITING, WORK])
-    assert j.parked_while_backlog == 1
+    tasks(j, 0.0, {"pinky1": "SWAP"}, {"pinky1": "TO_WORK"})
     assert j.direct_returns == 0
-
-
-def stay(j, robot, cell, t):
-    x, y = SITE.waypoint_pose(cell)
-    j.on_robot_state(t, robot, x, y, "MOVING")
-    j.tick(t)
-
-
-def test_floor_a_task_that_turns_to_wait_while_on_the_parking_zone_is_parking():
-    j = backlog_judge()
-    j.on_assignments(0.5, {"pinky1": "TO_WORK"})
-    lap(j, "pinky1", [OUT, LANE, WAITING])
-    assert j.parked_while_backlog == 0
-    j.on_assignments(4.5, {"pinky1": "WAIT"})  # or a late WAIT after the pose
-    stay(j, "pinky1", WAITING, 5.0)
-    assert j.parked_while_backlog == 1
-    lap(j, "pinky1", [WORK], start=6.0)
-    assert j.direct_returns == 0  # the lap went through parking
-
-
-def test_floor_a_late_to_work_on_the_work_zone_is_a_direct_return():
-    j = backlog_judge()
-    j.on_assignments(0.5, {"pinky1": "WAIT"})
-    lap(j, "pinky1", [OUT, LANE, WORK])
-    assert j.direct_returns == 0
-    j.on_assignments(4.5, {"pinky1": "TO_WORK"})
-    stay(j, "pinky1", WORK, 5.0)
-    stay(j, "pinky1", WORK, 6.0)
-    assert j.direct_returns == 1
+    lap(j, "pinky1", [OUT, LANE, WAITING, WORK], start=3.0)
+    assert j.parked_while_backlog == 1 and j.direct_returns == 0
