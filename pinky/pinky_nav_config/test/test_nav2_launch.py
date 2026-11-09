@@ -109,7 +109,7 @@ def test_composed_nodes_get_the_same_parameters_as_the_processes():
     _, [(_, requests)] = _expand("true")
     params = {r.node_name: _params(r) for r in requests}
     # 파라미터 파일의 namespace 뿌리 키(pinky1:)가 노드마다 맞아 들어가야 한다
-    assert params["controller_server"]["controller_plugins"] == ["FollowPath"]
+    assert params["controller_server"]["controller_plugins"] == ["FollowPath", "FollowPathThrough"]
     assert params["amcl"]["map_topic"] == "map_fine"
     assert params["map_server"]["yaml_filename"] == "/maps/coarse.yaml"
     assert params["map_server_fine"]["yaml_filename"] == "/maps/fine.yaml"
