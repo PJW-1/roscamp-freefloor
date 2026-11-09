@@ -590,35 +590,31 @@ def nav2_files(actions) -> dict:
 
 
 def test_gazebo_can_give_every_nav2_a_second_rpp_without_the_approach_slow_down(made, tmp_path):
-    actions = run(made, nav_pass_through="true", result_dir=str(tmp_path / "b"))
-    with_through = nav2_files(actions)
+    """The robot Nav2 params already load FollowPathThrough; the sim copy only changes AMCL and
+    pinky_fsm sends lock-boundary paths there by default (B)."""
+    actions = run(made, result_dir=str(tmp_path / "b"))
     fsms = includes(actions, "pinky_fsm.launch.py")
     assert len(fsms) == 3
     assert {launch_args(i)["through_controller_id"] for i in fsms} == {THROUGH}
-    plain = nav2_files(run(made, nav_pass_through="false", result_dir=str(tmp_path / "a")))
-    assert len(with_through) == 3 and set(with_through) == set(plain)
-    base = nav2_source()["controller_server"]["ros__parameters"]
-    for robot, used in with_through.items():
-        server = used["controller_server"]["ros__parameters"]
-        assert server["controller_plugins"] == [*base["controller_plugins"], THROUGH]
-        assert server[THROUGH] == {**base["FollowPath"], "approach_velocity_scaling_dist": 0.05}
-        assert server["FollowPath"] == base["FollowPath"], "final goals keep the normal RPP"
-        without = {k: v for k, v in server.items() if k not in (THROUGH, "controller_plugins")}
-        same = plain[robot]["controller_server"]["ros__parameters"]
-        assert without == {k: v for k, v in same.items() if k != "controller_plugins"}
-        assert {k: v for k, v in used.items() if k != "controller_server"} == \
-            {k: v for k, v in plain[robot].items() if k != "controller_server"}, "sim AMCL kept"
+    used = nav2_files(actions)
+    assert len(used) == 3
+    source = nav2_source()
+    base = source["controller_server"]["ros__parameters"]
+    assert base["controller_plugins"] == ["FollowPath", THROUGH]
+    for robot, params in used.items():
+        assert params["controller_server"] == source["controller_server"], "nothing added twice"
+        assert {k: v for k, v in params.items() if k != "amcl"} == \
+            {k: v for k, v in source.items() if k != "amcl"}, robot
 
 
-def test_by_default_gazebo_runs_the_robot_nav2_controllers(made, tmp_path):
-    """A (flag only) is the default; B (flag + through controller) is nav_pass_through:=true."""
-    actions = run(made, result_dir=str(tmp_path / "result"))
-    base = nav2_source()["controller_server"]["ros__parameters"]
-    for used in nav2_files(actions).values():
-        server = used["controller_server"]["ros__parameters"]
-        assert server["controller_plugins"] == base["controller_plugins"]
-        assert THROUGH not in server
+def test_without_pass_through_both_rpps_stay_loaded_but_pinky_fsm_uses_only_followpath(
+        made, tmp_path):
+    """nav_pass_through:=false is A (the speed limit only): every path goes to FollowPath."""
+    on = nav2_files(run(made, result_dir=str(tmp_path / "b")))
+    actions = run(made, nav_pass_through="false", result_dir=str(tmp_path / "a"))
+    assert nav2_files(actions) == on
     fsms = includes(actions, "pinky_fsm.launch.py")
+    assert len(fsms) == 3
     assert {launch_args(i)["through_controller_id"] for i in fsms} == {""}
 
 

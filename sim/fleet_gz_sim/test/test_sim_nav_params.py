@@ -74,3 +74,23 @@ def test_each_pinky_starts_nav2_with_the_sim_params(tmp_path, monkeypatch):
         assert ns in path.name and str(launch_parts.os.getpid()) in path.name
         amcl = _amcl(yaml.safe_load(path.read_text(encoding="utf-8")))
         assert {k: amcl[k] for k in launch_parts.SIM_AMCL} == launch_parts.SIM_AMCL
+
+
+def test_one_pinky_sends_lock_boundary_paths_to_the_through_rpp_by_default(tmp_path, monkeypatch):
+    _need("fleet_gz_sim", "pinky_nav_config", "pinky_fsm")
+    from launch.actions import IncludeLaunchDescription
+    from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions
+    monkeypatch.setattr(launch_parts.tempfile, "gettempdir", lambda: str(tmp_path))
+    context = launch.LaunchContext()
+
+    def text(value):
+        return perform_substitutions(context, normalize_to_list_of_substitutions(value))
+
+    def fsm_args(**kw):
+        includes = [a for a in launch_parts.pinky("pinky1", 0.5, 0.5, 0.0, **kw)
+                    if isinstance(a, IncludeLaunchDescription)]
+        args = [{text(k): text(v) for k, v in a.launch_arguments} for a in includes]
+        return next(a for a in args if "heartbeat_timeout_s" in a)
+
+    assert fsm_args()["through_controller_id"] == "FollowPathThrough"
+    assert fsm_args(through_controller_id="")["through_controller_id"] == ""

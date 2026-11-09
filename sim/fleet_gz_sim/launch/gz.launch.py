@@ -63,8 +63,8 @@ ARGS = {
                                " false면 진짜 pinky_fsm(DOCK_UNAVAILABLE)"),
     "fleet_check": ("true", "로봇 사이 최소 거리, 정지 횟수, 쥔 구역 밖 위치 수를"
                             " result_dir/fleet_check.json에"),
-    "nav_pass_through": ("false", "잠금 경계에서 끝나는 이동(final_goal 거짓)을 접근 감속 없는 둘째"
-                                 " RPP(FollowPathThrough)로. false면 로봇 Nav2 설정 그대로"),
+    "nav_pass_through": ("true", "잠금 경계에서 끝나는 이동(final_goal 거짓)을 접근 감속 없는 둘째"
+                                " RPP(FollowPathThrough)로. false면 모두 FollowPath(둘 다 뜬다)"),
 }
 ARMS = "arm1 arm2 arm3"
 
