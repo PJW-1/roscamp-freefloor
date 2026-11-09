@@ -962,6 +962,7 @@ class FloorController(TrafficController):
             # coming back within a second is the same episode
             if self._deadlock_key and now - self._deadlock_seen > 1.0:
                 self._deadlock_key = ()
+                self._unresolved_at = None  # 풀렸다: 먼 길 허락(못 풂)도 끝
             return frozenset()
         members, key = set(cycle), set(self._deadlock_key)
         same = now - self._deadlock_seen <= 1.0 and (

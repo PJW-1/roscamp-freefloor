@@ -335,3 +335,12 @@ def test_after_an_unresolved_deadlock_the_chosen_robot_takes_a_long_way_around(m
         traffic._extend(m, legs[m.name])
         traffic._replan_if_stuck(m, legs[m.name], False)
     assert legs["b"].route is far["b"] and legs["a"].route is not far["a"]
+
+
+def test_the_last_resort_ends_with_the_cycle():
+    """순환이 사라지면 못 풂 표시도 지운다: 나중의 다른 막힘에서 먼 길을 타지 않는다."""
+    traffic, at = floor({"a": (1.6, 0.8), "b": (1.95, 0.8)})
+    traffic._deadlock_key, traffic._deadlock_seen = ("a", "b"), 5.0
+    traffic._unresolved_at, traffic._unresolved_robot = 5.0, "b"
+    traffic._check_deadlock(6.5)  # 순환 없이 1초가 지났다
+    assert traffic._unresolved_at is None

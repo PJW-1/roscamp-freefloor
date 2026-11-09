@@ -34,7 +34,7 @@ def test_the_lane_scenarios_finish_on_the_free_floor(scenario, seed):
 
 def _cycle_spans(monkeypatch):
     """순환마다 (이어진 시간, 순환에 든 뒤 그 로봇들이 한 비켜 서기 + 재계획 수).
-    1초 안에 다시 생기면 같은 순환이고, 한 번에 순환 하나만 본다(관제와 같다)."""
+    순환을 묶는 기준과 한 번에 순환 하나만 보는 것은 관제와 같다."""
     from fleet_core.traffic.deadlock import find_cycle, wait_graph
     from fleet_core.traffic.floor.controller import BLOCK_OWNER
     real, spans = compare_floor.build, []
@@ -57,7 +57,8 @@ def _cycle_spans(monkeypatch):
 
         traffic._replan_if_stuck, traffic._sidestep = counted_replan, counted_sidestep
         check, now = traffic._check_deadlock, {"since": None, "seen": 0.0, "members": set(),
-                                                "acted": 0, "last": collections.Counter()}
+                                                "acted": 0, "last": collections.Counter(),
+                                                "episode": None}
 
         def close():
             spans.append((now["seen"] - now["since"], now["acted"]))
@@ -66,18 +67,22 @@ def _cycle_spans(monkeypatch):
         def counted_check(t):  # 관제가 순환을 보는 바로 그때 같은 그래프를 본다
             graph = wait_graph(traffic.zones)
             graph.pop(BLOCK_OWNER, None)
+            cycle = set(find_cycle(graph) or ())
             if now["since"] is not None and t - now["seen"] > 1.0:
                 close()
             if now["since"] is not None:  # 지난번 검사 때 이미 순환에 든 로봇의 행동만 센다
                 now["acted"] += sum(acts[n] - now["last"][n] for n in now["members"])
             now["last"] = collections.Counter(acts)
-            cycle = set(find_cycle(graph) or ())
+            out = check(t)
+            episode = traffic._deadlock_since  # 관제가 새 순환으로 본 때(같은 순환 묶기도 관제와 같다)
+            if cycle and now["since"] is not None and episode != now["episode"]:
+                close()
             if cycle:
                 if now["since"] is None:
-                    now.update(since=t, members=set(), acted=0)
+                    now.update(since=t, members=set(), acted=0, episode=episode)
                 now["members"] |= cycle
                 now["seen"] = t
-            return check(t)
+            return out
 
         traffic._check_deadlock = counted_check
         world.close_cycle = lambda: now["since"] is not None and close()
