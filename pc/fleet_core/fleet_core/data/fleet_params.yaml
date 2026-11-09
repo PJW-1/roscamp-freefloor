@@ -62,3 +62,12 @@ floor_lock_ahead_m: 0.5       # 제안: 경로를 따라 이만큼 앞 칸까지
 floor_extend_step_m: 0.1      # 제안: 다 못 잡으면 이만큼 짧게 다시 한꺼번에 시도한다(감속)
 floor_replan_s: 1.0           # 제안: 잠금이 늘지 않으면 이 주기로 다른 길을 찾는다
 floor_plan_window_s: 8.0      # 제안: 다른 로봇의 예약을 이만큼 앞까지 본다(협조 계획)
+eta_speed_mps: 0.2            # 추정(버전 2 ETA): ETA에 쓰는 평균 속도
+eta_turn_s_per_rad: 1.0       # 추정: 제자리 회전 시간(초/rad). RPP rotate_to_heading_angular_vel 1.0
+eta_turn_min_rad: 0.25        # 추정: 이보다 작은 꺾임은 달리면서 지난다(RPP rotate_to_heading_min_angle)
+eta_dock_s: 3.0               # 추정: 도킹 시간(가짜 시나리오 기본값)
+eta_fill_s_per_item: 4.0      # 추정: 채우기 품목당 팔 시간(가짜 시나리오 기본값)
+eta_fill_base_s: 4.0          # 추정: 첫 품목 전 준비 시간. 가짜 팔은 채우기에 품목 수 + 1번의 팔 시간이 걸린다(SimWorld 측정)
+eta_fill_items_default: 2     # 추정: 주문을 아직 모르는 로봇이 채울 품목 수
+eta_swap_s: 8.0               # 추정: 교환 시간(가짜 시나리오 기본값)
+floor_leave_s: 2.5            # 추정: 도크를 떠나기 시작해서 접근선이 빌 때까지(SimWorld 측정)

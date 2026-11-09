@@ -80,6 +80,8 @@ class FleetManager:
         self.orchestrator = OrderOrchestrator(site.stations, params, robots, self._frozen,
                                              self._next_goal_id)
         self._work = next(s.id for s in site.stations.values() if s.action == FILL)
+        if hasattr(self.traffic, "station_left"):
+            self.traffic.station_left = self.station_left_s  # 자유바닥 ETA
         self._outbound = next(s.id for s in site.stations.values() if s.action == SWAP)
         self._out: list = []
         self._bounds = site.bounds()
@@ -87,6 +89,19 @@ class FleetManager:
         self._rejecting: set = set()  # 거부를 이미 알린 토픽 출처
         self.last_clear_reason = ""
         self.last_reinstate_reason = ""
+
+    def station_left_s(self, robot) -> float | None:
+        """스테이션 팔 작업이 끝나기까지(초, 추정). 팔 일 중이 아니면 None."""
+        job = self.orchestrator.station_job(robot)
+        if job is None:
+            return None
+        kind, items, sent = job
+        p = self.params
+        total = (p.eta_fill_base_s + items * p.eta_fill_s_per_item if kind == FILL
+                 else p.eta_swap_s)
+        if sent is None:
+            return total
+        return max(1.0, total - (self._clock() - sent))  # 시간이 지난 일은 곧 끝난다고 봄
 
     @property
     def zones(self):

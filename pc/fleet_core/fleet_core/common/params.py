@@ -82,6 +82,16 @@ class FleetParams:
     floor_extend_step_m: float = 0.1  # a shorter all-or-nothing try when the full one fails
     floor_replan_s: float = 1.0  # a robot whose lock cannot grow looks for another route
     floor_plan_window_s: float = 8.0  # reservations of other robots looked at this far ahead
+    # 자유바닥 ETA와 접근선 시간창(제안, 실측 전). eta_*는 버전 2 공식 ETA와 같은 값
+    eta_speed_mps: float = 0.2
+    eta_turn_s_per_rad: float = 1.0  # 제자리 회전 초/rad. 0이면 회전을 안 셈
+    eta_turn_min_rad: float = 0.25  # 이보다 작은 꺾임은 달리면서 지남(RPP 회전 기준)
+    eta_dock_s: float = 3.0
+    eta_fill_s_per_item: float = 4.0
+    eta_fill_base_s: float = 4.0  # 첫 품목 전 준비 시간(가짜 팔은 품목 수 + 1번)
+    eta_fill_items_default: int = 2  # 주문을 모를 때 채울 품목 수
+    eta_swap_s: float = 8.0
+    floor_leave_s: float = 2.5  # 도크를 떠나기 시작해서 접근선이 빌 때까지
 
 
 def load_params(path=None) -> FleetParams:

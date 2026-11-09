@@ -33,6 +33,7 @@ from fleet_core.common.commands import MoveCmd
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.deadlock import choose_retreat, find_cycle, wait_graph
 from fleet_core.traffic.floor.cells import CellLocks, disk_cells, swept_cells
+from fleet_core.traffic.floor.eta import route_s
 from fleet_core.traffic.floor.floor_map import floor_map_for
 from fleet_core.traffic.floor.planner import FloorPlanner, Route
 from fleet_core.traffic.mission import (
@@ -123,6 +124,8 @@ class FloorController(TrafficController):
         self._deadlock_seen = 0.0
         self._unresolved_robot = ""
         self._plan_budget = PLANS_PER_TICK
+        self.station_left = None  # 매니저가 꽂는다: 로봇 -> 스테이션 작업 남은 초 또는 None
+        self._phase_at: dict[str, tuple[str, float]] = {}  # 로봇 -> (단계, 들어간 시각)
 
     # ---- cells --------------------------------------------------------------------------
 
@@ -293,6 +296,8 @@ class FloorController(TrafficController):
     def tick_progress(self, now: float) -> frozenset[str]:
         self._plan_budget = PLANS_PER_TICK
         for m in self._missions.values():
+            if self._phase_at.get(m.name, ("",))[0] != m.phase:
+                self._phase_at[m.name] = (m.phase, now)
             if m.available:
                 self._follow(m)
                 self._release_cells(m)
@@ -432,6 +437,81 @@ class FloorController(TrafficController):
         """격리·제거되지 않은 로봇. 격리·제거된 로봇의 다리는 줄을 잡지 않는다."""
         other = self._missions[name]
         return other.live and other.fault != ERROR  # out of contact keeps its turn
+
+    # ---- ETA (관측) ----------------------------------------------------------------------
+
+    def _line_station(self, line: str) -> str | None:
+        for sid in self.site.stations:
+            if line in (f"{sid.lower()}_in", f"{sid.lower()}_out"):
+                return sid
+        return None
+
+    def _work_s(self, station: str) -> float:
+        p = self.params
+        if self.site.stations[station].action == "fill":
+            return p.eta_fill_base_s + p.eta_fill_items_default * p.eta_fill_s_per_item
+        return p.eta_swap_s
+
+    def _since(self, m: _Mission) -> float:
+        phase, at = self._phase_at.get(m.name, (m.phase, self._clock()))
+        return self._clock() - at if phase == m.phase else 0.0
+
+    def _left_on_line(self, m: _Mission, leg: _Leg | None, line: str, station: str) -> float:
+        """이 로봇이 접근선을 놓기까지(초)."""
+        p = self.params
+        if leg is not None and leg.in_line == line and not leg.waiting and leg.route is not None:
+            ahead = [(m.x, m.y)] + leg.route.between(leg.s, leg.route.length)
+            return (route_s(ahead, p, heading=m.yaw) + p.eta_dock_s + self._work_s(station)
+                    + p.floor_leave_s)
+        if m.phase == DOCKING:
+            return (max(0.0, p.eta_dock_s - self._since(m)) + self._work_s(station)
+                    + p.floor_leave_s)
+        if m.phase == AT_STATION and leg is None:
+            left = self.station_left(m.name) if self.station_left else None
+            if left is None:
+                if self._since(m) >= 1.0:
+                    return math.inf  # 팔 일 없이 서 있음: 다음 주문을 기다림
+                left = self._work_s(station)  # 방금 닿음: 팔 일이 곧 온다
+            return left + p.floor_leave_s
+        if leg is not None and leg.out_line:  # 도크를 떠나는 중
+            return max(0.0, p.floor_leave_s - (self._clock() - leg.asked_at))
+        if leg is not None:  # 선 칸에서 다른 곳으로 출발
+            return p.floor_leave_s
+        return math.inf  # 서 있는 로봇: 언제 비킬지 모른다
+
+    def line_free_in(self, line: str, exclude: str | None = None) -> float | None:
+        """접근선이 빌 때까지(초). 아무도 쥐지 않고 가는 로봇도 없으면 None."""
+        ids = self._line_ids[line]
+        station = self._line_station(line)
+        worst = None
+        for name, m in self._missions.items():
+            if name == exclude or not self._in_service(name):
+                continue
+            leg = self._legs.get(name)
+            going = (leg is not None and leg.in_line == line and not leg.waiting
+                     and leg.route is not None)
+            if not going and not ids & self.zones.held_set(name):
+                continue
+            t = self._left_on_line(m, leg, line, station)
+            worst = t if worst is None else max(worst, t)
+        return worst
+
+    def line_eta(self, robot: str) -> float | None:
+        """접근선 시작에 닿을 때까지(초). 접근선으로 가는 다리가 아니면 None."""
+        m, leg = self._missions[robot], self._legs.get(robot)
+        if leg is None or not leg.in_line:
+            return None
+        start = self.floor.fixed_lines[leg.in_line].points[0]
+        here = [(m.x, m.y)]
+        if leg.route is None:
+            return route_s(here + [start], self.params, heading=m.yaw)
+        if leg.waiting:
+            ahead = leg.route.between(leg.s, leg.route.length) + [start]
+        else:
+            s0 = next((a for a, _, name in leg.route.fixed if name == leg.in_line),
+                      leg.route.length)
+            ahead = leg.route.between(leg.s, s0) if s0 > leg.s else []
+        return route_s(here + ahead, self.params, heading=m.yaw)
 
     def _plan_wait(self, m: _Mission, leg: _Leg, out_line) -> None:
         """접근선 시작 근처, 고정 선 칸·남의 칸·다른 대기 자리에 닿지 않는 가장 가까운 빈 자리로."""
