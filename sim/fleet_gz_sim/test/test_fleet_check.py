@@ -162,3 +162,40 @@ def test_unknown_robots_are_ignored():
     c.on_truth("pinky9", 1.0, 0.0, 0.0, 0.0, 0.0)
     c.on_state("pinky9", "MOVING")
     assert set(c.summary()["robots"]) == set(ROBOTS)
+
+
+# ---- free-floor: /fleet/zones holds cell names (c12_17) ----------------------------------
+
+
+def floor_space():
+    from dataclasses import replace
+
+    from fleet_core.common.params import load_params
+    from fleet_core.traffic.modes import zone_space
+    return zone_space(SITE, replace(load_params(), traffic_mode="freefloor"))
+
+
+def test_free_floor_cells_count_as_held_zones():
+    space = floor_space()
+    floor = space.floor
+    cell = floor.cell_of(*W)
+    middle = floor.centre(cell)  # W sits on a cell corner, where float error is not 0
+    c = FleetCheck(space, ROBOTS)
+    c.on_zones({floor.cell_id(cell): "pinky1"})
+    c.on_truth("pinky1", 1.0, *middle, 0.0, 0.0)
+    c.on_truth("pinky1", 1.1, middle[0] + 2.0, middle[1], 0.0, 0.0)
+    s = c.summary()["robots"]["pinky1"]
+    assert s["outside_held_samples"] == 1 and s["zone_samples"] == 2
+    assert s["worst_outside_m"] > 1.8
+
+
+def test_the_check_space_follows_the_params_file(tmp_path):
+    from fleet_gz_sim.fleet_setup import load_zone_space
+    assert load_zone_space("", "") is not None and not hasattr(load_zone_space("", ""), "is_cell")
+    import yaml
+    from fleet_core.common.params import DEFAULT_PARAMS
+    params = tmp_path / "fleet_params.yaml"
+    values = yaml.safe_load(DEFAULT_PARAMS.read_text(encoding="utf-8"))
+    params.write_text(yaml.safe_dump({**values, "traffic_mode": "freefloor"}), encoding="utf-8")
+    space = load_zone_space("", str(params))
+    assert space.is_cell(space.floor.cell_id(space.floor.cell_of(*W)))

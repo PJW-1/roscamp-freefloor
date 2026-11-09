@@ -10,7 +10,6 @@ import math
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from fleet_core.common.contract import load_contract, to_ros_qos
-from fleet_core.traffic.lane_map import load_lane_map
 from fleet_interfaces.msg import FleetEvent, RobotStatusArray, ZoneStateArray
 from geometry_msgs.msg import Point, TransformStamped
 from nav_msgs.msg import Odometry
@@ -20,6 +19,7 @@ from rclpy.qos import qos_profile_sensor_data
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 from visualization_msgs.msg import Marker, MarkerArray
 
+from fleet_gz_sim.fleet_setup import load_zone_space
 from fleet_gz_sim.fleet_view import FleetView
 
 FRAME = "map"
@@ -52,6 +52,7 @@ class FleetViewNode(Node):
         super().__init__("fleet_view")
         self.declare_parameter("robots", ["pinky1", "pinky2", "pinky3"])
         self.declare_parameter("lane_map", "")
+        self.declare_parameter("params_file", "")  # free-floor draws held cells
         self.declare_parameter("pose_source", "truth")
         self.declare_parameter("contract_file", "")
         robots = list(self.get_parameter("robots").value)
@@ -60,7 +61,8 @@ class FleetViewNode(Node):
             raise ValueError(f"pose_source must be truth or fleet, not {self.pose_source}")
         contract = load_contract(self.get_parameter("contract_file").value or (
             get_package_share_directory("fleet_interfaces") + "/contract.yaml"))
-        self.view = FleetView(load_lane_map(self.get_parameter("lane_map").value or None))
+        self.view = FleetView(load_zone_space(self.get_parameter("lane_map").value,
+                                              self.get_parameter("params_file").value))
 
         def sub(msg_type, key, callback):
             self.create_subscription(msg_type, contract.name(key), callback,

@@ -386,3 +386,44 @@ def test_without_fleet_check_the_recovery_probe_runs_on_its_own(made):
     [probe] = nodes(fleet, "recovery_probe")
     assert params(probe) == {"use_sim_time": True, "robots": ROBOTS, "result_dir": "out",
                              "settle_s": 2.0}
+
+
+# -- traffic_mode: free-floor runs on a copy of the params with that mode ----------------------
+
+
+def after_wait(actions):
+    [on_exit] = [a.args[0].kw["on_exit"] for a in flat(actions) if isinstance(a, Made)
+                 and a.kind == "RegisterEventHandler" and callable(a.args[0].kw["on_exit"])]
+    return on_exit(type("Exit", (), {"returncode": 0})(), None)
+
+
+def params_files(actions) -> dict:
+    return {n.kw["executable"]: params(n)["params_file"] for n in nodes(actions)
+            if "params_file" in params(n)}
+
+
+def test_traffic_mode_runs_the_fleet_on_a_copy_of_the_params_with_that_mode(made, tmp_path):
+    import yaml
+    from fleet_core.common.params import DEFAULT_PARAMS
+    out = tmp_path / "result"
+    actions = run(made, traffic_mode="freefloor", result_dir=str(out))
+    used = params_files([*actions, *after_wait(actions)])
+    assert set(used) >= {"fleet_manager_node", "fake_central_node", "scenario_monitor_node",
+                         "fleet_check", "fleet_view"}
+    [path] = set(used.values())
+    assert Path(path).parent == out
+    copy = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    given = yaml.safe_load(DEFAULT_PARAMS.read_text(encoding="utf-8"))
+    assert copy == {**given, "traffic_mode": "freefloor"}
+
+
+def test_without_traffic_mode_every_node_gets_the_params_file_as_given(made):
+    actions = run(made, fleet_params_file="mine.yaml")
+    used = params_files([*actions, *after_wait(actions)])
+    assert {"fleet_check", "fleet_view", "fleet_manager_node"} <= set(used)
+    assert set(used.values()) == {"mine.yaml"}
+
+
+def test_an_unknown_traffic_mode_stops_the_launch(made):
+    with pytest.raises(ValueError, match="traffic_mode"):
+        run(made, traffic_mode="rails")

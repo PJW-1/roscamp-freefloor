@@ -4,6 +4,8 @@
 구역 id는 맵의 잠금 단위 이름이다. 지점 하나(W, N, ...), 양방향 묶음(AVENUE),
 또는 맵 `units:`의 이름이다. 구역의 바닥은 그 지점들과 그 지점에서 끝나는 레인이다.
 교차 쌍은 따로 된 id가 없고 구역 두 개가 서로 잠글 뿐이라 각 구역으로 그린다.
+자유바닥(traffic_mode: freefloor)에서는 구역 id가 칸 이름(c12_17)이라 쥔 칸을 소유자 색
+사각형으로 그린다. 물체 앞을 막은 칸(소유자 #blocked)은 빨강.
 """
 from __future__ import annotations
 
@@ -160,7 +162,7 @@ class FleetView:
                 *self._robot_specs(now)]
 
     def _zone_specs(self) -> list[Spec]:
-        specs = []
+        specs = self._cell_specs()
         for i, zone in enumerate(self._zones):
             geometry = zone_geometry(self.lane_map, zone.zone_id)
             if geometry is None:
@@ -178,6 +180,29 @@ class FleetView:
                 specs.append(Spec("zone_queue", i, "TEXT", (x, y - 0.08, 0.05, 0.0),
                                   (0.0, 0.0, 0.05), LABEL,
                                   text=f"{zone.zone_id} wait: {' '.join(zone.queue)}"))
+        return specs
+
+    def _cell_specs(self) -> list[Spec]:
+        """Free-floor: one flat square list per holder. A plain lane map has no cells."""
+        cell_box = getattr(self.lane_map, "cell_box", None)
+        if cell_box is None:
+            return []
+        by_holder: dict[str, list] = {}
+        size = 0.0
+        for zone in self._zones:
+            box = cell_box(zone.zone_id) if zone.holder else None
+            if box is None:
+                continue
+            x0, y0, x1, y1 = box
+            size = x1 - x0
+            by_holder.setdefault(zone.holder, []).append(((x0 + x1) / 2, (y0 + y1) / 2))
+        specs = []
+        for i, holder in enumerate(sorted(by_holder)):
+            # holders starting with '#' are not robots (cells in front of an object)
+            color = RED if holder.startswith("#") else robot_color(holder)
+            specs.append(Spec("zone_cells", i, "CUBE_LIST", (0.0, 0.0, 0.005, 0.0),
+                              (size, size, 0.01), _faded(color, 0.45),
+                              tuple(by_holder[holder])))
         return specs
 
     def _blocked_specs(self) -> list[Spec]:

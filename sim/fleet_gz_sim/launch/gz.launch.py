@@ -50,6 +50,8 @@ ARGS = {
                                 "(3대면 DDS 참여자가 LOCALHOST 탐색 한도 32개를 넘는다)"),
     "result_dir": ("gz_result", "시나리오 모니터 결과 폴더"),
     "fleet_params_file": ("", "관제 파라미터 파일. 비우면 설치된 fleet_params.yaml"),
+    "traffic_mode": ("", "lanes 또는 freefloor면 파라미터 파일을 그 방식으로 바꾼 사본"
+                         "(result_dir/fleet_params.yaml)으로 돈다. 비우면 파일 그대로"),
     "monitor": ("true", "시나리오 판정. 끝나면 launch를 끝낸다"),
     "obstacles": ("", "레인에 상자를 놓았다 치우는 일정(fleet_gz_sim/obstacles의 이름이나 파일)."
                       " 비면 장애물 없음. roam은 300 s마다 4개"),
@@ -67,6 +69,25 @@ def flag(text: str, name: str) -> bool:
     if value not in ("true", "false", "1", "0"):
         raise ValueError(f"{name} must be true or false, got {text!r}")
     return value in ("true", "1")
+
+
+def params_for(params_file: str, traffic_mode: str, result_dir: str) -> str:
+    """The params file every fleet node reads. With a traffic_mode, a copy set to that mode."""
+    import yaml
+    from fleet_core.common.params import DEFAULT_PARAMS
+    from fleet_core.traffic.modes import MODES
+    if not traffic_mode:
+        return params_file
+    if traffic_mode not in MODES:
+        raise ValueError(f"traffic_mode must be one of {', '.join(MODES)} or empty, "
+                         f"got {traffic_mode!r}")
+    source = Path(params_file) if params_file else DEFAULT_PARAMS
+    values = yaml.safe_load(source.read_text(encoding="utf-8"))
+    copy = Path(result_dir) / "fleet_params.yaml"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    copy.write_text(yaml.safe_dump({**values, "traffic_mode": traffic_mode}, sort_keys=False,
+                                   allow_unicode=True), encoding="utf-8")
+    return str(copy)
 
 
 def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
@@ -102,6 +123,7 @@ def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
         actions.append(Node(package="fleet_gz_sim", executable="fleet_check", name="fleet_check",
                             output="screen",
                             parameters=[{**probe, "recovery_probe": True,
+                                         "params_file": params_file,
                                          "output": str(Path(result_dir) / "fleet_check.json")}]))
     else:
         actions.append(Node(package="fleet_gz_sim", executable="recovery_probe",
@@ -115,12 +137,13 @@ def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
     return actions
 
 
-def fleet_rviz(robots: list[str], lane_map: str = "") -> list:
+def fleet_rviz(robots: list[str], lane_map: str = "", params_file: str = "") -> list:
     """3대를 한 RViz에. 로봇 TF는 namespace로 나뉘므로 위치는 fleet_view가 마커로 그린다."""
     config = launch_parts.share("fleet_gz_sim") / "rviz" / "fleet_view.rviz"
     return [Node(package="fleet_gz_sim", executable="fleet_view", name="fleet_view",
                  output="screen",
-                 parameters=[{"use_sim_time": True, "robots": robots, "lane_map": lane_map}]),
+                 parameters=[{"use_sim_time": True, "robots": robots, "lane_map": lane_map,
+                              "params_file": params_file}]),
             Node(package="rviz2", executable="rviz2", name="fleet_rviz", output="log",
                  arguments=["-d", str(config)], parameters=[{"use_sim_time": True}])]
 
@@ -145,6 +168,8 @@ def _start(context):
     composed = flag(value("nav_composition"), "nav_composition")
     stub = flag(value("sim_dock_stub"), "sim_dock_stub")
     check = flag(value("fleet_check"), "fleet_check")
+    params_file = params_for(value("fleet_params_file"), value("traffic_mode"),
+                             value("result_dir"))
     actions = [*launch_parts.world(flag(value("gui"), "gui")),
                launch_parts.bridge(robots)]
     for robot, (x, y, yaw) in poses.items():
@@ -154,7 +179,7 @@ def _start(context):
                                       rviz=robot == value("rviz"), dock_aside=stub,
                                       nav_composition=composed)
     if value("rviz") == "fleet":
-        actions += fleet_rviz(robots)
+        actions += fleet_rviz(robots, params_file=params_file)
     actions.append(Node(package="fleet_gz_sim", executable="sim_stand_in", name="sim_stand_in",
                         output="screen",
                         parameters=[{"use_sim_time": True, "robots": robots,
@@ -167,7 +192,7 @@ def _start(context):
         if event.returncode != 0:
             return [LogInfo(msg="fleet_gz_sim: 로봇이 IDLE이 되지 않아 끝낸다"), Shutdown()]
         return fleet(scenario_file, robots, value("result_dir"), monitor,
-                     value("fleet_params_file"), obstacles_file, check)
+                     params_file, obstacles_file, check)
 
     actions += [wait, RegisterEventHandler(OnProcessExit(target_action=wait, on_exit=after_wait))]
     return actions

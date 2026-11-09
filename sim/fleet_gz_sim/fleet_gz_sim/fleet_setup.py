@@ -14,6 +14,16 @@ from fake_robots.scenario import ROBOT_FAULTS, load_scenario
 from fleet_core.traffic.lane_map import load_lane_map
 
 
+def load_zone_space(lane_map_file: str = "", params_file: str = ""):
+    """What /fleet/zones names mean for the run: the lane map, or lane map + free-floor cells.
+
+    Follows traffic_mode in the fleet params file, as fleet_manager does. Empty means installed.
+    """
+    from fleet_core.common.params import load_params
+    from fleet_core.traffic.modes import zone_space
+    return zone_space(load_lane_map(lane_map_file or None), load_params(params_file or None))
+
+
 class ScenarioUnfit(RuntimeError):
     """Gazebo 경기장에서 돌릴 수 없는 시나리오."""
 

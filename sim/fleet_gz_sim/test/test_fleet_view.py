@@ -310,3 +310,51 @@ def test_a_recovering_robot_gets_the_amber_label_not_the_fault_red():
     assert "RECOVERING" in text
     assert color == fv.AMBER
     assert fv.AMBER not in (fv.RED, fv.GRAY, *fv.ROBOT_COLORS.values())
+
+
+# ---- free-floor: held cells ------------------------------------------------------------
+
+
+def floor_space():
+    from dataclasses import replace
+
+    from fleet_core.common.params import load_params
+    from fleet_core.traffic.modes import zone_space
+    return zone_space(LANES, replace(load_params(), traffic_mode="freefloor"))
+
+
+def cell_near(space, x, y):
+    return space.floor.cell_id(space.floor.cell_of(x, y))
+
+
+def test_held_cells_are_squares_in_the_holder_color():
+    space = floor_space()
+    a, b = cell_near(space, *pose_of("W")), cell_near(space, pose_of("W")[0] + 0.1, pose_of("W")[1])
+    c = cell_near(space, *pose_of("N"))
+    view = fv.FleetView(space)
+    view.set_zones([Zone(a, "pinky1"), Zone(b, "pinky1"), Zone(c, "pinky2"), Zone("W")])
+    cells = by_ns(view.specs(now=0.0), "zone_cells")
+    assert [s.kind for s in cells] == ["CUBE_LIST", "CUBE_LIST"]
+    mine = {s.color[:3]: s for s in cells}
+    one = mine[fv.ROBOT_COLORS["pinky1"][:3]]
+    assert len(one.points) == 2
+    assert one.scale[0] == pytest.approx(space.floor.cell_m)
+    x0, y0, x1, y1 = space.cell_box(a)
+    assert xy([((x0 + x1) / 2, (y0 + y1) / 2)]) <= xy(one.points)
+    assert len(mine[fv.ROBOT_COLORS["pinky2"][:3]].points) == 1
+    assert not by_ns(view.specs(now=0.0), "zone_lanes")  # cells are not lane zones
+
+
+def test_cells_in_front_of_an_object_are_red():
+    space = floor_space()
+    view = fv.FleetView(space)
+    view.set_zones([Zone(cell_near(space, *pose_of("W")), "#blocked")])
+    [cells] = by_ns(view.specs(now=0.0), "zone_cells")
+    assert cells.color[:3] == fv.RED[:3]
+
+
+def test_lane_zones_still_draw_with_a_floor_space():
+    view = fv.FleetView(floor_space())
+    view.set_zones([Zone("AVENUE", holder="pinky3")])
+    assert by_ns(view.specs(now=0.0), "zone_lanes")
+    assert not by_ns(view.specs(now=0.0), "zone_cells")
