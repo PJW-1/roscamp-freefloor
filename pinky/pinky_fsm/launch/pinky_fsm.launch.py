@@ -19,9 +19,10 @@ def generate_launch_description():
         DeclareLaunchArgument("heartbeat_timeout_s", default_value="1.5",
                               description="0이면 heartbeat가 끊겨도 서지 않는다"
                                           "(관제 없이 시험할 때)"),
-        DeclareLaunchArgument("through_controller_id", default_value="",
-                              description="잠금 경계에서 끝나는 경로에 쓸 Nav2 controller."
-                                          " 비우면 모두 controller_id(기존 동작)"),
+        DeclareLaunchArgument("through_controller_id", default_value="FollowPathThrough",
+                              description="잠금 경계에서 끝나는 경로에 쓸 Nav2 controller"
+                                          "(pinky_nav_config가 함께 띄운다)."
+                                          " 비우면 모두 controller_id(접근 감속 그대로)"),
         Node(
             package="pinky_fsm", executable="pinky_fsm_node", name="pinky_fsm",
             namespace=namespace, output="screen",
