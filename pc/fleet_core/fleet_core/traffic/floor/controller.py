@@ -687,7 +687,9 @@ class FloorController(TrafficController):
         cautious(대기 자리로 가는 길): 급하지 않으니 남이 쥔 칸을 모두 피한다."""
         penalty = self._penalty_for(m.name)
         walls = self._others_cells(m.name) if cautious else self._wall_cells(m.name)
-        mine = {self.floor.cell_at(c) for c in self.zones.held_set(m.name)}
+        # 지금 몸이 있는 내 칸만: 멀리 쥔 칸(앞 잠금)은 금지(extra)를 그대로 따른다
+        mine = {self.floor.cell_at(c)
+                for c in self.zones.held_set(m.name) & set(self._body_cells(*start))}
         route = self._plan_around(start, goal, out_line, in_line, walls, extra, penalty, mine)
         if route is not None and not cautious:
             oncoming = self._oncoming(m.name, route)
@@ -772,6 +774,11 @@ class FloorController(TrafficController):
             if not self._passing(self.zones.holder(c)):
                 out.add(self.floor.cell_at(c))
         return out
+
+    def _can_start(self, robot: str, route: Route) -> bool:
+        """route의 첫 구간(floor_extend_step_m)을 몸으로 쓸 칸이 남(막힘 표시 포함)의 칸에 닿지 않는다."""
+        first = route.between(0.0, min(route.length, self.params.floor_extend_step_m))
+        return self._swept(first).isdisjoint(self.zones.held_by_others(robot))
 
     def _blockers(self, robot: str) -> set:
         """robot이 기다리는 칸(못 잡은 칸)의 주인. 막힘 표시는 BLOCK_OWNER."""
@@ -935,6 +942,8 @@ class FloorController(TrafficController):
                               extra=frozenset(walls | self._others_cells(m.name)))
         # 비켜 설 자리도 없어 못 풂으로 고른 로봇: 곧 격리되므로 먼 길이라도 돈다
         last_resort = self._unresolved_at is not None and self._unresolved_robot == m.name
+        if new is not None and not self._can_start(m.name, new):
+            new = None  # 첫 구간이 남의 칸에 닿는다: 잡을 수 없는 길
         if new is None or (new.length > old_left + 3.0 and not last_resort):
             if leg.no_way_since is None:
                 leg.no_way_since = now  # 상대가 이를 보고 기다리지 않는다

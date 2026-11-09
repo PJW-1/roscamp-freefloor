@@ -358,3 +358,39 @@ def test_a_robot_right_next_to_another_can_plan_out_through_its_own_cells():
     route = traffic._route(b, here, (2.9, 0.8), extra=frozenset(walls))
     assert route is not None
     assert not traffic._swept(route.between(0.15, route.length)) & traffic.zones.held_set("a")  # 멀어진다
+
+
+def _centre_cells(traffic, route, step=0.05):
+    """경로 중심이 지나는 칸 (i, j)."""
+    out = set()
+    for (x0, y0), (x1, y1) in zip(route.points, route.points[1:], strict=False):
+        n = max(1, int(math.dist((x0, y0), (x1, y1)) / step))
+        out |= {traffic.floor.cell_of(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n)
+                for k in range(n + 1)}
+    return out
+
+
+def test_own_cells_far_from_the_robot_stay_forbidden_when_asked():
+    """내 칸 예외는 지금 몸이 있는 칸뿐이다. 앞 잠금 칸이라도 금지(extra)로 받았으면 지나지 않는다."""
+    traffic, _ = floor({"b": (2.6, 0.8)})
+    b = traffic._missions["b"]
+    driving(traffic, "b", (1.0, 0.8), lock_m=0.6)
+    ahead = {traffic.floor.cell_at(c) for c in traffic.zones.held_set("b")
+             if math.dist(traffic.floor.centre(traffic.floor.cell_at(c)), (2.15, 0.8)) < 0.08}
+    assert ahead  # 몸에서 떨어진 앞 잠금 칸
+    route = traffic._route(b, (b.x, b.y), GOAL, extra=frozenset(ahead))
+    assert route is None or not _centre_cells(traffic, route) & ahead
+
+
+def test_a_way_around_whose_first_step_cannot_be_locked_is_no_way(monkeypatch):
+    """새 길의 첫 구간이 남의 칸에 닿으면 잡을 수 없다: 그 길을 받지 않고 길을 못 찾은 것으로 적는다."""
+    traffic, at = floor({"a": (1.6, 0.8), "b": (1.95, 0.8)})
+    a, b, legs = _head_on(traffic, at)
+    old = legs["a"].route
+    into_b = Route([(a.x, a.y), (2.9, 0.8)])  # b를 뚫고 간다
+    monkeypatch.setattr(traffic, "_route", lambda *args, **kw: into_b)
+    t = 10.0 + traffic.params.floor_replan_s + 0.1
+    at(t)
+    traffic._extend(a, legs["a"])
+    traffic._replan_if_stuck(a, legs["a"], False)
+    assert legs["a"].route is old and legs["a"].no_way_since == t
