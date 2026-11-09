@@ -121,7 +121,10 @@ class FleetView:
 
     def __init__(self, lane_map):
         self.lane_map = lane_map
-        self._lanes = lane_specs(lane_map)
+        lanes = lane_specs(lane_map)
+        # free floor: robots leave the lanes, so only the named spots are drawn
+        self._lanes = [s for s in lanes if s.ns != "lanes"] if hasattr(lane_map, "is_cell") \
+            else lanes
         self._by_name = {str(w): w for w in lane_map.zone_of}
         self._status: dict = {}
         self._pose: dict = {}  # 로봇 -> (x, y, yaw, 시각)

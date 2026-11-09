@@ -93,7 +93,9 @@ def need(*packages):
 
 
 @pytest.fixture
-def made(gz, monkeypatch):
+def made(gz, monkeypatch, tmp_path):
+    import tempfile
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))  # world copies stay out of /tmp
     need("pinky_description", "pinky_nav_config", "pinky_fsm", "fake_robots", "fleet_manager")
     from fleet_gz_sim import launch_parts
     for module in (gz, launch_parts):
@@ -628,3 +630,28 @@ def test_a_misspelt_pass_through_switch_stops_the_launch(made):
 def test_the_pinky_fsm_launch_takes_the_through_controller_id():
     need("pinky_fsm")
     assert "through_controller_id" in declared("pinky_fsm.launch.py")
+
+
+# ---- floor paint ----------------------------------------------------------------------------
+
+def test_free_floor_runs_a_copy_of_the_world_without_the_lane_paint(made, tmp_path):
+    actions = run(made, scenario="gz_warehouse", traffic_mode="freefloor",
+                  result_dir=str(tmp_path / "result"))
+    world = Path(world_file(actions))
+    assert world.name != "warehouse.sdf"
+    text = world.read_text(encoding="utf-8")
+    assert '<visual name="lane_' not in text
+    painted = (Path(launch_parts_share()) / "worlds" / "warehouse.sdf").read_text(encoding="utf-8")
+    assert text == "".join(line for line in painted.splitlines(keepends=True)
+                           if '<visual name="lane_' not in line)
+
+
+def test_lanes_keep_the_painted_world(made, tmp_path):
+    actions = run(made, scenario="gz_warehouse", traffic_mode="lanes",
+                  result_dir=str(tmp_path / "result"))
+    assert world_file(actions).endswith("/worlds/warehouse.sdf")
+
+
+def launch_parts_share():
+    from ament_index_python.packages import get_package_share_directory
+    return get_package_share_directory("fleet_gz_sim")

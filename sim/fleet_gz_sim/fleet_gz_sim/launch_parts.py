@@ -54,12 +54,27 @@ def bridge_args(ns: str) -> tuple[list[str], list[tuple[str, str]]]:
     return args, remaps
 
 
-def world(gui: bool, world_file: str = "") -> list:
+LANE_PAINT = '<visual name="lane_'  # arena.py _lane_xml writes one painted lane per line
+
+
+def unpainted_world(world_file: str) -> str:
+    """A temp copy of a generated world without the lanes painted on the floor."""
+    src = Path(world_file)
+    lines = src.read_text(encoding="utf-8").splitlines(keepends=True)
+    fd, out = tempfile.mkstemp(prefix=f"{src.stem}_unpainted_", suffix=".sdf")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("".join(line for line in lines if LANE_PAINT not in line))
+    return out
+
+
+def world(gui: bool, world_file: str = "", lane_paint: bool = True) -> list:
     """Gazebo 서버(끝나면 launch도 끝)와 화면. 브리지는 bridge()가 따로 만든다.
-    world_file이 비면 lane_arena. 어느 월드든 월드 이름은 WORLD다(arena.py)."""
-    server = ExecuteProcess(cmd=["gz", "sim", "-r", "-s", "-v", "2",
-                                 world_file or str(share("fleet_gz_sim") / "worlds" /
-                                                   f"{WORLD}.sdf")],
+    world_file이 비면 lane_arena. 어느 월드든 월드 이름은 WORLD다(arena.py).
+    lane_paint=False (free floor) runs a copy without the lanes on the floor."""
+    world_file = world_file or str(share("fleet_gz_sim") / "worlds" / f"{WORLD}.sdf")
+    if not lane_paint:
+        world_file = unpainted_world(world_file)
+    server = ExecuteProcess(cmd=["gz", "sim", "-r", "-s", "-v", "2", world_file],
                             name="gz_server", output="screen")
     actions = [
         # Gazebo 통신(gz-transport)도 이 컴퓨터 안에서만. 셸에 남은 GZ_IP(LAN 주소일 수 있다)는

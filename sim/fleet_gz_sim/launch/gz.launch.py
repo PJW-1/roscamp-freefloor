@@ -102,6 +102,15 @@ def params_for(params_file: str, traffic_mode: str, result_dir: str) -> str:
     return str(copy)
 
 
+def traffic_mode_of(traffic_mode: str, params_file: str) -> str:
+    """The mode the fleet runs: the launch argument, else the params file (lanes by default)."""
+    if traffic_mode:
+        return traffic_mode
+    from fleet_core.common.params import load_params
+    given = Path(params_file) if params_file else None
+    return (load_params(given) if given and given.exists() else load_params()).traffic_mode
+
+
 def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
           params_file: str = "", obstacles_file: str = "", check: bool = True,
           lane_map: str = "") -> list:
@@ -195,7 +204,9 @@ def _start(context):
     through = flag(value("nav_pass_through"), "nav_pass_through")
     params_file = params_for(value("fleet_params_file"), value("traffic_mode"),
                              value("result_dir"))
-    actions = [*launch_parts.world(flag(value("gui"), "gui"), arena.world),
+    # robots leave the lanes on the free floor: no lanes painted
+    floor = traffic_mode_of(value("traffic_mode"), params_file) == "freefloor"
+    actions = [*launch_parts.world(flag(value("gui"), "gui"), arena.world, lane_paint=not floor),
                launch_parts.bridge(robots)]
     for robot, (x, y, yaw) in poses.items():
         actions += launch_parts.pinky(robot, x, y, yaw,

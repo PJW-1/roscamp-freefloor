@@ -388,3 +388,13 @@ def test_a_station_goal_points_at_its_dock_and_no_goal_draws_nothing():
     view.set_goal("pinky2", "")
     view.set_goal("pinky3", "NOWHERE")
     assert not by_ns(view.specs(now=0.0), "goal")
+
+
+def test_free_floor_draws_the_waypoints_without_the_lane_lines():
+    specs = fv.FleetView(floor_space()).specs(0.0)
+    assert not by_ns(specs, "lanes")
+    assert by_ns(specs, "waypoints") and by_ns(specs, "waypoint_labels")
+
+
+def test_lanes_draw_the_lane_lines():
+    assert by_ns(fv.FleetView(LANES).specs(0.0), "lanes")
