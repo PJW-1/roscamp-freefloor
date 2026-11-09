@@ -260,9 +260,8 @@ def test_floor_a_repeated_message_counts_once():
 
 
 def test_floor_laps_are_not_read_from_zones():
-    """Without tasks, zone visits that would be a lap and a parking on the lanes count nothing:
-    a pinky crossing a parking zone on its way to work (gz_nonstop, pinky3 on P-3) is not
-    parking, and a lap is not lost when a dock pose sits beside its zone."""
+    """Without tasks, zone visits that count a direct return and a backlog parking on the
+    lanes count nothing on the floor, so where a pinky crosses or stops cannot move a count."""
     j = backlog_judge()
     lap(j, "pinky1", [OUT, LANE, WORK, OUT, LANE, WAITING], start=1.0)
     assert j.parked_while_backlog == 0 and j.direct_returns == 0
