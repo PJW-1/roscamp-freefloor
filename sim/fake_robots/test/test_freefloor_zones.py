@@ -192,3 +192,65 @@ def test_judge_on_a_blocked_cell_is_off_course():
     blocked = next(c for c in FLOOR._ids if c not in FLOOR.free)
     j.on_true_pose("pinky1", *FLOOR.centre(blocked))
     assert j.off_course("pinky1")
+
+
+# -- laps on the free floor ----------------------------------------------------------------
+# Free-floor routes are not tied to lanes: a pinky sent to the work station may cross a
+# parking zone or wait on it for the dock line. The lap count then follows the manager's task
+# for the robot: entering a parking zone counts as parking only when the robot has no station
+# task, and reaching the work zone counts as a direct return only when it was sent there.
+WAITING = (3, 4)  # P-6 on the grid map
+OUT = (9, 3)  # Z-OUT dock
+WORK = (5, 3)  # Z-WORK dock
+LANE = (9, 1)
+
+
+def lap(j, robot, cells, start=1.0):
+    t = start
+    for cell in cells:
+        x, y = SITE.waypoint_pose(cell)
+        j.on_robot_state(t, robot, x, y, "MOVING")
+        j.tick(t)
+        t += 1.0
+
+
+def backlog_judge(space=SPACE):
+    j = ScenarioJudge(space, scenario(), margin_m=0.13, grace_s=1.0)
+    j.on_board(["O-1", "O-2"])  # two unbound orders, two robots
+    return j
+
+
+def test_floor_crossing_a_parking_zone_on_the_way_to_work_is_not_parking():
+    j = backlog_judge()
+    j.on_assignments(0.5, {"pinky1": "TO_WORK"})
+    lap(j, "pinky1", [OUT, LANE, WAITING, WORK])
+    assert j.parked_while_backlog == 0
+    assert j.direct_returns == 1
+
+
+def test_floor_waiting_with_a_backlog_still_counts_as_parking():
+    j = backlog_judge()
+    j.on_assignments(0.5, {"pinky1": "WAIT"})
+    lap(j, "pinky1", [OUT, LANE, WAITING])
+    assert j.parked_while_backlog == 1
+
+
+def test_floor_passing_the_work_zone_on_another_errand_is_no_direct_return():
+    j = backlog_judge()
+    j.on_assignments(0.5, {"pinky1": "WAIT"})
+    lap(j, "pinky1", [OUT, LANE, WORK])
+    assert j.direct_returns == 0
+
+
+def test_floor_without_assignments_falls_back_to_zones():
+    j = backlog_judge()
+    lap(j, "pinky1", [OUT, LANE, WAITING])
+    assert j.parked_while_backlog == 1
+
+
+def test_lanes_ignore_assignments_for_laps():
+    j = backlog_judge(SITE)
+    j.on_assignments(0.5, {"pinky1": "TO_WORK"})
+    lap(j, "pinky1", [OUT, LANE, WAITING, WORK])
+    assert j.parked_while_backlog == 1
+    assert j.direct_returns == 0

@@ -18,6 +18,8 @@ EPS = 1e-9
 PLACING = "PLACING"
 FINAL_CODES = {"ORDER_SHIPPED": "SHIPPED", "ORDER_PARTIAL": "PARTIAL", "ORDER_HELD": "HELD"}
 ORDER_ID = re.compile(r"[^\s:,;]+")
+WORK_TASKS = frozenset({"TO_WORK", "FILL"})  # Assignment task types bound for work
+STATION_TASKS = WORK_TASKS | {"TO_OUTBOUND", "SWAP"}  # anything but WAIT
 
 
 def order_id_of(detail: str) -> str:
@@ -116,6 +118,7 @@ class ScenarioJudge:
         self._waiting_zones = {lane_map.zone_of[c] for c in lane_map.parking}
         self._last_zone: dict[str, str] = {}
         self._from_outbound: set[str] = set()
+        self._tasks: dict[str, str] = {}  # latest manager task per robot (free floor laps)
         self.direct_returns = 0
         self.parked_while_backlog = 0
         # 자동 격리: 첫 ROBOT_ISOLATED부터 격리된 로봇의 첫 ZONES_CLEARED 전까지 출고한 수
@@ -231,6 +234,10 @@ class ScenarioJudge:
             return None
         return spot
 
+    def on_assignments(self, t: float, tasks: dict[str, str]) -> None:
+        """Latest task type per robot from /fleet/assignments."""
+        self._tasks = dict(tasks)
+
     def on_board(self, order_ids: list[str]) -> None:
         self.board = list(order_ids)
 
@@ -339,14 +346,20 @@ class ScenarioJudge:
         if self._last_zone.get(robot) == zone:
             return
         self._last_zone[robot] = zone
+        # free-floor routes cross zones freely: a zone counts only if it fits the robot's task
+        task = self._tasks.get(robot) if self.floor_zones else None
         if zone in self._out_zones:
             self._from_outbound.add(robot)
         elif robot not in self._from_outbound:
             return
         elif zone in self._work_zones:
+            if task is not None and task not in WORK_TASKS:
+                return  # passing by on another errand
             self._from_outbound.discard(robot)
             self.direct_returns += 1
         elif zone in self._waiting_zones:
+            if task in STATION_TASKS:
+                return  # crossing or queueing on the way to a station, not parking
             self._from_outbound.discard(robot)
             unbound = self._unbound_on_board()
             if unbound >= len(self.scenario.robots):

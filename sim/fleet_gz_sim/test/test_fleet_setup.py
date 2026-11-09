@@ -94,6 +94,10 @@ def test_the_nonstop_scenario_keeps_a_backlog_so_each_pinky_gets_its_next_goal_o
     stock = {item: count for items in scenario.stock.values() for item, count in items.items()}
     for item in stock:
         assert sum(order.items.get(item, 0) for order in scenario.orders) <= stock[item], item
+    # the judge checks it: every order after the first three comes from a pinky that went
+    # straight from outbound to work, and none parks while orders wait
+    assert scenario.expect.direct_returns_min == len(times) - len(scenario.robots)
+    assert scenario.expect.parked_while_backlog == 0
 
 
 def test_an_obstacle_schedule_is_off_a_share_name_or_a_file(tmp_path):

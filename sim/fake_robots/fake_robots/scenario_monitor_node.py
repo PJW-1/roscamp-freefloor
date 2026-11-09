@@ -125,6 +125,8 @@ class ScenarioMonitorNode(Node):
         self._operator.on_event(msg.source, msg.code, msg.detail)
 
     def _on_assignments(self, msg: AssignmentArray) -> None:
+        tasks = {a.robot_id: a.task_type for a in msg.assignments}
+        self.judge.on_assignments(self._sc.now(), tasks)
         text = ";".join(f"{a.robot_id}:{a.task_type}:{a.station_id}:{a.order_id}"
                         for a in msg.assignments)
         if self._changed("assignments", text):

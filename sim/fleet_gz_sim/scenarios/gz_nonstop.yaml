@@ -37,4 +37,7 @@ expect:
   orders_shipped: 18
   orders_partial: 0
   orders_held: 0
+  # 첫 3건은 대기 칸에서 출발한 로봇이 받고, 나머지 15건은 출고에서 곧장 작업대로 온 바퀴다
+  direct_returns_min: 15
+  parked_while_backlog: 0
   events_include: [ORDER_BOUND, ORDER_SHIPPED]
