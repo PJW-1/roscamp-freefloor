@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from fleet_core.common.commands import DockCmd, MoveCmd
 from fleet_core.traffic.floor.cells import disk_cells, swept_cells
-from fleet_core.traffic.floor.controller import FloorController
+from fleet_core.traffic.floor.controller import REST_RELEASE_SAMPLES, FloorController
 from fleet_core.traffic.floor.floor_map import load_floor_map
 from floor_world import FloorWorld
 
@@ -264,3 +264,46 @@ def test_a_robot_on_cells_of_another_is_stopped_after_the_confirm_count():
     out = list(core._out)  # the manager passes the core output on at once
     assert any(type(c).__name__ == "CancelCmd" for c in out)
     assert "FLOOR_OFF_CELLS" in [c.code for c in out if type(c).__name__ == "EventOut"]
+
+
+# ---- a robot at the end of its trip ----------------------------------------------------------
+# Gazebo warehouse, 2026-11-09: a pinky stopped 4 cm short of P-3 kept the cells it came over
+# (within release_distance_m) and they shut P-2, 0.35 m away, for the next robot.
+
+def test_a_robot_standing_at_the_end_of_its_trip_keeps_only_its_body():
+    core, now = bare_floor()
+    traffic = core.traffic
+    floor = traffic.floor
+    report(core, "a", 1.0, 1.15)
+    came_over = {floor.cell_id(c) for c in disk_cells(floor, 1.0, 1.15,
+                                                      core.params.release_distance_m)}
+    body = {floor.cell_id(c) for c in disk_cells(floor, 1.0, 1.15,
+                                                 floor.robot_radius_m + floor.cell_margin_m)}
+    assert came_over > body
+    assert traffic.zones.acquire_all("a", came_over)
+    for n in range(1, REST_RELEASE_SAMPLES + 2):
+        now[0] += 0.1
+        report(core, "a", 1.0, 1.15, times=1)
+        traffic.tick_progress(now[0])
+        if n == core.params.release_confirm_samples + 1:
+            # noisy reports of a robot at rest need a longer run before it lets go
+            assert traffic.zones.held_set("a") == came_over
+    assert traffic.zones.held_set("a") == body
+
+
+def test_a_robot_on_its_way_still_keeps_the_cells_within_the_release_distance():
+    core, now = bare_floor()
+    traffic = core.traffic
+    floor = traffic.floor
+    report(core, "a", 1.0, 1.15)
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")
+    traffic.step("a")
+    assert moves_of(traffic.take_output())
+    behind = {floor.cell_id(c) for c in disk_cells(floor, 1.0, 1.15,
+                                                   core.params.release_distance_m)}
+    traffic.zones.acquire_all("a", behind)
+    for _ in range(core.params.release_confirm_samples + 1):
+        now[0] += 0.1
+        report(core, "a", 1.0, 1.15, state="MOVING", times=1)
+        traffic.tick_progress(now[0])
+    assert behind <= traffic.zones.held_set("a")

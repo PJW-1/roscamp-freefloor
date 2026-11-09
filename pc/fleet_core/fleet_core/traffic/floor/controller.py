@@ -62,6 +62,9 @@ SIDESTEP_REACH_M = 1.2  # how far a robot looks for a free spot to step aside to
 SIDESTEP_HOLD_S = 3.0  # how long it stays aside before planning its leg again
 PLANS_PER_TICK = 1  # one plan can take ~10 ms: the other robots plan on the next ticks
 WAIT_SPOT_M = (0.3, 1.2)  # a robot waiting for an approach line stands this far from its start
+# a robot at rest lets go down to its body only after this many reports in a row: noise drawn
+# anew for each report (sigma 0.03 m) crosses the 5 cm body margin about 1 time in 20
+REST_RELEASE_SAMPLES = 10
 
 
 @dataclass
@@ -170,12 +173,19 @@ class FloorController(TrafficController):
             m.fault_reason = ""
 
     def _count_reports_outside(self, m: _Mission) -> None:
-        d = self.params.release_distance_m
+        # a robot standing at the end of its trip needs only its body: the cells it came over
+        # within release_distance_m would shut a parking spot 0.35 m away
+        d = self._body if self._at_rest(m) else self.params.release_distance_m
         for cell_id in list(self.zones.held_set(m.name)):
             if self.floor.box_distance(self.floor.cell_at(cell_id), m.x, m.y) > d:
                 m.outside[cell_id] = m.outside.get(cell_id, 0) + 1
             else:
                 m.outside.pop(cell_id, None)
+
+    def _at_rest(self, m: _Mission) -> bool:
+        """The trip is over: no leg, no goal and no old MoveTo it may still follow."""
+        return (m.name not in self._legs and m.goal is None and not self._active[m.name]
+                and m.robot_state not in ON_A_GOAL + (BLOCKED,))
 
     def _watch_lane_error(self, m: _Mission) -> None:
         """보고 자리의 몸 칸을 쥐었나 본다. 아니면 한꺼번에 잡고, 못 잡는 보고가
@@ -304,9 +314,10 @@ class FloorController(TrafficController):
         for active in self._active[m.name].values():
             s, _ = active.project(m.x, m.y)
             keep |= self._swept(active.between(s, active.length))
+        need = (max(REST_RELEASE_SAMPLES, self.params.release_confirm_samples)
+                if self._at_rest(m) else self.params.release_confirm_samples)
         for cell_id in list(self.zones.held_set(m.name)):
-            if (cell_id not in keep
-                    and m.outside.get(cell_id, 0) >= self.params.release_confirm_samples):
+            if cell_id not in keep and m.outside.get(cell_id, 0) >= need:
                 self.zones.release(m.name, cell_id)
                 m.outside.pop(cell_id, None)
 
