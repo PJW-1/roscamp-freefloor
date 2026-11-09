@@ -63,6 +63,8 @@ ARGS = {
                                " false면 진짜 pinky_fsm(DOCK_UNAVAILABLE)"),
     "fleet_check": ("true", "로봇 사이 최소 거리, 정지 횟수, 쥔 구역 밖 위치 수를"
                             " result_dir/fleet_check.json에"),
+    "nav_pass_through": ("false", "잠금 경계에서 끝나는 이동(final_goal 거짓)을 접근 감속 없는 둘째"
+                                 " RPP(FollowPathThrough)로. false면 로봇 Nav2 설정 그대로"),
 }
 ARMS = "arm1 arm2 arm3"
 
@@ -87,6 +89,9 @@ def params_for(params_file: str, traffic_mode: str, result_dir: str) -> str:
                          f"got {traffic_mode!r}")
     source = Path(params_file) if params_file else DEFAULT_PARAMS
     values = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if traffic_mode == "freefloor":
+        # Without it every rolling move would be final (dataclass default false)
+        values.setdefault("mark_final_goal", True)
     copy = Path(result_dir) / "fleet_params.yaml"
     if copy.resolve() == source.resolve() or (copy.exists() and copy.samefile(source)):
         raise ValueError(f"fleet_params_file {source} is where the {traffic_mode} copy goes;"
@@ -187,6 +192,7 @@ def _start(context):
     composed = flag(value("nav_composition"), "nav_composition")
     stub = flag(value("sim_dock_stub"), "sim_dock_stub")
     check = flag(value("fleet_check"), "fleet_check")
+    through = flag(value("nav_pass_through"), "nav_pass_through")
     params_file = params_for(value("fleet_params_file"), value("traffic_mode"),
                              value("result_dir"))
     actions = [*launch_parts.world(flag(value("gui"), "gui"), arena.world),
@@ -197,7 +203,9 @@ def _start(context):
                                       nav_log_level=value("nav_log_level"),
                                       rviz=robot == value("rviz"), dock_aside=stub,
                                       nav_composition=composed, nav_map=arena.nav_map,
-                                      nav_map_fine=arena.nav_map_fine)
+                                      nav_map_fine=arena.nav_map_fine,
+                                      through_controller_id=(launch_parts.THROUGH_CONTROLLER
+                                                             if through else ""))
     if value("rviz") == "fleet":
         actions += fleet_rviz(robots, arena.lane_map, params_file=params_file)
     map_file = {"map_file": arena.lane_map} if arena.lane_map else {}

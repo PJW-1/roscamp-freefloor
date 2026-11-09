@@ -17,6 +17,7 @@ import time
 
 from geometry_msgs.msg import TransformStamped
 from nav2_msgs.action import BackUp, FollowPath
+from nav2_msgs.msg import SpeedLimit
 from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
@@ -42,12 +43,14 @@ class FakeNav(Node):
         self.index = 0
         self.v = 0.0
         self.goals = []  # (시각, 점 수)
+        self.controller_ids = []  # FollowPath controller_id of each accepted goal
         self.cancels = []  # 시각
         self.speed_log = []  # (시각, 선속도)
         self.obstacle: tuple[float, float] | None = None
         self.backups = []  # (시각, 거리, 속도)
         self.backup_ends = []  # (outcome, error_code)
         self.clears = []  # 시각
+        self.speed_limits = []  # 받은 speed_limit(m/s, 0이면 제한 없음). 주행에는 쓰지 않는다
         self.wall_behind_m: float | None = None  # 물러날 때 이만큼 가면 뒤에 벽
         self._backing: dict | None = None
         self._backing_of: dict[int, dict] = {}
@@ -55,6 +58,8 @@ class FakeNav(Node):
         self._blocked_since: float | None = None
         self._outcome: dict[int, str] = {}
         self._tf = TransformBroadcaster(self)
+        self.create_subscription(SpeedLimit, "speed_limit",
+                                 lambda m: self.speed_limits.append(m.speed_limit), 10)
         static = StaticTransformBroadcaster(self)
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
@@ -105,6 +110,7 @@ class FakeNav(Node):
                          for p in handle.request.path.poses]
             self.index = 0
             self.goals.append((time.monotonic(), len(self.path)))
+            self.controller_ids.append(handle.request.controller_id)
             self._blocked_since = None
         handle.execute()
 

@@ -27,6 +27,8 @@ class MoveCmd:
     yaw: float
     # 레인 폴리라인 (x, y, yaw)들. 첫 점은 로봇 위치, 끝 점은 목표. 비면 점 목표(point 모드)
     path: tuple = ()
+    # 끝이 임무의 마지막 지점인가(버전 2 4절 horizon 최소판, 계약 0.8-draft 제안)
+    final_goal: bool = True
 
 
 @dataclass(frozen=True)

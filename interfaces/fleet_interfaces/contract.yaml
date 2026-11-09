@@ -1,6 +1,12 @@
 # 이름, 타입, QoS의 유일한 기준. 코드는 `key`로 찾으므로 이름이나 QoS는 여기만 고친다.
 # 팀 합의 전까지 모두 초안이다. QoS depth는 실제 Wi-Fi에서 측정해야 한다.
-version: 0.5-draft
+version: 0.5-draft+final_goal
+# +final_goal (2026-11-09, freefloor 가지, 제안(팀 합의 전)): 개인 레포 main 계약 0.8-draft의 MoveTo
+# final_goal만 가져왔다. main의 0.6(compute_path_to_pose)과 0.7(retreat)은 이 가지에 없다.
+# 0.8 (main, 2026-11-09, 제안(팀 합의 전)): MoveTo goal에 bool final_goal(기본 true)을 더했다. path 끝이 임무의
+# 마지막 지점이 아니면(잠금 경계) 거짓이다. 핑키는 그때 끝까지 남은 거리 d로 속도를 √(2·a·d) 아래로
+# 제한한다(nav2 speed_limit). 끝을 넘지 않는다는 규칙은 같다. FMS 개선 계획 버전 2 4절 horizon 최소판.
+# 자유바닥(traffic_mode: freefloor)에서는 굴러가는 칸 잠금 끝에서 끝나는 MoveTo가 모두 거짓이다.
 # 0.5 (2026-11-09, 제안): RobotState.state에 RECOVERING(핑키 FSM의 짧은 후진 자가 복구)을 더했다.
 # 관제는 MOVING처럼 보되 막힘 시계와 멈춤 감시를 쉬고, SELF_RECOVERY와 SELF_RECOVERY_END를 낸다.
 # /fleet/robots fault의 RECOVERING(관제가 로봇을 확인하는 중)과 이름만 같다. 핑키 계약 4절.

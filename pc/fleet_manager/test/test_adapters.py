@@ -114,6 +114,13 @@ def test_a_move_goal_carries_the_lane_path_as_poses():
     assert move.path[0].orientation.w == pytest.approx(1.0)
 
 
+def test_a_move_goal_says_whether_its_end_is_the_last_point():
+    """버전 2 horizon 최소판(계약 0.8-draft 제안)."""
+    assert adapters.move_goal(MoveCmd("pinky1", 7, "N", 1.0, 2.0, 0.0)).final_goal is True
+    move = adapters.move_goal(MoveCmd("pinky1", 7, "N", 1.0, 2.0, 0.0, (), False))
+    assert move.final_goal is False
+
+
 def test_fill_goal_copies_every_field():
     goal = adapters.fill_goal(FillCmd(9, "pinky1", "WORK", "O-001", {"A": 2, "C": 1}))
     assert (goal.order_id, goal.robot_id, goal.station_id) == ("O-001", "pinky1", "WORK")

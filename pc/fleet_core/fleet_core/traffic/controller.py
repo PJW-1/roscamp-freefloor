@@ -994,4 +994,6 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         m.goal = _Goal(MOVE, goal_id, target_idx, step)
         m.stall_hold = False
         self._out.append(MoveCmd(m.name, goal_id, self.site.waypoint_id(waypoint), x, y, yaw,
-                                 self._lane_polyline(m, target_idx, yaw)))
+                                 self._lane_polyline(m, target_idx, yaw),
+                                 not self.params.mark_final_goal
+                                 or target_idx == len(m.path) - 1))

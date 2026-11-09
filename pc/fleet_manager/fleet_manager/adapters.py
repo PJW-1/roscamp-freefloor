@@ -159,7 +159,7 @@ def order_board_orders(msg: OrderBoard) -> list[OrderRecord]:
 
 
 def move_goal(cmd) -> MoveTo.Goal:
-    goal = MoveTo.Goal(target_id=cmd.target_id)
+    goal = MoveTo.Goal(target_id=cmd.target_id, final_goal=bool(cmd.final_goal))
     goal.target_pose.x = float(cmd.x)
     goal.target_pose.y = float(cmd.y)
     goal.target_pose.theta = float(cmd.yaw)

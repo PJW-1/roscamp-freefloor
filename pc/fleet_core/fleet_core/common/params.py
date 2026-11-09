@@ -71,6 +71,9 @@ class FleetParams:
     # than this is taken as BLOCKED. The pinky FSM's two attempts take about 35 s at most.
     # Records from before RECOVERING never report it, so the value does not change their replay
     self_recovery_limit_s: float = 45.0
+    # Proposal (version 2 section 4, contract 0.8-draft MoveTo.final_goal): mark goals that end
+    # at a lock boundary as not final. Records without it replay with every move final
+    mark_final_goal: bool = False
     # Free-floor experiment (P0): which traffic layer runs. lanes is the lane control as it was;
     # freefloor is fleet_core/traffic/floor. Records from before this value replay with lanes
     traffic_mode: str = "lanes"

@@ -45,6 +45,7 @@ ros2 launch fleet_gz_sim gz.launch.py scenario:=basic_orders traffic_mode:=freef
 - 창고 headless 결과(`tools/compare_floor.py --maps warehouse --scenarios warehouse_rush --seeds 1 2 3 4 5`, 8c9320c): lanes 5/5 끝남(마지막 주문 보고 1306.2 s 평균), freefloor 4/5(1372.0 s 평균, 1354.1~1406.5). 끝난 freefloor 4번은 모두 36건을 내보냈고 칸 위반·격리 0, 로봇 사이 최소 거리 0.286~0.291 m. 다만 0.5 m 통로에서 마주치면 DEADLOCK_UNRESOLVED가 런마다 3~14번 나고(새 경로로 풀림), seed 2는 시작 0.1 s에 잡음 낀 보고가 0.35 m 옆 대기 칸 로봇의 칸을 잡아 FloorWorld 불변식에서 멈춘다. 대기 칸 P-1~P-3 간격 0.35 m가 몸 칸(반지름 + 여유 0.13 m, 0.1 m 칸)과 보고 잡음(σ 0.03 m)에 빠듯해서, 주문 6건만 돌리면 세 대가 대기 칸에 들어가다 900 s 안에 못 끝나는 seed도 있다(3, 6, 8).
 - 결과는 `result_dir`에 시나리오 판정과 `fleet_check.json`(로봇 사이 최소 거리, 정지 횟수, 쥔 칸 밖 위치 수)으로 남는다. 시나리오가 끝나면 launch가 끝난다.
 - 도메인은 53~60, `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`. launch가 격리를 확인하고 아니면 멈춘다.
+- `nav_pass_through`(기본 `false`): `true`면 칸 잠금 경계에서 끝나는 이동(`final_goal` 거짓)은 RPP 접근 감속(`approach_velocity_scaling_dist` 0.6 m)이 없는 둘째 controller `FollowPathThrough`(0.05 m)로 달리고, 경계 앞 감속은 pinky_fsm의 speed_limit √(2·a·d)만 맡는다. 마지막 지점으로 가는 이동은 지금처럼 `FollowPath`다. launch가 로봇마다 만드는 시뮬 Nav2 설정 사본(시뮬 AMCL 값)에 이 controller만 더한다(실물 설정은 그대로). 기본 `false`는 로봇 설정 그대로 final_goal 속도 제한만 쓴다(같은 빌드로 비교).
 
 ## 결과 (52737c1, Windows python, 같은 기계에서 연달아)
 

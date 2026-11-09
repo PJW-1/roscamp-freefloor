@@ -107,23 +107,40 @@ def _rviz_config(ns: str) -> str:
 SIM_AMCL = {"z_hit": 0.95, "z_rand": 0.05, "max_beams": 120, "laser_max_range": 12.0,
             "update_min_d": 0.05, "update_min_a": 0.05}
 
+# Second RPP for paths that end at a lock boundary (MoveTo.final_goal false). The approach
+# slow-down only acts inside this distance, which equals the goal checker's xy_goal_tolerance
+# (0.05 m), so the goal is reached about where it would start: the pinky_fsm speed limit
+# sqrt(2 a d) is the only slow-down before the boundary. Final goals keep FollowPath (0.6 m).
+THROUGH_CONTROLLER = "FollowPathThrough"
+THROUGH_APPROACH_DIST_M = 0.05
 
-def sim_nav_params(base: Path, out: Path, amcl: dict | None = None) -> Path:
-    """base(실물 Nav2 설정)에 시뮬 AMCL 값을 덮어 out에 쓴다. base는 바꾸지 않는다."""
+
+def sim_nav_params(base: Path, out: Path, amcl: dict | None = None,
+                   through: bool = False) -> Path:
+    """base(실물 Nav2 설정)에 시뮬 AMCL 값을 덮어 out에 쓴다. base는 바꾸지 않는다.
+
+    through: also load THROUGH_CONTROLLER, FollowPath without the approach slow-down."""
     data = yaml.safe_load(base.read_text(encoding="utf-8"))
     data["amcl"]["ros__parameters"].update(SIM_AMCL if amcl is None else amcl)
+    if through:
+        server = data["controller_server"]["ros__parameters"]
+        server["controller_plugins"] = [*server["controller_plugins"], THROUGH_CONTROLLER]
+        server[THROUGH_CONTROLLER] = {**server["FollowPath"],
+                                      "approach_velocity_scaling_dist": THROUGH_APPROACH_DIST_M}
     out.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
     return out
 
 
 def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn", fsm=True,
           rviz=False, dock_aside=False, nav_composition=False, nav_map="",
-          nav_map_fine="") -> list:
+          nav_map_fine="", through_controller_id="") -> list:
     """핑키 한 대: 모델, Nav2, pinky_fsm, RViz. 브리지는 bridge()에 이 로봇 이름을 넣는다.
 
     dock_aside: pinky_fsm의 dock 서버를 /<ns>/dock_fsm으로 비켜 둔다(시뮬 전용 도크 대역용).
     nav_composition: Nav2 노드 9개를 프로세스 하나(component container)로 띄운다.
-    nav_map, nav_map_fine: Nav2 지도 둘. 비면 lane_arena 지도."""
+    nav_map, nav_map_fine: Nav2 지도 둘. 비면 lane_arena 지도.
+    through_controller_id: 잠금 경계 경로에 쓸 controller(pinky_fsm). 비우면 끈다. 주면 Nav2에
+    그 이름(THROUGH_CONTROLLER)의 둘째 RPP를 더한다."""
     me, nav = share("fleet_gz_sim"), share("pinky_nav_config")
     x, y, yaw = str(x), str(y), str(yaw)
     description = ParameterValue(
@@ -147,7 +164,8 @@ def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn"
                 "use_composition": "true" if nav_composition else "false",
                 "params_file": str(sim_nav_params(
                     nav / "params" / "nav2_params.yaml",
-                    Path(tempfile.gettempdir()) / f"nav2_params_sim_{ns}_{os.getpid()}.yaml")),
+                    Path(tempfile.gettempdir()) / f"nav2_params_sim_{ns}_{os.getpid()}.yaml",
+                    through=bool(through_controller_id))),
             }.items()),
     ]
     if fsm:
@@ -155,7 +173,8 @@ def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn"
             PythonLaunchDescriptionSource(str(share("pinky_fsm") / "launch" /
                                               "pinky_fsm.launch.py")),
             launch_arguments={"namespace": ns, "use_sim_time": "true",
-                              "heartbeat_timeout_s": str(heartbeat_timeout_s)}.items())
+                              "heartbeat_timeout_s": str(heartbeat_timeout_s),
+                              "through_controller_id": through_controller_id}.items())
         actions.append(GroupAction([SetRemap(f"/{ns}/dock", f"/{ns}/dock_fsm"), include])
                        if dock_aside else include)
     if rviz:

@@ -542,3 +542,89 @@ def test_free_floor_on_the_warehouse_gives_every_floor_user_one_lane_map_and_par
     space = load_zone_space(lane_map, params_file)
     warehouse = DEFAULT_FLOOR.parent / "floor_map_warehouse.yaml"
     assert space.floor.source_text == warehouse.read_text(encoding="utf-8")
+
+
+def test_the_freefloor_copy_marks_partial_moves_unless_the_file_says_otherwise(gz, tmp_path):
+    """Without mark_final_goal the dataclass default (false) would mark every move final, and the
+    pass-through controller would never be used."""
+    import yaml
+    mine = tmp_path / "mine.yaml"
+    mine.write_text("traffic_mode: lanes\n", encoding="utf-8")
+    copy = yaml.safe_load(Path(gz.params_for(str(mine), "freefloor", str(tmp_path / "a")))
+                          .read_text(encoding="utf-8"))
+    assert copy == {"traffic_mode": "freefloor", "mark_final_goal": True}
+    mine.write_text("traffic_mode: lanes\nmark_final_goal: false\n", encoding="utf-8")
+    copy = yaml.safe_load(Path(gz.params_for(str(mine), "freefloor", str(tmp_path / "b")))
+                          .read_text(encoding="utf-8"))
+    assert copy["mark_final_goal"] is False, "an explicit choice is kept"
+    lanes = yaml.safe_load(Path(gz.params_for(str(mine), "lanes", str(tmp_path / "c")))
+                           .read_text(encoding="utf-8"))
+    assert lanes == {"traffic_mode": "lanes", "mark_final_goal": False}
+
+
+# -- pass-through RPP: no approach slow-down for moves that end at a lock boundary -------------
+
+THROUGH = "FollowPathThrough"
+
+
+def nav2_source() -> dict:
+    import yaml
+    from ament_index_python.packages import get_package_share_directory
+    path = (Path(get_package_share_directory("pinky_nav_config")) / "params"
+            / "nav2_params.yaml")
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def nav2_files(actions) -> dict:
+    """{robot namespace: the Nav2 params that robot's Nav2 gets}, read now (the files are
+    per robot and process, so a later launch in this test writes over them)."""
+    import yaml
+    out = {}
+    for nav in includes(actions, "nav2.launch.py"):
+        args = launch_args(nav)
+        out[args["namespace"]] = yaml.safe_load(
+            Path(args["params_file"]).read_text(encoding="utf-8"))
+    return out
+
+
+def test_gazebo_can_give_every_nav2_a_second_rpp_without_the_approach_slow_down(made, tmp_path):
+    actions = run(made, nav_pass_through="true", result_dir=str(tmp_path / "b"))
+    with_through = nav2_files(actions)
+    fsms = includes(actions, "pinky_fsm.launch.py")
+    assert len(fsms) == 3
+    assert {launch_args(i)["through_controller_id"] for i in fsms} == {THROUGH}
+    plain = nav2_files(run(made, nav_pass_through="false", result_dir=str(tmp_path / "a")))
+    assert len(with_through) == 3 and set(with_through) == set(plain)
+    base = nav2_source()["controller_server"]["ros__parameters"]
+    for robot, used in with_through.items():
+        server = used["controller_server"]["ros__parameters"]
+        assert server["controller_plugins"] == [*base["controller_plugins"], THROUGH]
+        assert server[THROUGH] == {**base["FollowPath"], "approach_velocity_scaling_dist": 0.05}
+        assert server["FollowPath"] == base["FollowPath"], "final goals keep the normal RPP"
+        without = {k: v for k, v in server.items() if k not in (THROUGH, "controller_plugins")}
+        same = plain[robot]["controller_server"]["ros__parameters"]
+        assert without == {k: v for k, v in same.items() if k != "controller_plugins"}
+        assert {k: v for k, v in used.items() if k != "controller_server"} == \
+            {k: v for k, v in plain[robot].items() if k != "controller_server"}, "sim AMCL kept"
+
+
+def test_by_default_gazebo_runs_the_robot_nav2_controllers(made, tmp_path):
+    """A (flag only) is the default; B (flag + through controller) is nav_pass_through:=true."""
+    actions = run(made, result_dir=str(tmp_path / "result"))
+    base = nav2_source()["controller_server"]["ros__parameters"]
+    for used in nav2_files(actions).values():
+        server = used["controller_server"]["ros__parameters"]
+        assert server["controller_plugins"] == base["controller_plugins"]
+        assert THROUGH not in server
+    fsms = includes(actions, "pinky_fsm.launch.py")
+    assert {launch_args(i)["through_controller_id"] for i in fsms} == {""}
+
+
+def test_a_misspelt_pass_through_switch_stops_the_launch(made):
+    with pytest.raises(ValueError, match="nav_pass_through"):
+        run(made, nav_pass_through="ture")
+
+
+def test_the_pinky_fsm_launch_takes_the_through_controller_id():
+    need("pinky_fsm")
+    assert "through_controller_id" in declared("pinky_fsm.launch.py")

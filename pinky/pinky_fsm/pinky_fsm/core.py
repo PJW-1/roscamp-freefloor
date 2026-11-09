@@ -75,6 +75,11 @@ class FsmParams:
     recovery_pass_m: float = 0.05  # 막힌 곳을 이만큼 지나면 복구가 끝난다
     recovery_timeout_s: float = 10.0  # 다시 보낸 뒤 이만큼 못 지나면 다음 시도로 친다
     recovery_reset_m: float = 0.3  # 첫 시도 자리에서 이만큼 벗어나면 시도 수를 지운다
+    # 잠금 경계에서 끝나는 목표(final_goal 거짓, 버전 2 4절 제안): 끝까지 남은 거리 d에서
+    # √(2·a·d)로 제한한다. 숫자는 추정이다(실측 a 전). 한계 이상이면 제한하지 않는다
+    horizon_decel_mps2: float = 0.25
+    horizon_min_mps: float = 0.05
+    horizon_cap_mps: float = 0.3
 
 
 @dataclass(frozen=True)
@@ -82,11 +87,20 @@ class SendPath:
     """Nav2 FollowPath에 이 경로를 보낸다. 달리는 목표는 취소하지 않는다(안내 2.1)."""
     seq: int
     poses: list[Pose] = field(compare=False)
+    # False when the path ends at a lock boundary, not at the mission end (MoveTo.final_goal).
+    # The node may then use a controller without the approach slow-down
+    final_goal: bool = True
 
 
 @dataclass(frozen=True)
 class CancelNav:
     """Nav2 FollowPath 목표를 취소한다. controller가 속도 0을 내고 선다."""
+
+
+@dataclass(frozen=True)
+class LimitSpeed:
+    """Nav2 controller의 속도 제한(m/s). 0이면 제한이 없다(nav2_msgs/SpeedLimit)."""
+    mps: float
 
 
 @dataclass(frozen=True)
@@ -108,6 +122,7 @@ class _Move:
     target: Pose
     route: Polyline
     s: float = 0.0  # 로봇이 선 위에서 간 거리
+    final_goal: bool = True  # 끝이 임무의 마지막 지점인가(계약 0.8-draft 제안)
     seq: int = 0  # 마지막으로 보낸 FollowPath 순번
     nav_running: bool = False
     last_send: float = 0.0
@@ -142,6 +157,8 @@ class PinkyFsm:
         # A FollowPath may still be out there: one was sent since the last CancelNav. The latest
         # result does not clear it, since a replaced one may be accepted late.
         self._nav_running = False
+        # 마지막으로 낸 LimitSpeed. 처음에는 모른다: 재시작 전에 건 제한을 첫 tick에 푼다
+        self._speed_limit: float | None = None
         self._alive = -math.inf  # 마지막 heartbeat나 목표 수락
         self._stopped_since: float | None = None
         self._blocked = False
@@ -195,7 +212,8 @@ class PinkyFsm:
         self._alive = max(self._alive, now)
 
     def move(self, goal_id: Hashable, now: float, target_id: str, target: Pose,
-             path: Sequence[Point], pose: Sequence[float] | None) -> list:
+             path: Sequence[Point], pose: Sequence[float] | None,
+             final_goal: bool = True) -> list:
         self._alive = max(self._alive, now)  # 목표 수락도 관제가 살아 있다는 증거(계약 3절 5번)
         if pose is None:
             return self._end_active(CANCELED, stop=True) + [Finish(goal_id, False, NAV_ABORTED)]
@@ -214,7 +232,7 @@ class PinkyFsm:
         else:
             points = [here, (tx, ty)]  # 점 목표: 지금 자리에서 곧게
         cmds = self._end_active(CANCELED, stop=False)  # 안내 2.1: 서지 않고 새 경로로
-        g = _Move(goal_id, target_id, (tx, ty, tyaw), Polyline(points))
+        g = _Move(goal_id, target_id, (tx, ty, tyaw), Polyline(points), final_goal=final_goal)
         g.s, _ = g.route.project(here)  # 가장 가까운 점부터(계약 2절)
         self._active = g
         self._stopped_since = None
@@ -303,7 +321,7 @@ class PinkyFsm:
                 and g.route.length - g.s < self.p.refresh_within_m
                 and now - g.last_send >= self.p.refresh_every_s):
             cmds += self._send_rest(g, now, pose)  # R13: 끝 근처 재전송
-        return cmds
+        return cmds + self._limit_speed()
 
     # -- 안쪽 -----------------------------------------------------------------------------
 
@@ -441,6 +459,20 @@ class PinkyFsm:
         s = self._track(g, pose)
         return g.route.sample(s, s + self.p.block_lookahead_m, self.p.block_sample_m)
 
+    def _limit_speed(self) -> list:
+        """잠금 경계에서 끝나는 목표만 설 수 있는 속도로 제한한다. 바뀔 때만 낸다."""
+        g = self._active
+        limit = 0.0
+        if isinstance(g, _Move) and not g.final_goal:
+            left = max(0.0, g.route.length - g.s)
+            v = max(self.p.horizon_min_mps, math.sqrt(2.0 * self.p.horizon_decel_mps2 * left))
+            # 내려서 자른다. 올려 반올림하면 √(2·a·d)를 넘는다
+            limit = math.floor(v * 100.0) / 100.0 if v < self.p.horizon_cap_mps else 0.0
+        if limit == self._speed_limit:
+            return []
+        self._speed_limit = limit
+        return [LimitSpeed(limit)]
+
     def _send_rest(self, g: _Move, now: float, pose: Sequence[float] | None = None) -> list:
         if pose is not None:
             g.s = self._track(g, pose)
@@ -450,7 +482,7 @@ class PinkyFsm:
         g.last_send = now
         self._nav_running = True
         poses = poses_along(g.route.rest(g.s), g.target[2], self.p.path_step_m)
-        return [SendPath(g.seq, poses)]
+        return [SendPath(g.seq, poses, final_goal=g.final_goal)]
 
     def _end_active(self, reason: str, stop: bool) -> list:
         g = self._active
