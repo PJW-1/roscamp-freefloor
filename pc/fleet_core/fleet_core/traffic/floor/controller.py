@@ -745,7 +745,10 @@ class FloorController(TrafficController):
         leg.s_sent = end
         self._active[m.name][goal_id] = Route(points)
         x, y, yaw = poses[-1]
-        self._out.append(MoveCmd(m.name, goal_id, target, x, y, yaw, tuple(poses)))
+        # final_goal: only the move that ends at the route's last point; every partial move
+        # that ends at the rolling lock boundary says False (contract 0.8-draft proposal)
+        self._out.append(MoveCmd(m.name, goal_id, target, x, y, yaw, tuple(poses),
+                                 final or not self.params.mark_final_goal))
 
     @staticmethod
     def _drive_path(m: _Mission, leg: _Leg, end: float) -> list:

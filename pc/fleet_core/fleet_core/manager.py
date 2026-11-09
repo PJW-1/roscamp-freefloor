@@ -367,6 +367,8 @@ class FleetManager:
             fields = asdict(item)
             if isinstance(item, MoveCmd) and not item.path:
                 del fields["path"]  # point 모드 줄은 path가 없던 기록과 같게 쓴다
+            if isinstance(item, MoveCmd) and item.final_goal:
+                del fields["final_goal"]  # 마지막 표시는 이 필드가 없던 기록과 같게 쓴다
             self._write(json.dumps({"t": self._time, kind: type(item).__name__, **fields}))
 
     def _next_goal_id(self) -> int:

@@ -2,7 +2,8 @@
 
 판단은 모두 core.PinkyFsm이 한다. 이 파일은 ROS와 잇기만 한다.
 - 액션 서버: 계약의 move_to(MoveTo), dock(Dock)
-- 발행: 계약의 robot_state(RobotState, 기본 10 Hz)
+- 발행: 계약의 robot_state(RobotState, 기본 10 Hz), Nav2 controller의 speed_limit
+  (잠금 경계 목표만, 버전 2 4절 제안)
 - 구독: 계약의 heartbeat, odom(속도), local costmap(BLOCKED 판단)
 - 액션 클라이언트: Nav2 controller의 follow_path(FollowPath), behavior_server의
   backup(BackUp, 자가 복구. 핑키_계약 3절 7번 2026-11-09 제안)
@@ -24,6 +25,7 @@ from fleet_interfaces.action import Dock, MoveTo
 from fleet_interfaces.msg import RobotState
 from geometry_msgs.msg import Pose2D, PoseStamped
 from nav2_msgs.action import FollowPath
+from nav2_msgs.msg import SpeedLimit
 from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
@@ -46,6 +48,7 @@ from pinky_fsm.core import (
     ClearCostmap,
     Finish,
     FsmParams,
+    LimitSpeed,
     PinkyFsm,
     SendPath,
 )
@@ -63,7 +66,9 @@ _FLOAT_PARAMS = (
     # 자가 복구
     "backup_max_m", "release_distance_m", "backup_margin_m", "backup_min_m",
     "backup_lateral_limit_m", "backup_speed_mps", "backup_time_allowance_s",
-    "backup_result_grace_s", "recovery_pass_m", "recovery_timeout_s", "recovery_reset_m")
+    "backup_result_grace_s", "recovery_pass_m", "recovery_timeout_s", "recovery_reset_m",
+    # 잠금 경계 목표의 속도 제한(버전 2 4절 horizon 최소판)
+    "horizon_decel_mps2", "horizon_min_mps", "horizon_cap_mps")
 _INT_PARAMS = ("recovery_attempts",)
 
 
@@ -94,6 +99,7 @@ class PinkyFsmNode(Node):
         declare("progress_checker_id", "progress_checker")
         declare("odom_topic", "odom")
         declare("costmap_topic", "local_costmap/costmap")
+        declare("speed_limit_topic", "speed_limit")  # nav2 controller_server speed_limit_topic
         declare("battery_topic", "")
         declare("state_rate_hz", 10.0)
         declare("control_rate_hz", 20.0)
@@ -130,6 +136,7 @@ class PinkyFsmNode(Node):
         self._tf = Buffer()
         self._tf_listener = TransformListener(self._tf, self)
         group = ReentrantCallbackGroup()
+        self._speed_pub = self.create_publisher(SpeedLimit, get("speed_limit_topic").value, 10)
         self._state_pub = self.create_publisher(
             RobotState, contract.name("robot_state", pinky=self.robot_id),
             to_ros_qos(contract.qos("robot_state")))
@@ -249,7 +256,8 @@ class PinkyFsmNode(Node):
             if kind == "move":
                 t = req.target_pose
                 path = [(p.position.x, p.position.y) for p in req.path]
-                cmds = self._fsm.move(key, now, req.target_id, (t.x, t.y, t.theta), path, here)
+                cmds = self._fsm.move(key, now, req.target_id, (t.x, t.y, t.theta), path, here,
+                                      final_goal=req.final_goal)
             else:
                 cmds = self._fsm.dock(key, now, req.dock_id)
             self._run(cmds)
@@ -312,6 +320,10 @@ class PinkyFsmNode(Node):
                 self._backup.cancel_all()
             elif isinstance(cmd, ClearCostmap):
                 self._clear_costmap()
+            elif isinstance(cmd, LimitSpeed):
+                msg = SpeedLimit(percentage=False, speed_limit=float(cmd.mps))
+                msg.header.stamp = self.get_clock().now().to_msg()
+                self._speed_pub.publish(msg)
             elif isinstance(cmd, Finish):
                 slot = self._slots.get(cmd.goal_id)
                 if slot is not None:

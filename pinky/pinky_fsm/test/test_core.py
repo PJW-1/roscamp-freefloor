@@ -23,6 +23,7 @@ from pinky_fsm.core import (
     ClearCostmap,
     Finish,
     FsmParams,
+    LimitSpeed,
     PinkyFsm,
     SendPath,
 )
@@ -839,3 +840,63 @@ def test_distance_remaining_follows_the_path():
     assert fsm.distance_remaining((0.35, 1.75, NORTH)) == pytest.approx(
         0.20 + math.dist(P4, P5))
     assert fsm.distance_remaining(None) == pytest.approx(0.40 + math.dist(P4, P5))
+
+
+# ---- 버전 2 4절 horizon 최소판(MoveTo.final_goal, 계약 0.8-draft 제안) ----------------------
+
+
+def limits(cmds):
+    return [c.mps for c in cmds if isinstance(c, LimitSpeed)]
+
+
+def near_p5(back_m):
+    """P4에서 P5로 가는 선 위, 끝에서 back_m 앞."""
+    d = math.dist(P4, P5)
+    k = (d - back_m) / d
+    return (P4[0] + (P5[0] - P4[0]) * k, P4[1] + (P5[1] - P4[1]) * k, 0.2)
+
+
+def test_a_goal_at_a_lock_boundary_limits_the_speed_to_what_can_stop_at_its_end():
+    fsm = ready()
+    fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
+    assert limits(fsm.tick(1.1, (*P3, NORTH), DRIVING, no_obstacle)) == [], "멀면 제한이 없다"
+    [v] = limits(fsm.tick(1.2, near_p5(0.10), DRIVING, no_obstacle))
+    assert v == pytest.approx(math.sqrt(2 * 0.25 * 0.10), abs=0.01)
+    [v] = limits(fsm.tick(1.3, near_p5(0.02), DRIVING, no_obstacle))
+    assert v == pytest.approx(math.sqrt(2 * 0.25 * 0.02), abs=0.01)
+    assert limits(fsm.tick(1.4, near_p5(0.02), DRIVING, no_obstacle)) == [], "같으면 다시 안 보낸다"
+    [v] = limits(fsm.tick(1.5, near_p5(0.0), DRIVING, no_obstacle))
+    assert v == pytest.approx(0.05), "아래 한계"
+
+
+def test_a_final_goal_keeps_no_limit_for_the_precise_approach():
+    fsm = ready()
+    fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH))
+    assert limits(fsm.tick(1.2, near_p5(0.05), DRIVING, no_obstacle)) == []
+
+
+def test_the_limit_is_lifted_when_the_goal_becomes_final_or_ends():
+    fsm = ready()
+    fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
+    assert limits(fsm.tick(1.1, near_p5(0.05), DRIVING, no_obstacle))
+    fsm.move("g2", 1.2, "P-6", (*P6, 0.0), [P3, P4, P5, P6], near_p5(0.05))
+    assert limits(fsm.tick(1.3, near_p5(0.04), DRIVING, no_obstacle)) == [0.0]
+    fsm.move("g3", 1.4, "P-5", (*P5, 0.2), [P3, P4, P5], near_p5(0.04), final_goal=False)
+    assert limits(fsm.tick(1.5, near_p5(0.04), DRIVING, no_obstacle))
+    fsm.cancel("g3", 1.6)
+    assert limits(fsm.tick(1.7, near_p5(0.04), STILL, no_obstacle)) == [0.0]
+
+
+def test_a_fresh_fsm_lifts_any_limit_left_from_before_a_restart():
+    """horizon 1 Codex 검수 2: 재시작 전 FSM이 건 제한이 controller에 남아 있을 수 있다."""
+    fsm = PinkyFsm(FsmParams())
+    assert limits(fsm.tick(0.0, (*P3, NORTH), STILL, no_obstacle)) == [0.0]
+    assert limits(fsm.tick(0.1, (*P3, NORTH), STILL, no_obstacle)) == []
+
+
+@pytest.mark.parametrize("back_m", [0.135, 0.07, 0.03])
+def test_the_limit_never_rounds_above_what_can_stop(back_m):
+    fsm = ready()
+    fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
+    [v] = limits(fsm.tick(1.2, near_p5(back_m), DRIVING, no_obstacle))
+    assert v <= math.sqrt(2 * 0.25 * fsm.distance_remaining(near_p5(back_m))) + 1e-12

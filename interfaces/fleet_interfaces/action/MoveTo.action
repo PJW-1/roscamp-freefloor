@@ -2,6 +2,9 @@ string target_id
 geometry_msgs/Pose2D target_pose
 # 레인 폴리라인. 첫 점은 로봇이 있는 곳, 끝 점은 target_pose. 비면 target_pose로 간다
 geometry_msgs/Pose[] path
+# 제안(팀 합의 전, 계약 0.8): path 끝이 임무의 마지막 지점인가. 거짓이면 잠금 경계라 그 끝에서
+# 정밀 접근 대신 설 수 있는 속도로만 줄인다. 끝을 넘지는 않는다
+bool final_goal true
 ---
 string REASON_NAV_ABORTED="NAV_ABORTED"
 string REASON_CANCELED="CANCELED"
