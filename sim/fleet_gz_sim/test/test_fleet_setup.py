@@ -80,12 +80,17 @@ def test_the_roaming_scenario_has_stock_for_every_order():
 
 
 NONSTOP = Path(__file__).resolve().parent.parent / "scenarios" / "gz_nonstop.yaml"
+WAREHOUSE_NONSTOP = NONSTOP.with_name("gz_warehouse_nonstop.yaml")
 
 
-def test_the_nonstop_scenario_keeps_a_backlog_so_each_pinky_gets_its_next_goal_on_arrival():
+@pytest.mark.parametrize("path", [NONSTOP, WAREHOUSE_NONSTOP], ids=lambda p: p.stem)
+def test_the_nonstop_scenario_keeps_a_backlog_so_each_pinky_gets_its_next_goal_on_arrival(path):
     """gz_nonstop: orders come faster than three pinkys finish them (6 orders took 253 s on
-    Gazebo, about 40 s each), so a pinky that finishes an order already has the next one."""
-    _, scenario = load(NONSTOP)
+    Gazebo, about 40 s each), so a pinky that finishes an order already has the next one.
+    gz_warehouse_nonstop is the same on the warehouse map, where the trips are longer."""
+    from fleet_gz_sim.fleet_setup import arena_for
+    pkg = Path(__file__).resolve().parents[1]
+    _, scenario = load(path, arena_for(path, pkg, pkg.parent / "fake_robots").lane_map)
     assert list(scenario.robots) == ["pinky1", "pinky2", "pinky3"]
     times = [order.at_s for order in scenario.orders]
     assert len(times) >= 15 and times == sorted(times)

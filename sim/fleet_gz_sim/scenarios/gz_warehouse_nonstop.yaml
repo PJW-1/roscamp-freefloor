@@ -1,0 +1,43 @@
+# 창고 지도 연속 운행(gz_nonstop의 창고판): 주문 15건이 10초마다 들어와 늘 밀려 있다.
+# 로봇은 북쪽 대기 칸 P-1~P-3에서 출발해, 일을 끝내자마자 다음 주문을 받아 서쪽 WORK와
+# 동쪽 OUTBOUND를 쉬지 않고 오간다. 21분짜리 gz_warehouse보다 짧게 확인하는 용도다.
+# 도킹은 sim_dock_stub:=true가 있어야 끝까지 돈다. Gazebo 시계를 쓰므로 speed_factor는 쓰이지 않는다.
+#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_warehouse_nonstop traffic_mode:=freefloor sim_dock_stub:=true
+map: warehouse
+seed: 53
+speed_factor: 5.0
+timeout_s: 1800
+stock: {arm1: {A: 20, B: 20}, arm2: {C: 20, D: 20}}
+orders:
+  - {at_s: 0, id: WN-001, items: {A: 1, C: 1}}
+  - {at_s: 10, id: WN-002, items: {B: 1}}
+  - {at_s: 20, id: WN-003, items: {D: 1, A: 1}}
+  - {at_s: 30, id: WN-004, items: {C: 1}}
+  - {at_s: 40, id: WN-005, items: {B: 1, D: 1}}
+  - {at_s: 50, id: WN-006, items: {A: 1}}
+  - {at_s: 60, id: WN-007, items: {C: 1, B: 1}}
+  - {at_s: 70, id: WN-008, items: {D: 1}}
+  - {at_s: 80, id: WN-009, items: {A: 1, C: 1}}
+  - {at_s: 90, id: WN-010, items: {B: 1}}
+  - {at_s: 100, id: WN-011, items: {D: 1, A: 1}}
+  - {at_s: 110, id: WN-012, items: {C: 1}}
+  - {at_s: 120, id: WN-013, items: {B: 1, D: 1}}
+  - {at_s: 130, id: WN-014, items: {A: 1}}
+  - {at_s: 140, id: WN-015, items: {C: 1, B: 1}}
+robots:
+  pinky1: {start: P-3}
+  pinky2: {start: P-2}
+  pinky3: {start: P-1}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 15
+  orders_partial: 0
+  orders_held: 0
+  # 세 로봇이 대기 칸에서 한 건씩 받고(0·10·20초 주문), 나머지 12건은 출고에서 곧장 작업대로
+  # 온 바퀴다. 140초 뒤로는 새 주문이 없어 출고 뒤 호출되지 않은 로봇은 다시 묶지 않는다
+  direct_returns_min: 12
+  parked_while_backlog: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED]
