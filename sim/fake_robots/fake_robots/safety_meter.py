@@ -10,6 +10,8 @@ from __future__ import annotations
 import itertools
 import math
 
+from fake_robots.judge import is_pseudo_holder, with_missing_released
+
 
 class SafetyMeter:
     def __init__(self, site, radius_m: float, on_course=lambda robot: True):
@@ -30,10 +32,13 @@ class SafetyMeter:
         self.poses[robot] = (x, y)
 
     def on_zones(self, t: float, holders: dict[str, str]) -> None:
+        if hasattr(self.site, "is_cell"):  # free floor: /fleet/zones is sparse
+            holders = with_missing_released(self.holders, holders)
         for zone, new in holders.items():
             old = self.holders.get(zone, "")
             self.holders[zone] = new
-            if old and old != new and old in self.poses:
+            if (old and old != new and not is_pseudo_holder(old)
+                    and old in self.poses):
                 self._on_release(t, zone, old)
 
     def _is_cell(self, zone: str) -> bool:

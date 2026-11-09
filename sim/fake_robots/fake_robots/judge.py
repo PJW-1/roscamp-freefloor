@@ -39,6 +39,20 @@ def _out_of_order(sequence: list[str], rank: dict[str, int]) -> list[str]:
     return wrong
 
 
+def is_pseudo_holder(holder: str) -> bool:
+    """'#blocked' and the like are not robots: no pose, nothing to check."""
+    return holder.startswith("#")
+
+
+def with_missing_released(previous: dict[str, str], holders: dict[str, str]) -> dict[str, str]:
+    """Free-floor /fleet/zones is sparse: a cell held before and absent now was released."""
+    merged = dict(holders)
+    for zone, old in previous.items():
+        if old and zone not in holders:
+            merged[zone] = ""
+    return merged
+
+
 class ScenarioJudge:
     def __init__(self, lane_map, scenario, margin_m: float = 0.13, grace_s: float = 2.0,
                  radius_m: float = 0.08):
@@ -132,13 +146,15 @@ class ScenarioJudge:
         self.truth[robot] = (x, y)
 
     def on_zones(self, t: float, holders: dict[str, str]) -> None:
+        if self.floor_zones:
+            holders = with_missing_released(self.holders, holders)
         for zone, new in holders.items():
             old = self.holders.get(zone, "")
             if new == old:
                 continue
             self.holders[zone] = new
             self.zone_rows.append((t, zone, old, new))
-            if old:
+            if old and not is_pseudo_holder(old):
                 self._check_release(t, zone, old)
 
     def on_event(self, t: float, level: str, source: str, code: str, detail: str) -> None:
@@ -251,6 +267,9 @@ class ScenarioJudge:
         position = self._position(robot)
         if position is None:
             return False
+        if self.floor_zones:
+            # free floor: off course only outside the map or on a cell that is not drivable
+            return self.site.floor.cell_of(*position) not in self.site.floor.free
         zone = self._zone_of_pose(*position)
         return self.site.distance_to_zone(position[0], position[1], zone) > self.margin_m
 
@@ -293,9 +312,14 @@ class ScenarioJudge:
             if self.site.distance_to_zone(x, y, zone) <= EPS:
                 by_zone.setdefault(zone, []).append(robot)
                 self._track_lap(t, robot, zone)
+        if self.floor_zones:
+            # lane zones are not reserved on the free floor; count bodies per floor cell
+            by_zone = {}
+            for robot, (x, y) in self._positions().items():
+                cell = self.site.floor.cell_of(x, y)
+                name = self.site.floor.cell_id(cell) if self.site.floor.inside(cell) else str(cell)
+                by_zone.setdefault(name, []).append(robot)
         for zone, robots in by_zone.items():
-            if self.floor_zones:
-                continue  # lane zones are not reserved in free-floor mode
             self.max_occupancy = max(self.max_occupancy, len(robots))
             key = (zone, *sorted(robots))
             if len(robots) > 1 and key not in self._over:

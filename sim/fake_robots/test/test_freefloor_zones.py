@@ -53,7 +53,7 @@ def test_judge_release_of_a_cell_the_body_is_in_is_a_violation():
 def test_judge_ticks_with_cell_holders_without_lane_zone_complaints():
     j = judge()
     j.on_true_pose("pinky1", X, Y)
-    j.on_true_pose("pinky2", X, Y)
+    j.on_true_pose("pinky2", X + 0.5, Y)
     j.on_zones(0.0, {CELL: "pinky1"})
     for t in (1.0, 5.0):
         j.tick(t)
@@ -91,3 +91,94 @@ def test_meter_cell_release_with_the_body_inside_is_early_without_half_width():
     m.on_zones(1.0, {CELL: ""})
     assert m.early == 1
     assert m.min_release_m == 0.0
+
+
+# -- occupancy by floor cell ------------------------------------------------------------
+
+def test_judge_two_bodies_in_one_cell_count_two_and_violate():
+    j = judge()
+    j.on_true_pose("pinky1", X, Y)
+    j.on_true_pose("pinky2", X + 0.001, Y)
+    j.tick(1.0)
+    assert j.max_occupancy == 2
+    assert any("at the same time" in v for v in j.violations)
+
+
+def test_judge_bodies_in_different_cells_count_one():
+    j = judge()
+    j.on_true_pose("pinky1", X, Y)
+    j.on_true_pose("pinky2", X + 0.5, Y)
+    j.tick(1.0)
+    assert j.max_occupancy == 1
+    assert j.violations == []
+
+
+# -- sparse snapshot: a missing cell is released ----------------------------------------
+
+def test_judge_cell_missing_from_the_next_message_is_released():
+    j = judge()
+    j.on_true_pose("pinky1", X, Y)  # body inside the cell: a release must be flagged
+    j.on_zones(0.0, {CELL: "pinky1"})
+    j.on_zones(1.0, {})
+    assert j.holders[CELL] == ""
+    assert j.held_by("pinky1") == []
+    assert j.release_violations == 1
+
+
+def test_meter_cell_missing_from_the_next_message_is_released():
+    m = meter()
+    m.on_pose("r1", X, Y)
+    m.on_zones(0.0, {CELL: "r1"})
+    m.on_zones(1.0, {})
+    assert m.releases == 1
+    assert m.early == 1
+
+
+def test_lanes_keep_a_holder_missing_from_the_message():
+    j = ScenarioJudge(SITE, scenario(), margin_m=0.13, grace_s=1.0)
+    j.on_zones(0.0, {"Z-R1": "pinky1"})
+    j.on_zones(1.0, {})
+    assert j.holders["Z-R1"] == "pinky1"
+
+
+# -- '#blocked' is not a robot ----------------------------------------------------------
+
+def test_judge_blocked_pseudo_holder_release_is_not_checked():
+    j = judge()
+    j.on_zones(0.0, {CELL: "#blocked"})
+    j.on_zones(1.0, {CELL: ""})
+    assert j.release_violations == 0
+    assert j.violations == []
+
+
+def test_meter_blocked_pseudo_holder_release_is_not_counted():
+    m = meter()
+    m.on_pose("#blocked", X, Y)
+    m.on_zones(0.0, {CELL: "#blocked"})
+    m.on_zones(1.0, {CELL: ""})
+    assert m.releases == 0
+
+
+# -- off course on the floor ------------------------------------------------------------
+
+def test_judge_off_the_lanes_but_on_free_floor_is_on_course():
+    j = judge()
+    free = sorted(FLOOR.free)
+    far = max(free, key=lambda c: min(
+        SITE.distance_to_zone(*FLOOR.centre(c), z) for z in set(SITE.zone_of.values())))
+    j.on_true_pose("pinky1", *FLOOR.centre(far))
+    assert not j.off_course("pinky1")
+
+
+def test_judge_outside_the_floor_map_is_off_course():
+    j = judge()
+    x0, y0, _, _ = FLOOR.bounds()
+    j.on_true_pose("pinky1", x0 - 1.0, y0 - 1.0)
+    assert j.off_course("pinky1")
+
+
+def test_judge_on_a_blocked_cell_is_off_course():
+    j = judge()
+    blocked = next(c for c in FLOOR._ids if c not in FLOOR.free)
+    j.on_true_pose("pinky1", *FLOOR.centre(blocked))
+    assert j.off_course("pinky1")
