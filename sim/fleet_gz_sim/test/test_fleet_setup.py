@@ -79,6 +79,23 @@ def test_the_roaming_scenario_has_stock_for_every_order():
         assert wanted <= stock[item], item
 
 
+NONSTOP = Path(__file__).resolve().parent.parent / "scenarios" / "gz_nonstop.yaml"
+
+
+def test_the_nonstop_scenario_keeps_a_backlog_so_each_pinky_gets_its_next_goal_on_arrival():
+    """gz_nonstop: orders come faster than three pinkys finish them (6 orders took 253 s on
+    Gazebo, about 40 s each), so a pinky that finishes an order already has the next one."""
+    _, scenario = load(NONSTOP)
+    assert list(scenario.robots) == ["pinky1", "pinky2", "pinky3"]
+    times = [order.at_s for order in scenario.orders]
+    assert len(times) >= 15 and times == sorted(times)
+    assert max(b - a for a, b in pairwise(times)) <= 15
+    assert scenario.timeout_s >= 40 * len(times) + 300  # time for the backlog to drain
+    stock = {item: count for items in scenario.stock.values() for item, count in items.items()}
+    for item in stock:
+        assert sum(order.items.get(item, 0) for order in scenario.orders) <= stock[item], item
+
+
 def test_an_obstacle_schedule_is_off_a_share_name_or_a_file(tmp_path):
     """obstacles 인자: 비면 장애물 없음, 이름은 share의 obstacles 폴더, 아니면 파일."""
     from fleet_gz_sim.fleet_setup import obstacles_path
