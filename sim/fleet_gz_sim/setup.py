@@ -13,6 +13,7 @@ setup(
         ('share/fleet_gz_sim/urdf', glob('urdf/*.xacro')),
         ('share/fleet_gz_sim/worlds', glob('worlds/*.sdf')),
         ('share/fleet_gz_sim/maps', glob('maps/*.yaml') + glob('maps/*.pgm')),
+        ('share/fleet_gz_sim/sites', glob('sites/*.yaml')),
         ('share/fleet_gz_sim/scenarios', glob('scenarios/*.yaml')),
         ('share/fleet_gz_sim/obstacles', glob('obstacles/*.yaml')),
         ('share/fleet_gz_sim/rviz', glob('rviz/*.rviz')),

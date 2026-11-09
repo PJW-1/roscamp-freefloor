@@ -449,3 +449,96 @@ def test_the_params_copy_never_writes_through_a_hard_link_to_its_source(gz, tmp_
     with pytest.raises(ValueError, match="fleet_params_file"):
         gz.params_for(str(mine), "freefloor", str(out))
     assert mine.read_text(encoding="utf-8") == "traffic_mode: lanes  # mine\n"
+
+
+# -- 시나리오의 map이 경기장을 고른다 ---------------------------------------------------------
+
+def after_ready(actions):
+    """wait_ready가 0으로 끝났을 때 띄우는 관제 쪽 노드들."""
+    exits = [a.args[0] for a in flat(actions)
+             if isinstance(a, Made) and a.kind == "RegisterEventHandler"]
+    [handler] = [e for e in exits if callable(e.kw.get("on_exit"))]
+
+    class Exit:
+        returncode = 0
+    return handler.kw["on_exit"](Exit(), None)
+
+
+def world_file(actions) -> str:
+    [server] = [a for a in flat(actions) if isinstance(a, Made) and a.kind == "ExecuteProcess"
+                and a.kw.get("name") == "gz_server"]
+    return server.kw["cmd"][-1]
+
+
+def test_without_a_map_the_lane_arena_is_used_everywhere(made):
+    actions = run(made)
+    assert world_file(actions).endswith("/worlds/lane_arena.sdf")
+    for nav in includes(actions, "nav2.launch.py"):
+        assert launch_args(nav)["map"].endswith("/maps/lane_arena.yaml")
+        assert launch_args(nav)["map_fine"].endswith("/maps/lane_arena_fine.yaml")
+    fleet = after_ready(actions)
+    for node in [*nodes(actions), *nodes(fleet)]:
+        assert not params(node).get("map_file") and not params(node).get("lane_map"), node.kw
+
+
+def test_a_warehouse_scenario_runs_on_the_warehouse_world_maps_and_lane_map(made):
+    from ament_index_python.packages import get_package_share_directory
+    lane_map = str(Path(get_package_share_directory("fake_robots")) / "maps" / "warehouse.yaml")
+    actions = run(made, scenario="gz_warehouse", obstacles="warehouse")
+    assert world_file(actions).endswith("/worlds/warehouse.sdf")
+    navs = includes(actions, "nav2.launch.py")
+    assert len(navs) == 3
+    for nav in navs:
+        assert launch_args(nav)["map"].endswith("/maps/warehouse.yaml")
+        assert launch_args(nav)["map_fine"].endswith("/maps/warehouse_fine.yaml")
+    spawned = sorted((float(c.kw["arguments"][c.kw["arguments"].index("-x") + 1]),
+                      float(c.kw["arguments"][c.kw["arguments"].index("-y") + 1]))
+                     for c in nodes(actions, "create"))
+    assert spawned == pytest.approx([(2.65, 3.15), (3.0, 3.15), (3.35, 3.15)])  # P-3..P-1
+    [view] = nodes(actions, "fleet_view")
+    assert params(view)["lane_map"] == lane_map
+    [stand_in] = nodes(actions, "sim_stand_in")
+    assert params(stand_in)["map_file"] == lane_map
+    fleet = after_ready(actions)
+    [manager] = nodes(fleet, "fleet_manager_node")
+    assert params(manager)["map_file"] == lane_map
+    for node in nodes(fleet):
+        if node.kw["package"] == "fake_robots":
+            assert params(node)["map_file"] == lane_map, node.kw["executable"]
+    for executable in ("sim_obstacles", "fleet_check"):
+        [node] = nodes(fleet, executable)
+        assert params(node)["lane_map"] == lane_map, executable
+
+
+def test_an_obstacle_schedule_is_checked_against_the_scenario_map(made):
+    from fleet_gz_sim.obstacles import ScheduleError
+    with pytest.raises(ScheduleError):
+        run(made, scenario="gz_warehouse", obstacles="roam")  # roam의 레인은 창고 지도에 없다
+    with pytest.raises(ScheduleError):
+        run(made, obstacles="warehouse")
+
+
+def test_free_floor_on_the_warehouse_gives_every_floor_user_one_lane_map_and_params(made,
+                                                                                   tmp_path):
+    """The floor map follows the lane map (floor_map_for), so one lane map and one params copy
+    for every node that reads cells means one floor map."""
+    from ament_index_python.packages import get_package_share_directory
+    from fleet_core.common.params import load_params
+    from fleet_core.traffic.floor.floor_map import DEFAULT_FLOOR
+    from fleet_gz_sim.fleet_setup import load_zone_space
+    lane_map = str(Path(get_package_share_directory("fake_robots")) / "maps" / "warehouse.yaml")
+    out = tmp_path / "result"
+    actions = run(made, scenario="gz_warehouse", traffic_mode="freefloor", result_dir=str(out),
+                  sim_dock_stub="true")
+    every = [*nodes(actions), *nodes(after_ready(actions))]
+    floor_users = {"fleet_manager_node", "scenario_monitor_node", "fleet_check", "fleet_view"}
+    used = {n.kw["executable"]: params(n) for n in every if n.kw["executable"] in floor_users}
+    assert set(used) == floor_users
+    [params_file] = {p["params_file"] for p in used.values()}
+    assert Path(params_file).parent == out
+    assert load_params(params_file).traffic_mode == "freefloor"
+    for executable, p in used.items():
+        assert p.get("map_file", p.get("lane_map")) == lane_map, executable
+    space = load_zone_space(lane_map, params_file)
+    warehouse = DEFAULT_FLOOR.parent / "floor_map_warehouse.yaml"
+    assert space.floor.source_text == warehouse.read_text(encoding="utf-8")

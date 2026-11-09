@@ -121,6 +121,29 @@ def test_timeout_with_nothing_done_fails(harness, tmp_path):
     assert summary["timed_out"] is True and summary["checks"]["all_orders_finished"]["ok"] is False
 
 
+def test_a_free_floor_monitor_judges_the_cells_of_its_lane_map(harness, tmp_path):
+    """map_file chooses the floor map too: warehouse cells, not lane_arena cells."""
+    from pathlib import Path
+
+    import yaml
+    from fake_robots.scenario_monitor_node import ScenarioMonitorNode
+    from fleet_core.common.params import DEFAULT_PARAMS
+    from fleet_core.traffic.floor.floor_map import DEFAULT_FLOOR
+    lanes = Path(__file__).resolve().parents[1] / "maps" / "warehouse.yaml"
+    params = tmp_path / "fleet_params.yaml"
+    values = yaml.safe_load(DEFAULT_PARAMS.read_text(encoding="utf-8"))
+    params.write_text(yaml.safe_dump({**values, "traffic_mode": "freefloor"}), encoding="utf-8")
+    robots = {"pinky1": {"start": "P-1", "speed_mps": 1.0, "pose_noise_m": 0.0}}
+    scn = write_scenario(tmp_path, robots=robots, orders=ONE_ORDER, timeout_s=60,
+                         stock={"arm1": {"A": 3}, "arm2": {"C": 3}})
+    monitor = harness.add(ScenarioMonitorNode(parameter_overrides=harness.params(
+        scenario_file=scn, map_file=str(lanes), params_file=str(params),
+        result_dir=str(tmp_path / "result"))))
+    warehouse = (DEFAULT_FLOOR.parent / "floor_map_warehouse.yaml").read_text(encoding="utf-8")
+    assert monitor.judge.site.floor.source_text == warehouse
+    assert monitor.safety.site.floor is monitor.judge.site.floor
+
+
 def test_operator_remove_calls_confirm_clear_with_the_held_zones(harness, tmp_path):
     _, probe = start(
         harness, tmp_path, orders=ONE_ORDER, timeout_s=60,

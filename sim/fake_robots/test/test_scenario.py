@@ -10,7 +10,7 @@ from fleet_core.traffic.lane_map import load_lane_map
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 SIX = {"basic_orders", "order_burst", "shared_lane_failure", "stock_shortage", "stuck_robot",
        "operator_recovery", "blocked_lane", "feature_basic_orders", "feature_blocked_lane",
-       "auto_isolation", "feature_auto_isolation", "off_lane", "reinstate"}
+       "auto_isolation", "feature_auto_isolation", "off_lane", "reinstate", "warehouse_rush"}
 
 
 @pytest.fixture(scope="module")

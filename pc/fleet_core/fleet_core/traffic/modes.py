@@ -30,8 +30,8 @@ def zone_space(site, params, floor=None):
     if mode == LANES:
         return site
     if mode == FREEFLOOR:
-        from fleet_core.traffic.floor.floor_map import load_floor_map
-        return FloorZoneSpace(site, floor or load_floor_map())
+        from fleet_core.traffic.floor.floor_map import floor_map_for
+        return FloorZoneSpace(site, floor or floor_map_for(site))
     raise ValueError(f"traffic_mode must be one of {', '.join(MODES)}, not {mode!r}")
 
 

@@ -231,3 +231,36 @@ def load_floor_map(path=None) -> FloorMap:
     source = Path(path) if path else DEFAULT_FLOOR
     text = source.read_text(encoding="utf-8")
     return FloorMap(yaml.safe_load(text), source.parent, text)
+
+
+def floor_map_for(site) -> FloorMap:
+    """The floor map of a lane map: the file its floor_map key names in fleet_core/data, or the
+    default floor_map.yaml when it names none.
+
+    Every node reads the same lane map (map_file / lane_map), so every node gets the same floor.
+    A floor whose docks or parking are not those of the lane map is refused: a lane map must not
+    run on the floor of another arena.
+    """
+    name = getattr(site, "floor_map", "") or DEFAULT_FLOOR.name
+    path = DEFAULT_FLOOR.parent / name
+    # a link may point elsewhere only where floor_map.yaml itself does (an install of links)
+    home = DEFAULT_FLOOR.resolve().parent
+    if Path(name).name != name or not path.is_file() or path.resolve().parent != home:
+        raise FloorMapError(f"floor_map {name!r} is not a file in {DEFAULT_FLOOR.parent}")
+    floor = load_floor_map(path)
+    extra = sorted(set(floor.docks) - set(site.stations))
+    if extra:
+        raise FloorMapError(f"{path.name} does not fit the lane map: docks {extra} are no station"
+                            " of the lane map (set floor_map in the lane map)")
+    for station_id, station in site.stations.items():
+        dock = floor.docks.get(station_id)
+        if dock is None or math.dist(dock, site.waypoint_pose(station.dock)) > 1e-9:
+            raise FloorMapError(f"{path.name} does not fit the lane map: dock {station_id} is "
+                                f"{dock}, the lane map has {site.waypoint_pose(station.dock)}"
+                                " (set floor_map in the lane map)")
+    spots = [(spot, site.waypoint_pose(spot)) for spot in site.parking]
+    if [spot for spot, _ in floor.parking] != [spot for spot, _ in spots] or any(
+            math.dist(a, b) > 1e-9 for (_, a), (_, b) in zip(floor.parking, spots, strict=True)):
+        raise FloorMapError(f"{path.name} does not fit the lane map: parking {floor.parking}, "
+                            f"the lane map has {spots} (set floor_map in the lane map)")
+    return floor

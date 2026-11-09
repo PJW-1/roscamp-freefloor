@@ -199,3 +199,22 @@ def test_the_check_space_follows_the_params_file(tmp_path):
     params.write_text(yaml.safe_dump({**values, "traffic_mode": "freefloor"}), encoding="utf-8")
     space = load_zone_space("", str(params))
     assert space.is_cell(space.floor.cell_id(space.floor.cell_of(*W)))
+
+
+def test_the_check_space_takes_the_floor_map_of_its_lane_map(tmp_path):
+    """fleet_check and fleet_view get the warehouse lane map; their cells are warehouse cells."""
+    from pathlib import Path
+
+    import yaml
+    from fleet_core.common.params import DEFAULT_PARAMS
+    from fleet_core.traffic.floor.floor_map import DEFAULT_FLOOR
+    from fleet_gz_sim.fleet_setup import load_zone_space
+    repo = Path(__file__).resolve().parents[3]
+    params = tmp_path / "fleet_params.yaml"
+    values = yaml.safe_load(DEFAULT_PARAMS.read_text(encoding="utf-8"))
+    params.write_text(yaml.safe_dump({**values, "traffic_mode": "freefloor"}), encoding="utf-8")
+    space = load_zone_space(str(repo / "sim" / "fake_robots" / "maps" / "warehouse.yaml"),
+                            str(params))
+    warehouse = DEFAULT_FLOOR.parent / "floor_map_warehouse.yaml"
+    assert space.floor.source_text == warehouse.read_text(encoding="utf-8")
+    assert space.floor.docks["OUTBOUND"] == space.waypoint_pose("O")

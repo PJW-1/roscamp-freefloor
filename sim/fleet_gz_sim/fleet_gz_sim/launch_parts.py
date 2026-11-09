@@ -11,6 +11,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import yaml
 from launch.actions import (
     AppendEnvironmentVariable,
     ExecuteProcess,
@@ -53,10 +54,12 @@ def bridge_args(ns: str) -> tuple[list[str], list[tuple[str, str]]]:
     return args, remaps
 
 
-def world(gui: bool) -> list:
-    """Gazebo 서버(끝나면 launch도 끝)와 화면. 브리지는 bridge()가 따로 만든다."""
+def world(gui: bool, world_file: str = "") -> list:
+    """Gazebo 서버(끝나면 launch도 끝)와 화면. 브리지는 bridge()가 따로 만든다.
+    world_file이 비면 lane_arena. 어느 월드든 월드 이름은 WORLD다(arena.py)."""
     server = ExecuteProcess(cmd=["gz", "sim", "-r", "-s", "-v", "2",
-                                 str(share("fleet_gz_sim") / "worlds" / f"{WORLD}.sdf")],
+                                 world_file or str(share("fleet_gz_sim") / "worlds" /
+                                                   f"{WORLD}.sdf")],
                             name="gz_server", output="screen")
     actions = [
         # Gazebo 통신(gz-transport)도 이 컴퓨터 안에서만. 셸에 남은 GZ_IP(LAN 주소일 수 있다)는
@@ -97,12 +100,30 @@ def _rviz_config(ns: str) -> str:
     return str(out)
 
 
+# 시뮬에서만 쓰는 AMCL 값. 실물 설정(pinky_nav_config/params/nav2_params.yaml)은 그대로 둔다.
+# 창고 지도 A4->A3 통로(양쪽 랙까지 0.25 m)에서 실물 값(z_hit 0.5, z_rand 0.5, 빔 60, 0.15 m나
+# 0.1 rad마다 갱신)은 AMCL 위치가 실제 위치에서 옆으로 0.13~0.29 m 떨어진 채 머물러, 로봇이
+# 랙에 붙고 격리됐다(2026-11-08). 지도와 맞는 빔을 더 믿고, 빔을 늘리고, 더 자주 갱신한다.
+SIM_AMCL = {"z_hit": 0.95, "z_rand": 0.05, "max_beams": 120, "laser_max_range": 12.0,
+            "update_min_d": 0.05, "update_min_a": 0.05}
+
+
+def sim_nav_params(base: Path, out: Path, amcl: dict | None = None) -> Path:
+    """base(실물 Nav2 설정)에 시뮬 AMCL 값을 덮어 out에 쓴다. base는 바꾸지 않는다."""
+    data = yaml.safe_load(base.read_text(encoding="utf-8"))
+    data["amcl"]["ros__parameters"].update(SIM_AMCL if amcl is None else amcl)
+    out.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return out
+
+
 def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn", fsm=True,
-          rviz=False, dock_aside=False, nav_composition=False) -> list:
+          rviz=False, dock_aside=False, nav_composition=False, nav_map="",
+          nav_map_fine="") -> list:
     """핑키 한 대: 모델, Nav2, pinky_fsm, RViz. 브리지는 bridge()에 이 로봇 이름을 넣는다.
 
     dock_aside: pinky_fsm의 dock 서버를 /<ns>/dock_fsm으로 비켜 둔다(시뮬 전용 도크 대역용).
-    nav_composition: Nav2 노드 9개를 프로세스 하나(component container)로 띄운다."""
+    nav_composition: Nav2 노드 9개를 프로세스 하나(component container)로 띄운다.
+    nav_map, nav_map_fine: Nav2 지도 둘. 비면 lane_arena 지도."""
     me, nav = share("fleet_gz_sim"), share("pinky_nav_config")
     x, y, yaw = str(x), str(y), str(yaw)
     description = ParameterValue(
@@ -119,11 +140,14 @@ def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn"
             PythonLaunchDescriptionSource(str(nav / "launch" / "nav2.launch.py")),
             launch_arguments={
                 "namespace": ns, "use_sim_time": "true",
-                "map": str(me / "maps" / "lane_arena.yaml"),
-                "map_fine": str(me / "maps" / "lane_arena_fine.yaml"),
+                "map": nav_map or str(me / "maps" / f"{WORLD}.yaml"),
+                "map_fine": nav_map_fine or str(me / "maps" / f"{WORLD}_fine.yaml"),
                 "initial_x": x, "initial_y": y, "initial_yaw": yaw,
                 "log_level": nav_log_level,
                 "use_composition": "true" if nav_composition else "false",
+                "params_file": str(sim_nav_params(
+                    nav / "params" / "nav2_params.yaml",
+                    Path(tempfile.gettempdir()) / f"nav2_params_sim_{ns}_{os.getpid()}.yaml")),
             }.items()),
     ]
     if fsm:
