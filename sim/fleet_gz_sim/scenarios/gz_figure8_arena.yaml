@@ -9,6 +9,9 @@
 #   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_figure8_arena traffic_mode:=freefloor \
 #       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.15 \
 #       nav_collision_check:=false
+# 알려진 문제(2026-11-10): 두 로봇이 서로를 기다리는 교착이 풀리지 않았다. Gazebo 한 번(자리는
+# 확인 안 함)과 머리 없는 씨앗 20개 중 2개(OUTBOUND 도크 근처)다. 실험용 지도다
+# (docs/worklog_freefloor_2026-11-10.md 3절).
 map: figure8_arena
 seed: 61
 speed_factor: 5.0
