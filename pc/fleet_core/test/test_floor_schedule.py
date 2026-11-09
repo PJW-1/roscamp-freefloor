@@ -8,6 +8,7 @@ import pytest
 from fleet_core.common.params import load_params
 from fleet_core.manager import FleetManager
 from fleet_core.traffic.deadlock import find_cycle, wait_graph
+from fleet_core.traffic.floor.cells import disk_cells
 from fleet_core.traffic.floor.controller import REST_RELEASE_SAMPLES
 from fleet_core.traffic.lane_map import load_lane_map
 from fleet_core.traffic.mission import MOVE, _Goal
@@ -69,8 +70,8 @@ def test_the_next_robot_sets_off_when_the_line_frees_by_its_arrival(monkeypatch)
 
 @pytest.mark.parametrize("dx,dy", [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)])
 def test_a_robot_resting_at_the_dock_still_holds_its_line(dx, dy):
-    """도크에 서서 쉬는 로봇은 몸 칸만 남길 수 있다(쉬는 로봇 규칙). 도착 허용만큼 비켜 서도
-    몸 칸이 접근선 칸에 닿아, 선이 빈 것(None)으로 보이지 않는다."""
+    """도크에 서서 쉬는 로봇은 몸 밖 칸을 0.2 m 안이라도 놓는다(쉬는 로봇 규칙). 도착 허용만큼
+    비켜 서서 몸 칸만 남아도 접근선 칸에 닿아, 선이 빈 것(None)으로 보이지 않는다."""
     traffic, at = floor({"a": (0.65, 1.15), "b": (2.6, 0.8)})
     core = traffic.station_left.__self__  # 매니저(보고 입구)
     a = traffic._missions["a"]
@@ -81,13 +82,29 @@ def test_a_robot_resting_at_the_dock_still_holds_its_line(dx, dy):
     del traffic._legs["a"]
     traffic._active["a"].clear()
     a.goal, a.phase = None, "AT_STATION"
-    for t in range(1, REST_RELEASE_SAMPLES + 3):
-        at(float(t))
-        core.on_robot_state("a", x, y, 0.0, "IDLE")
-        traffic.tick_progress(float(t))
-    held = traffic.zones.held_set("a")
+    t = [0.0]
+
+    def report(n):
+        for _ in range(n):
+            t[0] += 1.0
+            at(t[0])
+            core.on_robot_state("a", x, y, 0.0, "IDLE")
+            traffic.tick_progress(t[0])
+
+    report(traffic.params.release_confirm_samples + 1)  # 0.2 m 밖은 보통 규칙으로 놓음
     assert traffic._at_rest(a)
-    assert held <= traffic._body_cells(x, y)  # 놓을 칸은 다 놓고 몸 칸만 남았다
+    # 몸 밖이지만 0.2 m 안의 칸: 쉬는 로봇 규칙만 놓는다
+    body, d = traffic._body, traffic.params.release_distance_m
+    band = {c for c in traffic._ids(disk_cells(traffic.floor, x, y, d + 0.05))
+            if body + 0.01 < traffic.floor.box_distance(traffic.floor.cell_at(c), x, y) < d - 0.01}
+    band -= traffic.zones.held_set("b")
+    assert band and traffic.zones.acquire_all("a", band | traffic.zones.held_set("a"))
+    report(REST_RELEASE_SAMPLES - 1)
+    assert band <= traffic.zones.held_set("a")
+    report(1)
+    held = traffic.zones.held_set("a")
+    assert not band & held
+    assert held <= traffic._body_cells(x, y)
     assert held & line_cells(traffic)
     assert traffic.line_free_in("work_in") is not None
 
