@@ -596,7 +596,9 @@ class FloorController(TrafficController):
             self._deadlock_since = now
             self._deadlock_acted = False
             self._unresolved_at = None
-            self._event("ERROR", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
+            # free-floor robots meet head-on in narrow aisles and step aside: a warning here;
+            # one that cannot be resolved is still an error (DEADLOCK_UNRESOLVED)
+            self._event("WARN", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
             return frozenset()
         if not self._deadlock_acted and now - self._deadlock_since >= \
                 self.params.deadlock_grace_s:

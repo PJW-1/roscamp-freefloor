@@ -114,6 +114,23 @@ def test_overlapping_cycles_that_take_turns_are_one_episode(monkeypatch):
     assert len(detected) == 1
 
 
+def test_a_floor_wait_cycle_is_a_warning_and_an_unresolved_one_an_error(monkeypatch):
+    """Robots on the free floor meet head-on in narrow aisles all the time and step aside, so a
+    wait cycle is a warning there. One that cannot be resolved stays an error."""
+    from fleet_core.traffic.floor import controller as floor_controller
+    params = load_params().__class__(**{**load_params().__dict__, "traffic_mode": "freefloor"})
+    now = [0.0]
+    traffic = FleetManager(load_lane_map(), params, ["a", "b"], lambda: now[0]).traffic
+    monkeypatch.setattr(floor_controller, "wait_graph", lambda _z: {"a": {"b"}, "b": {"a"}})
+    monkeypatch.setattr(traffic, "_sidestep", lambda m, cycle: False)
+    while now[0] < params.deadlock_grace_s + 1.0:
+        traffic._check_deadlock(now[0])
+        now[0] = round(now[0] + 0.1, 1)
+    levels = {e.code: e.level for e in traffic.take_output() if hasattr(e, "code")}
+    assert levels["DEADLOCK_DETECTED"] == "WARN"
+    assert levels["DEADLOCK_UNRESOLVED"] == "ERROR"
+
+
 # ---- one robot at a time on a dock approach line -----------------------------------------
 
 
