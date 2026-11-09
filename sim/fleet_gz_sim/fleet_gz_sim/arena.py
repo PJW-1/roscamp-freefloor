@@ -159,8 +159,8 @@ def world_sdf(lane_map, render_engine: str = "ogre2") -> str:
      {CLEARANCE_M} m 넘게 떨어져 있다. -->
 <sdf version="1.9">
   <world name="{WORLD}">
-    <physics name="1ms" type="ignored">
-      <max_step_size>0.001</max_step_size>
+    <physics name="4ms" type="ignored">
+      <max_step_size>0.004</max_step_size>
       <real_time_factor>1.0</real_time_factor>
     </physics>
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
