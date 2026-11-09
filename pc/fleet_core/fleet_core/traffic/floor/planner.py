@@ -106,8 +106,9 @@ class FloorPlanner:
         fixed = []
         if out_line:
             pts = list(lines[out_line].points)
-            head = [tuple(start), *pts[1:]] if math.dist(start, pts[0]) < 1e-6 else \
-                [tuple(start), *pts]
+            rest = rest_of_exit(start, pts)  # 나가던 중이면 남은 선만(도크로 되돌아가지 않는다)
+            head = [tuple(start)] + [p for p in (pts if rest is None else rest)
+                                     if math.dist(p, start) > 1e-6]
             fixed.append((0.0, polyline_length(head), out_line))
         tail = [tuple(goal)]
         if in_line:
@@ -277,6 +278,27 @@ class FloorPlanner:
         n = max(2, math.ceil(radius * abs(turn) / ARC_STEP_M))
         return [(cx + radius * math.cos(start + side * abs(turn) * k / n),
                  cy + radius * math.sin(start + side * abs(turn) * k / n)) for k in range(n + 1)]
+
+
+def rest_of_exit(point, line):
+    """point가 line(꺾은선)에서 JOIN_M 안이면 가장 가까운 구간 끝부터의 점들. 멀거나 끝을 지났으면 None."""
+    best = None
+    for k, ((ax, ay), (bx, by)) in enumerate(zip(line, line[1:], strict=False)):
+        dx, dy = bx - ax, by - ay
+        length2 = dx * dx + dy * dy
+        if length2 < 1e-12:
+            continue
+        u = ((point[0] - ax) * dx + (point[1] - ay) * dy) / length2
+        uc = min(1.0, max(0.0, u))
+        d = math.dist(point, (ax + uc * dx, ay + uc * dy))
+        if best is None or d < best[0] - 1e-12:
+            best = (d, k, u)
+    if best is None or best[0] > JOIN_M:
+        return None
+    _, k, u = best
+    if k == len(line) - 2 and u >= 1.0:
+        return None  # 선 끝을 지났다
+    return [tuple(p) for p in line[k + 1:]]
 
 
 def _rest_of_line(point, line):

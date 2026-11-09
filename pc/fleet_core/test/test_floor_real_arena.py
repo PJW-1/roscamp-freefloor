@@ -183,6 +183,68 @@ def test_the_robot_holds_only_its_half_width_beside_it_on_a_straight_line(monkey
     assert seen > 5 and world.cell_violations == 0
 
 
+def arena_core():
+    from dataclasses import replace
+
+    from fleet_core.common.params import load_params
+    from fleet_core.manager import FleetManager
+    core = FleetManager(LANES, replace(load_params(PARAMS), traffic_mode="freefloor"), ["a"],
+                        lambda: 0.0)
+    core.on_order_board("RUN", [])
+    core.traffic._plan_budget = 99  # 한 tick 밖에서 여러 번 계획한다
+    return core
+
+
+def follows_the_rest_of_outbound_out(route, x, y):
+    """(x, y)에서 남은 outbound_out을 따라 PS로 나간다. 북쪽 틈(들어가는 선)으로 가지 않는다."""
+    line = FLOOR.fixed_lines["outbound_out"]
+    assert route.fixed and route.fixed[0][2] == "outbound_out" and route.fixed[0][0] == 0.0
+    head = route.points
+    assert math.dist(head[0], (x, y)) < 1e-9
+    assert line.end in [tuple(p) for p in route.points]
+    assert head[1] != line.start and head[1][0] <= x + 1e-9  # 도크로 되돌아가지 않는다
+    assert all(py < 0.70 for px, py in route.points if px > 1.20), route.points
+
+
+@pytest.mark.parametrize("x, y", [(1.55, 0.165), (1.35, 0.30), (1.80, 0.17)])
+def test_a_robot_leaving_outbound_keeps_to_the_rest_of_the_exit_line(x, y):
+    """Gazebo 3대(5b5cb48): pinky3이 OUTBOUND를 나가다 주차 칸을 다시 골랐다(남이 칸을 지남).
+    새 다리가 출구선을 버리고 자유 경로로 북쪽 들어가는 선을 거슬러 올라가 pinky1과 막혔다."""
+    core = arena_core()
+    traffic = core.traffic
+    for _ in range(3):
+        core.on_robot_state("a", *FLOOR.docks["OUTBOUND"], 0.0, "IDLE")
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "P-3")
+    follows_the_rest_of_outbound_out(traffic._legs["a"].route, *FLOOR.docks["OUTBOUND"])
+    for _ in range(3):
+        core.on_robot_state("a", x, y, math.pi, "MOVING")
+    traffic._start_leg(m, "TO_PARK", None, "P-1")  # 주차 칸 다시 고르기
+    leg = traffic._legs["a"]
+    follows_the_rest_of_outbound_out(leg.route, x, y)
+    traffic._plan(m, leg)  # 같은 다리를 그 자리에서 다시 계획해도
+    follows_the_rest_of_outbound_out(leg.route, x, y)
+
+
+def test_a_robot_past_the_end_of_the_exit_line_plans_on_the_floor():
+    from fleet_core.traffic.floor.planner import rest_of_exit
+    line = FLOOR.fixed_lines["outbound_out"].points
+    assert rest_of_exit((0.87, 0.555), line) is None  # PS(0.90, 0.575)를 지나 남서쪽으로 3 cm
+    assert rest_of_exit((1.55, 0.40), line) is None  # 선에서 0.24 m
+    assert rest_of_exit((1.35, 0.165), line)[:2] == [(1.35, 0.165), (1.35, 0.45)]  # 꺾이는 점 위
+    core = arena_core()
+    traffic = core.traffic
+    for _ in range(3):
+        core.on_robot_state("a", *FLOOR.docks["OUTBOUND"], 0.0, "IDLE")
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "P-3")
+    for _ in range(3):
+        core.on_robot_state("a", 0.87, 0.555, math.pi, "MOVING")
+    traffic._plan(m, traffic._legs["a"])
+    route = traffic._legs["a"].route
+    assert not route.fixed and math.dist(route.points[-1], (0.60, 0.45)) < 1e-9
+
+
 def test_docks_and_parking_are_the_lane_map_waypoints():
     for station, pose in FLOOR.docks.items():
         assert math.dist(pose, LANES.waypoint_pose(LANES.stations[station].dock)) < 1e-9

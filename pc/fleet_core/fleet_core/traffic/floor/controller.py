@@ -40,7 +40,7 @@ from fleet_core.traffic.deadlock import choose_retreat, find_cycle, wait_graph
 from fleet_core.traffic.floor.cells import CellLocks, disk_cells, swept_cells
 from fleet_core.traffic.floor.eta import route_s
 from fleet_core.traffic.floor.floor_map import floor_map_for
-from fleet_core.traffic.floor.planner import FloorPlanner, Route
+from fleet_core.traffic.floor.planner import FloorPlanner, Route, rest_of_exit
 from fleet_core.traffic.mission import (
     AT_STATION,
     BLOCKED,
@@ -452,8 +452,12 @@ class FloorController(TrafficController):
         here = self._dock_here(m)
         station = next((s for s, st in self.site.stations.items() if st.dock == goal_waypoint),
                        None)
-        leg = _Leg(None, self.site.waypoint_pose(goal_waypoint),
-                   out_line=self._line(here, "out") if here and here != station else None,
+        out_line = self._line(here, "out") if here and here != station else None
+        old = self._legs.get(m.name)
+        span = old.route.fixed_at(old.s) if old is not None and old.route is not None else None
+        if out_line is None and span is not None and span[2] == old.out_line:
+            out_line = old.out_line  # 출구선을 나가던 중: 남은 선을 마저 간다
+        leg = _Leg(None, self.site.waypoint_pose(goal_waypoint), out_line=out_line,
                    in_line=self._line(station, "in") if station else None)
         m.path = [self.site.nearest_waypoint(m.x, m.y), goal_waypoint]
         m.idx = 0
@@ -477,9 +481,10 @@ class FloorController(TrafficController):
         leg.planned_at = self._clock()
         start = (m.x, m.y)
         out_line = leg.out_line
-        if out_line and math.dist(start, self.floor.fixed_lines[out_line].start) > \
-                self.params.arrival_tolerance_m:
-            out_line = None  # no longer on the dock (moved, or replanned on the way)
+        line = self.floor.fixed_lines[out_line] if out_line else None
+        if line and math.dist(start, line.start) > self.params.arrival_tolerance_m \
+                and rest_of_exit(start, line.points) is None:
+            out_line = None  # 도크에도 선 위에도 없다(밀려났거나 선을 다 나갔다)
         leg.waiting = bool(leg.in_line) and not self._admitted(m, leg)
         if leg.waiting:
             self._plan_wait(m, leg, out_line)
