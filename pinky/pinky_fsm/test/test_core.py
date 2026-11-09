@@ -856,17 +856,33 @@ def near_p5(back_m):
     return (P4[0] + (P5[0] - P4[0]) * k, P4[1] + (P5[1] - P4[1]) * k, 0.2)
 
 
+def can_stop(left, p=FsmParams()):
+    """What can still stop within left (m) after the limit takes horizon_latency_s to act."""
+    margin = p.horizon_cap_mps * p.horizon_latency_s
+    return math.sqrt(2 * p.horizon_decel_mps2 * max(0.0, left - margin))
+
+
 def test_a_goal_at_a_lock_boundary_limits_the_speed_to_what_can_stop_at_its_end():
     fsm = ready()
     fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
     assert limits(fsm.tick(1.1, (*P3, NORTH), DRIVING, no_obstacle)) == [], "멀면 제한이 없다"
+    # 0.25 m/s x 0.3 s = 0.075 m of the distance left goes by before the limit acts
+    [v] = limits(fsm.tick(1.2, near_p5(0.15), DRIVING, no_obstacle))
+    assert v == pytest.approx(0.19)  # sqrt(2 x 0.25 x 0.075) = 0.194, floored
+    [v] = limits(fsm.tick(1.3, near_p5(0.10), DRIVING, no_obstacle))
+    assert v == pytest.approx(0.11)  # sqrt(2 x 0.25 x 0.025) = 0.112, floored
+    assert limits(fsm.tick(1.4, near_p5(0.10), DRIVING, no_obstacle)) == [], "같으면 다시 안 보낸다"
+    [v] = limits(fsm.tick(1.5, near_p5(0.07), DRIVING, no_obstacle))
+    assert v == pytest.approx(0.05), "아래 한계: the latency margin is used up"
+
+
+def test_without_latency_the_limit_is_what_can_stop_at_the_end():
+    fsm = ready(horizon_latency_s=0.0)
+    fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
     [v] = limits(fsm.tick(1.2, near_p5(0.10), DRIVING, no_obstacle))
     assert v == pytest.approx(math.sqrt(2 * 0.25 * 0.10), abs=0.01)
     [v] = limits(fsm.tick(1.3, near_p5(0.02), DRIVING, no_obstacle))
     assert v == pytest.approx(math.sqrt(2 * 0.25 * 0.02), abs=0.01)
-    assert limits(fsm.tick(1.4, near_p5(0.02), DRIVING, no_obstacle)) == [], "같으면 다시 안 보낸다"
-    [v] = limits(fsm.tick(1.5, near_p5(0.0), DRIVING, no_obstacle))
-    assert v == pytest.approx(0.05), "아래 한계"
 
 
 def test_a_final_goal_keeps_no_limit_for_the_precise_approach():
@@ -894,12 +910,13 @@ def test_a_fresh_fsm_lifts_any_limit_left_from_before_a_restart():
     assert limits(fsm.tick(0.1, (*P3, NORTH), STILL, no_obstacle)) == []
 
 
-@pytest.mark.parametrize("back_m", [0.12, 0.07, 0.03])
+@pytest.mark.parametrize("back_m", [0.15, 0.12, 0.09, 0.07, 0.03])
 def test_the_limit_never_rounds_above_what_can_stop(back_m):
     fsm = ready()
     fsm.move("g1", 1.0, "P-5", (*P5, 0.2), [P3, P4, P5], (*P3, NORTH), final_goal=False)
     [v] = limits(fsm.tick(1.2, near_p5(back_m), DRIVING, no_obstacle))
-    assert v <= math.sqrt(2 * 0.25 * fsm.distance_remaining(near_p5(back_m))) + 1e-12
+    left = fsm.distance_remaining(near_p5(back_m))
+    assert v <= max(FsmParams().horizon_min_mps, can_stop(left)) + 1e-12
 
 
 def test_the_limit_never_asks_more_than_the_nav2_desired_speed():

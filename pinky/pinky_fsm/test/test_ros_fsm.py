@@ -198,6 +198,17 @@ def test_a_goal_at_a_lock_boundary_publishes_a_speed_limit_and_lifts_it_at_the_e
     assert any(0.0 < v < 0.3 for v in fake.speed_limits)
 
 
+def test_the_speed_limit_latency_margin_is_a_node_parameter(harness):
+    from pinky_fsm.core import FsmParams
+    from pinky_fsm.node import PinkyFsmNode
+
+    def node(**overrides):
+        return harness.add(PinkyFsmNode(parameter_overrides=harness.params(
+            robot_id="pinky1", contract_file=str(CONTRACT), **overrides)))
+    assert node().get_parameter("horizon_latency_s").value == FsmParams().horizon_latency_s
+    assert node(horizon_latency_s=0.1)._fsm.p.horizon_latency_s == 0.1
+
+
 def test_a_final_goal_publishes_no_speed_limit(harness):
     fake, probe = start(harness)
     assert probe.result(probe.send(lane_goal(["P-3", "P-4"]))).result.success is True

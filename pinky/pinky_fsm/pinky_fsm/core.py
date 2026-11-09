@@ -81,6 +81,10 @@ class FsmParams:
     horizon_min_mps: float = 0.05
     # RPP takes an absolute limit as desired_linear_vel (no min), so never above nav2's 0.25
     horizon_cap_mps: float = 0.25
+    # Time from a position update to the limit acting in the controller (control tick,
+    # speed_limit topic, RPP cycle). Assumed, not measured: at horizon_cap_mps this keeps
+    # horizon_cap_mps * horizon_latency_s (0.075 m) of the distance left out of sqrt(2 a d)
+    horizon_latency_s: float = 0.3
 
 
 @dataclass(frozen=True)
@@ -466,6 +470,8 @@ class PinkyFsm:
         limit = 0.0
         if isinstance(g, _Move) and not g.final_goal:
             left = max(0.0, g.route.length - g.s)
+            # the robot may cover this much at full speed before the limit acts
+            left = max(0.0, left - self.p.horizon_cap_mps * self.p.horizon_latency_s)
             v = max(self.p.horizon_min_mps, math.sqrt(2.0 * self.p.horizon_decel_mps2 * left))
             # 내려서 자른다. 올려 반올림하면 √(2·a·d)를 넘는다
             limit = math.floor(v * 100.0) / 100.0 if v < self.p.horizon_cap_mps else 0.0

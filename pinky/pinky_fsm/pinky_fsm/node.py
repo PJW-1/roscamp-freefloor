@@ -68,7 +68,7 @@ _FLOAT_PARAMS = (
     "backup_lateral_limit_m", "backup_speed_mps", "backup_time_allowance_s",
     "backup_result_grace_s", "recovery_pass_m", "recovery_timeout_s", "recovery_reset_m",
     # 잠금 경계 목표의 속도 제한(버전 2 4절 horizon 최소판)
-    "horizon_decel_mps2", "horizon_min_mps", "horizon_cap_mps")
+    "horizon_decel_mps2", "horizon_min_mps", "horizon_cap_mps", "horizon_latency_s")
 _INT_PARAMS = ("recovery_attempts",)
 
 
