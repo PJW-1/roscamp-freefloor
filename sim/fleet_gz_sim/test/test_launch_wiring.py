@@ -427,3 +427,13 @@ def test_without_traffic_mode_every_node_gets_the_params_file_as_given(made):
 def test_an_unknown_traffic_mode_stops_the_launch(made):
     with pytest.raises(ValueError, match="traffic_mode"):
         run(made, traffic_mode="rails")
+
+
+def test_the_params_copy_never_overwrites_the_file_it_copies(gz, tmp_path):
+    out = tmp_path / "result"
+    out.mkdir()
+    mine = out / "fleet_params.yaml"
+    mine.write_text("traffic_mode: lanes  # mine\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="fleet_params_file"):
+        gz.params_for(str(mine), "freefloor", str(out))
+    assert mine.read_text(encoding="utf-8") == "traffic_mode: lanes  # mine\n"

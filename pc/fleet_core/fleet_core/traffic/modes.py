@@ -62,4 +62,9 @@ class FloorZoneSpace:
         return (x0, y0, x0 + size, y0 + size)
 
     def __getattr__(self, name):
-        return getattr(self.site, name)
+        # only called for names not found normally; a half-built copy has no site yet
+        try:
+            site = object.__getattribute__(self, "site")
+        except AttributeError:
+            raise AttributeError(name) from None
+        return getattr(site, name)

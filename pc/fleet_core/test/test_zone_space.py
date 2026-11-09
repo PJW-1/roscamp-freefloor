@@ -84,3 +84,15 @@ def test_the_floor_map_is_loaded_when_none_is_given(site):
 def test_an_unknown_mode_is_refused(site, floor):
     with pytest.raises(ValueError, match="traffic_mode"):
         space(site, floor, "rails")
+
+
+def test_a_half_built_space_does_not_recurse(site, floor):
+    import copy
+    import pickle
+
+    from fleet_core.traffic.modes import FloorZoneSpace
+    empty = FloorZoneSpace.__new__(FloorZoneSpace)
+    assert not hasattr(empty, "half_width")  # AttributeError, not RecursionError
+    zones = space(site, floor)
+    assert copy.copy(zones).half_width == site.half_width
+    assert pickle.loads(pickle.dumps(zones)).half_width == site.half_width
