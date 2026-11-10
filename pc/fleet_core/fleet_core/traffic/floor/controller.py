@@ -95,6 +95,9 @@ WAIT_TRIES = 8  # 출발할 수 없는 대기 자리 길을 이만큼 보면 그
 # anew for each report (sigma 0.03 m) crosses the 5 cm body margin about 1 time in 20
 REST_RELEASE_SAMPLES = 10
 # 반폭 잠금(지도 robot_half_width_m). RPP가 제자리에서 돌 수 있는 곳만 몸 원 전체를 잠근다
+# 보고 한 번에 진행점이 나아가는 한도(10 Hz, 0.3 m/s면 0.03 m): 꺾여 되돌아오는 경로에서 튄 보고가
+# 진행점을 모퉁이 너머로 넘기지 못하게 한다
+FOLLOW_AHEAD_M = 0.15
 TURN_LEAD_M = 0.25  # RPP max_lookahead_dist: 꺾이기 이만큼 앞에서부터 돌기 시작할 수 있다
 TURN_START_M = 0.05  # 다리 출발 뒤 이만큼은 출발 자리에서 돌 수 있다
 # 지름길: 다른 로봇이 겹치는 구간에 닿기 이만큼 전에 지나갈 수 있어야 탄다(ETA 오차 몫)
@@ -606,7 +609,10 @@ class FloorController(TrafficController):
         leg = self._legs.get(m.name)
         if leg is None or leg.route is None:
             return
-        s, _ = leg.route.project(m.x, m.y, leg.s, max(leg.s, leg.s_sent))
+        # no further ahead than FOLLOW_AHEAD_M a report: where a route folds back, a thrown
+        # report lies nearer the stretch after the corner than the one the robot is on
+        ahead = min(max(leg.s, leg.s_sent), leg.s + FOLLOW_AHEAD_M)
+        s, _ = leg.route.project(m.x, m.y, leg.s, ahead)
         leg.s = max(leg.s, s)
         short = (leg.s_lock < leg.route.length - AT_END_M
                  and leg.s_lock - leg.s < self.params.floor_lock_ahead_m / 2)

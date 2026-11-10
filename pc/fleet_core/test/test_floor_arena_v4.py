@@ -265,13 +265,15 @@ def heads_in(traffic, name):
     return traffic._legs[name]
 
 
-def moved(traffic, name, x, y, yaw):
-    """name now reports from (x, y): it drove there (the averaged place starts again there)."""
+def moved(traffic, name, x, y, yaw, reports=20):
+    """name now reports from (x, y): it drove there (the averaged place starts again there).
+    Its progress is followed over that many reports (it goes on by a bounded step a report)."""
     m = traffic._missions[name]
     m.x, m.y, m.yaw = x, y, yaw
     for memory in (traffic._stand, traffic._recent):
         memory.pop(name, None)
-    traffic._follow(m)
+    for _ in range(reports):
+        traffic._follow(m)
     return m
 
 
@@ -417,6 +419,38 @@ def test_a_robot_on_the_shortcut_rolls_on_past_the_stretch_when_the_dock_is_free
     b = moved(traffic, "b", x, y, math.atan2(0.12, -0.44))
     traffic._drive(b)
     assert traffic._legs["b"].s_lock == pytest.approx(traffic._legs["b"].route.length)
+
+
+def test_a_report_thrown_aside_before_the_last_corner_does_not_put_the_robot_past_it():
+    """Above the dock the shortcut folds back by 105 degrees, and the whole way there is sent in
+    one go. A report thrown 8 cm south, 0.16 m before the corner, lies nearer the stretch after
+    the corner than the one the robot is on. Its progress must not jump past the corner: the
+    cells it turns on there would be let go. (Headless run, 3 robots, seed 4: 0.26 m in one
+    report, then "on cells it does not hold" at the corner.)"""
+    traffic = fleet({"a": (1.86, 0.58, 0.0), "b": ON_THE_WAY})
+    leg = heads_in(traffic, "b")
+    assert leg.in_line == "outbound_short"
+    assert leg.s_sent == pytest.approx(leg.route.length)  # the dock is free: all of it
+    west = math.atan2(0.12, -0.44)
+    corner = leg.route.length - 0.22
+    while leg.s < corner - 0.16 - 0.10:
+        moved(traffic, "b", *leg.route.at(leg.s + 0.10), west)
+    moved(traffic, "b", *leg.route.at(corner - 0.16), west)
+    assert leg.s == pytest.approx(corner - 0.16, abs=0.01)
+    moved(traffic, "b", 0.223, 0.641, west, reports=1)
+    assert leg.s < corner
+
+
+def test_a_robot_that_was_silent_for_a_while_is_followed_up_to_where_it_is():
+    """The progress goes on by at most FOLLOW_AHEAD_M a report, so it catches up with a robot
+    that drove on unheard within a few reports and stays behind it until then."""
+    traffic = fleet({"a": (1.86, 0.58, 0.0), "b": ON_THE_WAY})
+    leg = heads_in(traffic, "b")
+    x, y = leg.route.at(0.60)
+    moved(traffic, "b", x, y, math.pi, reports=1)
+    assert 0.0 < leg.s < 0.60
+    moved(traffic, "b", x, y, math.pi, reports=5)
+    assert leg.s == pytest.approx(0.60, abs=0.01)
 
 
 def test_a_robot_running_through_the_stretch_to_a_taken_dock_counts_as_moving():
