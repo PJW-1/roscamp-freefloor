@@ -440,9 +440,10 @@ def test_a_report_thrown_aside_before_the_last_corner_does_not_put_the_robot_pas
     assert leg.s == pytest.approx(corner - 0.16, abs=0.01)
     b = moved(traffic, "b", 0.223, 0.641, west, reports=1)
     assert leg.s < corner
+    once = leg.s
     for _ in range(5):  # the ticks until the next report see the same one: no further
         traffic._follow(b)
-    assert leg.s < corner
+    assert leg.s == once
 
 
 def test_a_robot_that_was_silent_for_a_while_is_followed_up_to_where_it_is():
@@ -452,7 +453,9 @@ def test_a_robot_that_was_silent_for_a_while_is_followed_up_to_where_it_is():
     leg = heads_in(traffic, "b")
     x, y = leg.route.at(0.60)
     moved(traffic, "b", x, y, math.pi, reports=1)
-    assert 0.0 < leg.s < 0.60
+    assert leg.s == pytest.approx(0.15)  # FOLLOW_AHEAD_M
+    moved(traffic, "b", x, y, math.pi, reports=1)
+    assert leg.s == pytest.approx(0.30)
     moved(traffic, "b", x, y, math.pi, reports=5)
     assert leg.s == pytest.approx(0.60, abs=0.01)
 
