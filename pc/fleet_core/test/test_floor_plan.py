@@ -437,7 +437,7 @@ def test_from_the_mouth_of_a_gap_a_start_steps_only_onto_clear_cells_beside_the_
     """Just inside the mouth (clear floor within 0.10 m) a start steps onto clear floor as
     anywhere else, but only onto clear cells whose centre is within a cell of the narrow
     line, also when the nearest of them are taken. (The next test checks the steps keep off
-    the walls, from every point of the mouths.)"""
+    the walls, from sampled points all over the mouths.)"""
     from fleet_core.traffic.floor.planner import FloorPlanner
     floor = _gap_floor()
     planner = FloorPlanner(floor)
@@ -479,13 +479,15 @@ def nearer_a_wall(floor, start, step) -> float:
     """How much nearer a wall the straight step comes than its start is."""
     along = [(start[0] + (step[0] - start[0]) * k / 20, start[1] + (step[1] - start[1]) * k / 20)
              for k in range(21)]
-    limit = 0.12  # the starts are in a wall margin, nearer than this; farther is not looked for
+    # a start in a cell that is not clear is within 0.09 m + a cell diagonal (0.13 m) of a wall
+    limit = 0.15
     return floor._gap_to_wall(*start, limit) - min(floor._gap_to_wall(*p, limit) for p in along)
 
 
-def test_every_point_in_the_mouths_of_a_gap_has_a_step_that_keeps_off_the_walls():
-    """No point beside the narrow lines is left without a way back onto clear floor, and no
-    step comes more than half a cell (1.5 cm) nearer a wall than the point it starts from."""
+def test_sampled_points_in_the_mouths_of_a_gap_have_a_step_that_keeps_off_the_walls():
+    """Nine points in every cell beside the narrow lines that is neither clear nor deep in the
+    gap: none is left without a way back onto clear floor, and at 21 points along it no step
+    is more than half a cell (1.5 cm) nearer a wall than the point it starts from."""
     from fleet_core.traffic.floor.planner import FloorPlanner
     floor = _gap_floor()
     found, stuck = mouth_steps(floor, FloorPlanner(floor))
