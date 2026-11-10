@@ -57,11 +57,14 @@ class OrdersAndArm:
             self._route(item)
 
     def _route(self, item) -> None:
+        """The same as FleetManager._route: the one that was told answers before the next item."""
         if isinstance(item, ARM_COMMANDS):
             self.arm.on_command(item)
+            for answer in self.arm.take_output():
+                self._route(answer)
         elif isinstance(item, ARM_REPORTS):
             self.orders.on_arm_report(item)
+            for answer in self.orders.take_output():
+                self._route(answer)
         else:
             self._out.append(item)
-            return
-        self._settle()

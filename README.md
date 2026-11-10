@@ -75,7 +75,7 @@ flowchart LR
   simcommon --> scenario & contract & lanemap
 ```
 
-`orders`, `arm`, `traffic`은 서로 import하지 않고, `manager`가 `common/commands.py`의 명령으로 셋 사이를 잇습니다. `orders`가 위에서 정해 `traffic`(로봇 이동)과 `arm`(fill, swap goal)에 요청합니다. `pc/fleet_core/test/test_fms_boundary.py`가 이 경계를 검사합니다. `traffic`과 `arm`은 주문과 바구니를 모릅니다.
+`orders`, `arm`, `traffic`은 서로 import하지 않고, `manager`가 `common/commands.py`의 명령으로 셋 사이를 잇습니다. `orders`가 위에서 정해 `traffic`(로봇 이동)과 `arm`(fill, swap goal)에 요청합니다. `pc/fleet_core/test/test_fms_boundary.py`가 이 경계를 검사합니다. `traffic`은 주문과 바구니를 모르고, `arm`은 받은 주문 ID와 품목을 goal에 실어 보낼 뿐 주문 진행과 바구니 상태를 판단하지 않습니다.
 
 ### ROS 노드 지도 (컴퓨터별)
 

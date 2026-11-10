@@ -7,6 +7,7 @@ pytest.importorskip("rclpy")
 pytest.importorskip("fleet_interfaces")
 
 from action_msgs.msg import GoalStatus  # noqa: E402
+from fleet_core.arm.jobs import CANCELED  # noqa: E402
 from fleet_core.common.commands import (  # noqa: E402
     AssignmentView,
     DockCmd,
@@ -19,7 +20,6 @@ from fleet_core.common.commands import (  # noqa: E402
     SwapCmd,
     ZoneView,
 )
-from fleet_core.orders.orchestrator import CANCELED  # noqa: E402
 from fleet_core.traffic.mission import (  # noqa: E402
     BLOCKED,
     HEARTBEAT_LOST,

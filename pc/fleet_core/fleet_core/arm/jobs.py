@@ -1,5 +1,7 @@
-"""Sends the goals of arm work (fill, swap) and sees them through. Knows no order, basket or lane.
+"""Sends the goals of arm work (fill, swap) and sees them through.
 
+It decides nothing about orders or baskets and knows no lane: the order id and the items it is
+given only pass through into the goal.
 The orders ask once per attempt with ArmFillCmd or ArmSwapCmd; one goal goes out and its result
 comes back. Goal ids, time-outs and cancels, the wait after a failure, the attempt count and its
 limit live here. Whether an attempt failed is for the orders to say (ArmFailedCmd): they know the
@@ -167,7 +169,7 @@ class ArmJobs:
             self._out.append(ArmDeclined(r.name))
             return
         goal_id = self._next_goal_id()
-        r.job = _Job(server, goal_id, kind, self._clock())
+        r.job, r.last = _Job(server, goal_id, kind, self._clock()), None
         if kind == FILL:
             self._out.append(FillCmd(goal_id, r.name, command.station_id, command.order_id,
                                      command.items))
