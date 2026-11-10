@@ -5,6 +5,9 @@ odom을 낸다. Nav2 controller처럼 새 목표가 오면 옛 목표를 ABORTED
 새 경로로 넘어간다(nav2_util simple_action_server의 accept_pending_goal). 앞에 물체가 있으면
 서고, 1초 뒤 FollowPath를 실패로 끝낸다(RPP 충돌 검사 + failure_tolerance 1.0).
 
+controller_id가 FollowPathReverse면 RPP allow_reversing처럼 돌지 않고 뒤로 따르고, 뒤의 물체에
+선다(Retreat.path).
+
 behavior_server의 backup(BackUp)도 흉내 낸다: 바라보는 방향의 반대로 곧게 물러나고, 뒤에
 벽(wall_behind_m)이 있으면 거기서 서고 COLLISION_AHEAD로 끝낸다. local costmap 비우기
 (ClearEntireCostmap)는 부른 시각만 적는다.
@@ -29,6 +32,7 @@ from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 STEP_HZ = 50.0
 STOP_GAP_M = 0.25  # 물체가 경로 앞 이 거리 안이면 선다
 FAIL_AFTER_S = 1.0
+REVERSE_CONTROLLER = "FollowPathReverse"
 
 
 class FakeNav(Node):
@@ -44,6 +48,7 @@ class FakeNav(Node):
         self.v = 0.0
         self.goals = []  # (시각, 점 수)
         self.controller_ids = []  # FollowPath controller_id of each accepted goal
+        self.reversing = False  # 지금 목표가 후진 controller다
         self.cancels = []  # 시각
         self.speed_log = []  # (시각, 선속도)
         self.obstacle: tuple[float, float] | None = None
@@ -111,6 +116,7 @@ class FakeNav(Node):
             self.index = 0
             self.goals.append((time.monotonic(), len(self.path)))
             self.controller_ids.append(handle.request.controller_id)
+            self.reversing = handle.request.controller_id == REVERSE_CONTROLLER
             self._blocked_since = None
         handle.execute()
 
@@ -240,11 +246,12 @@ class FakeNav(Node):
                     self.pose[2] = tyaw
             else:
                 f = budget / d
-                self.pose[2] = math.atan2(ty - self.pose[1], tx - self.pose[0])
+                if not self.reversing:  # 후진은 돌지 않는다
+                    self.pose[2] = math.atan2(ty - self.pose[1], tx - self.pose[0])
                 self.pose[0] += f * (tx - self.pose[0])
                 self.pose[1] += f * (ty - self.pose[1])
                 budget = 0.0
-            self.v = self.speed
+            self.v = -self.speed if self.reversing else self.speed
         if self.index >= len(self.path):
             self._outcome[id(handle)] = "done"
             self.current = None
@@ -255,6 +262,8 @@ class FakeNav(Node):
         ox, oy = self.obstacle
         x, y, yaw = self.pose
         ahead = (ox - x) * math.cos(yaw) + (oy - y) * math.sin(yaw)
+        if self.reversing:
+            ahead = -ahead  # 움직이는 쪽을 본다
         side = abs(-(ox - x) * math.sin(yaw) + (oy - y) * math.cos(yaw))
         return 0.0 <= ahead <= STOP_GAP_M and side < 0.1
 

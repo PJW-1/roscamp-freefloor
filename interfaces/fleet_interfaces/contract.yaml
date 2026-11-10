@@ -1,6 +1,12 @@
 # 이름, 타입, QoS의 유일한 기준. 코드는 `key`로 찾으므로 이름이나 QoS는 여기만 고친다.
 # 팀 합의 전까지 모두 초안이다. QoS depth는 실제 Wi-Fi에서 측정해야 한다.
-version: 0.5-draft+final_goal
+version: 0.9-draft
+# 0.9 (2026-11-11, freefloor 가지, 제안(팀 합의 전)): 액션 /{pinky}/retreat(fleet_interfaces/action/Retreat).
+# 개인 레포 main 계약 0.7의 Retreat(distance_m, speed_mps로 뒤로 곧게, Nav2 BackUp)에
+# geometry_msgs/Pose[] path를 더했다. path가 있으면 핑키는 지나온 길을 거꾸로 적은 그 경로를 후진
+# controller(FollowPathReverse, 0.05 m/s, 제자리 회전 없음)로 따른다. 결과 reason은 OBSTACLE_BEHIND,
+# TIMEOUT, CANCELED, FAILED. 받으면 달리던 이동을 먼저 멈춘다(이동 goal은 CANCELED).
+# main의 0.6(compute_path_to_pose)은 이 가지에 없다. 핑키 계약 3절 10번.
 # +final_goal (2026-11-09, freefloor 가지, 제안(팀 합의 전)): 개인 레포 main 계약 0.8-draft의 MoveTo
 # final_goal만 가져왔다. main의 0.6(compute_path_to_pose)과 0.7(retreat)은 이 가지에 없다.
 # 0.8 (main, 2026-11-09, 제안(팀 합의 전)): MoveTo goal에 bool final_goal(기본 true)을 더했다. path 끝이 임무의
@@ -58,6 +64,8 @@ actions:
   - {key: navigate_to_pose, name: "/{pinky}/navigate_to_pose", type: nav2_msgs/action/NavigateToPose, real_only: true}
   # path 모드에서 핑키가 레인 폴리라인을 따를 때 쓴다. 관제는 부르지 않는다.
   - {key: follow_path, name: "/{pinky}/follow_path", type: nav2_msgs/action/FollowPath, real_only: true}
+  # 0.9(제안): 관제가 시키는 물러나기. 이동 goal을 대신한다. path가 있으면 그 경로를 후진으로 따른다.
+  - {key: retreat, name: "/{pinky}/retreat", type: fleet_interfaces/action/Retreat}
 
 services:
   - {key: set_run_mode, name: "/central/set_run_mode", type: fleet_interfaces/srv/SetRunMode}

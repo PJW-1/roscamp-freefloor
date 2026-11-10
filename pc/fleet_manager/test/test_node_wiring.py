@@ -17,10 +17,10 @@ import pytest
 rclpy = pytest.importorskip("rclpy")
 pytest.importorskip("fleet_interfaces")
 
-from fleet_core.common.commands import EventOut  # noqa: E402
+from fleet_core.common.commands import EventOut, RetreatCmd  # noqa: E402
 from fleet_core.common.contract import to_ros_qos  # noqa: E402
 from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
-from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket  # noqa: E402
+from fleet_interfaces.action import Dock, FillBasket, MoveTo, Retreat, SwapBasket  # noqa: E402
 from fleet_interfaces.msg import (  # noqa: E402
     AssignmentArray,
     FleetEvent,
@@ -414,6 +414,42 @@ def test_a_robot_goal_with_no_server_is_not_a_rejection_and_an_arm_goal_still_is
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+
+def test_a_retreat_command_goes_to_the_retreat_action_and_its_result_back_to_the_core():
+    """계약 0.9-draft(제안): RetreatCmd는 /{pinky}/retreat goal이 되고, 결과는
+    on_retreat_result로, 거절과 서버 없음은 다른 로봇 goal과 같다."""
+    rclpy.init(args=["--ros-args", "-p", "robots:=[pinky1]"])
+    node = FleetManagerNode()
+    try:
+        node.core = MagicMock()
+        client = MagicMock()
+        node._retreat["pinky1"] = client
+        path = ((1.0, 2.0, 0.0), (1.0, 1.6, 0.0))
+        node._dispatch(RetreatCmd("pinky1", 7, 0.4, 0.05, path), 1.0)
+        (goal,), _ = client.send_goal_async.call_args
+        assert isinstance(goal, Retreat.Goal)
+        assert (goal.distance_m, goal.speed_mps) == (pytest.approx(0.4), pytest.approx(0.05))
+        assert [(p.position.x, p.position.y) for p in goal.path] == [(1.0, 2.0), (1.0, 1.6)]
+        node._retreat_done(("pinky1", 7),
+                           Retreat.Result(success=False, reason="OBSTACLE_BEHIND"))
+        node.core.on_retreat_result.assert_called_once_with("pinky1", 7, False,
+                                                            "OBSTACLE_BEHIND")
+        client.server_is_ready.return_value = False
+        node._dispatch(RetreatCmd("pinky1", 8, 0.15, 0.08), 2.0)
+        node.core.on_goal_not_sent.assert_called_once_with("pinky1", 8)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_a_retreat_result_with_a_core_that_has_no_handler_yet_is_logged_and_dropped():
+    """fleet_core의 on_retreat_result가 들어오기 전: 노드는 죽지 않는다."""
+    warnings = []
+    node = SimpleNamespace(core=SimpleNamespace(),
+                           get_logger=lambda: SimpleNamespace(warning=warnings.append))
+    FleetManagerNode._retreat_done(node, ("pinky1", 7), Retreat.Result(success=True))
+    assert len(warnings) == 1 and "on_retreat_result" in warnings[0]
 
 
 def test_a_lost_result_of_a_canceled_robot_goal_is_no_rejection():

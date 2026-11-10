@@ -186,6 +186,86 @@ def test_dock_fails_honestly_while_pinky_dock_is_missing(harness):
     assert res.result.success is False
 
 
+def _retreat_client(probe):
+    from fleet_interfaces.action import Retreat
+    from probe import C
+    from rclpy.action import ActionClient
+    client = ActionClient(probe, Retreat, C.name("retreat", pinky="pinky1"))
+    assert client.wait_for_server(10.0)
+    return client
+
+
+def test_a_retreat_stops_the_move_and_backs_up_with_the_same_backup_code(harness):
+    """버전 2 1-A(계약 0.9-draft 제안): 이동을 멈추고 Nav2 BackUp으로 곧게 물러난다."""
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    move = probe.send(lane_goal(["P-3", "P-4", "P-5"]))
+    assert wait_until(lambda: len(fake.goals) >= 1, 5.0)
+    h = probe.send(Retreat.Goal(distance_m=0.1, speed_mps=0.1), client=_retreat_client(probe))
+    assert probe.result(move, timeout=5.0).result.reason == MoveTo.Result.REASON_CANCELED
+    res = probe.result(h, timeout=10.0).result
+    assert (res.success, res.reason) == (True, "")
+    assert [(d, v) for _, d, v in fake.backups] == [(pytest.approx(0.1), pytest.approx(0.1))]
+
+
+def test_something_behind_ends_a_retreat_with_obstacle_behind(harness):
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    fake.wall_behind_m = 0.01
+    h = probe.send(Retreat.Goal(distance_m=0.1, speed_mps=0.1), client=_retreat_client(probe))
+    res = probe.result(h, timeout=10.0).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_OBSTACLE_BEHIND)
+
+
+def _back_path(*ids):
+    from geometry_msgs.msg import Pose
+    out = []
+    for i in ids:
+        p = Pose()
+        p.position.x, p.position.y = WAYPOINTS[i]
+        out.append(p)
+    return out
+
+
+def test_a_retreat_with_a_path_backs_along_it_on_the_reverse_controller(harness):
+    """Retreat.path(계약 0.9-draft 제안): 지나온 길을 거꾸로 적은 경로를 FollowPathReverse로
+    후진해 따른다. BackUp은 쓰지 않고, 로봇은 돌지 않는다(북쪽을 본 채 남쪽으로)."""
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    assert probe.result(probe.send(lane_goal(["P-3", "P-4"]))).result.success is True
+    h = probe.send(Retreat.Goal(distance_m=0.4, speed_mps=0.05, path=_back_path("P-4", "P-3")),
+                   client=_retreat_client(probe))
+    res = probe.result(h, timeout=10.0).result
+    assert (res.success, res.reason) == (True, "")
+    assert fake.controller_ids[-1] == "FollowPathReverse" and fake.backups == []
+    assert all(yaw == pytest.approx(math.pi / 2) for _, _, yaw in fake.path)
+    assert math.dist(fake.pose[:2], WAYPOINTS["P-3"]) <= 0.05
+    assert fake.pose[2] == pytest.approx(math.pi / 2)
+
+
+def test_something_behind_on_the_path_ends_a_retreat_with_obstacle_behind(harness):
+    """FakeNav는 RPP처럼 움직이는 쪽(후진이면 뒤)의 물체에 서고 NO_VALID_CONTROL로 끝낸다."""
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    assert probe.result(probe.send(lane_goal(["P-3", "P-4"]))).result.success is True
+    fake.obstacle = (0.35, 1.60)  # 뒤, P-3 근처
+    h = probe.send(Retreat.Goal(distance_m=0.4, speed_mps=0.05, path=_back_path("P-4", "P-3")),
+                   client=_retreat_client(probe))
+    res = probe.result(h, timeout=10.0).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_OBSTACLE_BEHIND)
+    assert fake.pose[1] > 1.80
+
+
+def test_a_retreat_path_away_from_the_robot_fails(harness):
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    h = probe.send(Retreat.Goal(distance_m=0.4, speed_mps=0.05, path=_back_path("P-6", "P-5")),
+                   client=_retreat_client(probe))
+    res = probe.result(h, timeout=5.0).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_FAILED)
+    assert fake.goals == [] and fake.backups == []
+
+
 def test_a_goal_at_a_lock_boundary_publishes_a_speed_limit_and_lifts_it_at_the_end(harness):
     """버전 2 4절 horizon 최소판(계약 0.8-draft 제안): final_goal이 거짓이면 끝 근처에서
     nav2 speed_limit으로 줄이고, 목표가 끝나면 푼다."""

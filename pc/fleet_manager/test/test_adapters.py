@@ -16,6 +16,7 @@ from fleet_core.common.commands import (  # noqa: E402
     MoveCmd,
     OrderRecord,
     ReportOrderCmd,
+    RetreatCmd,
     RobotStatusView,
     SwapCmd,
     ZoneView,
@@ -26,7 +27,7 @@ from fleet_core.traffic.mission import (  # noqa: E402
     LOCALIZING,
     SELF_RECOVERING,
 )
-from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket  # noqa: E402
+from fleet_interfaces.action import Dock, FillBasket, MoveTo, Retreat, SwapBasket  # noqa: E402
 from fleet_interfaces.msg import (  # noqa: E402
     Assignment,
     FleetEvent,
@@ -121,6 +122,23 @@ def test_a_move_goal_says_whether_its_end_is_the_last_point():
     assert move.final_goal is False
 
 
+def test_a_straight_retreat_goal_copies_distance_and_speed_and_sends_no_path():
+    """관제가 시키는 물러나기(계약 0.9-draft 제안)."""
+    goal = adapters.retreat_goal(RetreatCmd("pinky1", 7, 0.15, 0.08))
+    assert isinstance(goal, Retreat.Goal)
+    assert (goal.distance_m, goal.speed_mps) == (pytest.approx(0.15), pytest.approx(0.08))
+    assert list(goal.path) == []
+
+
+def test_a_retreat_goal_carries_its_path_as_poses_like_a_move_goal():
+    path = ((1.0, 2.0, -math.pi / 2), (1.0, 1.6, -math.pi / 2), (0.6, 1.6, math.pi))
+    goal = adapters.retreat_goal(RetreatCmd("pinky1", 7, 0.8, 0.05, path))
+    move = adapters.move_goal(MoveCmd("pinky1", 7, "N", 0.6, 1.6, math.pi, path))
+    assert list(goal.path) == list(move.path)
+    assert [(p.position.x, p.position.y) for p in goal.path] == [(1.0, 2.0), (1.0, 1.6),
+                                                                    (0.6, 1.6)]
+
+
 def test_fill_goal_copies_every_field():
     goal = adapters.fill_goal(FillCmd(9, "pinky1", "WORK", "O-001", {"A": 2, "C": 1}))
     assert (goal.order_id, goal.robot_id, goal.station_id) == ("O-001", "pinky1", "WORK")
@@ -181,6 +199,8 @@ def test_every_field_of_the_robot_status_reaches_the_message():
 def test_action_results_are_read_here_and_not_in_the_node():
     move = MoveTo.Result(success=False, reason=MoveTo.Result.REASON_TIMEOUT)
     assert adapters.move_result(move) == (False, MoveTo.Result.REASON_TIMEOUT)
+    retreat = Retreat.Result(success=False, reason=Retreat.Result.REASON_OBSTACLE_BEHIND)
+    assert adapters.retreat_result(retreat) == (False, Retreat.Result.REASON_OBSTACLE_BEHIND)
     dock = Dock.Result(success=True, error_x_cm=1.0, error_y_cm=2.0, error_yaw_deg=3.0)
     assert adapters.dock_result(dock) == (True, 1.0, 2.0, 3.0)
     fill = FillBasket.Result(success=False, placed=[OrderItem(kind="A", count=1)],

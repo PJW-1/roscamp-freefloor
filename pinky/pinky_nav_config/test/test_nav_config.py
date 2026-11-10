@@ -19,7 +19,7 @@ def params(node, sub=None):
 
 def test_controller_uses_rpp_with_the_agreed_start_values():
     c = params("controller_server")
-    assert c["controller_plugins"] == ["FollowPath", "FollowPathThrough"]
+    assert c["controller_plugins"] == ["FollowPath", "FollowPathThrough", "FollowPathReverse"]
     assert c["failure_tolerance"] == 1.0
     rpp = c["FollowPath"]
     assert rpp["plugin"] == "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
@@ -43,6 +43,24 @@ def test_the_through_controller_is_followpath_without_the_approach_slow_down():
     assert set(through) == set(normal)
     assert {k: v for k, v in through.items() if k != "approach_velocity_scaling_dist"} == {
         k: v for k, v in normal.items() if k != "approach_velocity_scaling_dist"}
+
+
+REVERSE_ONLY = {"desired_linear_vel": 0.05, "use_rotate_to_heading": False,
+                "allow_reversing": True}
+
+
+def test_the_reverse_controller_is_followpath_driven_backwards_slowly():
+    """Retreat with a path(계약 제안): pinky_fsm sends the driven way reversed to
+    FollowPathReverse. Jazzy RPP cannot reverse while use_rotate_to_heading is on, so it is off
+    (no turn in place before backing) and the robot backs at 0.05 m/s. The collision check stays
+    on: it looks along the motion, so it is what stops the robot for something behind."""
+    c = params("controller_server")
+    normal, reverse = c["FollowPath"], c["FollowPathReverse"]
+    assert set(reverse) == set(normal)
+    assert {k: reverse[k] for k in REVERSE_ONLY} == REVERSE_ONLY
+    assert {k: v for k, v in reverse.items() if k not in REVERSE_ONLY} == {
+        k: v for k, v in normal.items() if k not in REVERSE_ONLY}
+    assert reverse["use_collision_detection"] is True
 
 
 def test_no_obstacle_beside_the_path_slows_the_robot():
