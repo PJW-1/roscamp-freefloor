@@ -263,6 +263,10 @@ class FloorController(TrafficController):
 
     # ---- where a standing robot is --------------------------------------------------------
 
+    def _charger_blocks_queue(self) -> bool:
+        """자유바닥은 대기 지점에서 곧장 나간다: 충전 중인 로봇이 줄을 막지 않는다."""
+        return False
+
     def _stands(self, m: _Mission) -> bool:
         """서 있다: goal도, 아직 따라갈 수 있는 옛 MoveTo도 없고 움직인다고 보고하지 않는다."""
         return (m.goal is None and not self._active[m.name]
