@@ -144,6 +144,7 @@ class FloorWorld(SimWorld):
         r.goal_kind = "move"
         r.target = (cmd.x, cmd.y)
         r.via = via
+        r.trail = [(r.x, r.y)]
         r.goal_elapsed = 0.0
 
     @staticmethod
@@ -237,6 +238,7 @@ class FloorWorld(SimWorld):
             gap = math.hypot(a.x - b.x, a.y - b.y)
             self.min_gap = min(self.min_gap, gap)
             assert gap >= 2 * radius, f"{a.name} and {b.name} touch at {self.t}: {gap:.3f} m"
+        self._check_objects(present)
         in_baskets = sum(sum(r.basket.values()) for r in self.virtual.values())
         left = sum(self.stock.values())
         assert all(v >= 0 for v in self.stock.values())

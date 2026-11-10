@@ -3,7 +3,9 @@
 로봇은 직선으로 달리며 잡음 섞인 자세를 보고한다. 가짜 중앙 서버가 주문판을 관리한다.
 장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 앞 물체(막힘), 보고 밀림,
 로봇에서 떨어진 path(bad_path), 팔 실패와 무응답, 배터리 부족(low_battery), 지도에 없는 물체
-(object: 자리, 시각, 머무는 시간, 반지름)를 넣는다.
+(object: 자리, 시각, 머무는 시간, 반지름)를 넣는다. object가 있는 세계에서는 로봇이 핑키처럼 갈 길
+앞 물체 앞에 서고 자기 복구(조금 후진하고 다시 가 보기, RECOVERING) 뒤 BLOCKED를 보고한다
+(fake_robots/recovery.py의 ObstacleRecovery). 그 세계에서는 blocked 고장도 같은 순서를 밟는다.
 관제가 시킨 물러나기(RetreatCmd)는 Nav2 BackUp(path가 비면)이나 후진 FollowPath처럼 돈다.
 로봇은 핑키처럼 받은 path가 제 자리를 지나는지 본다(지시서 7.5). 멀면 PATH_NOT_CONNECTED.
 매 단계 안전 불변식을 검사하므로 이 세계를 쓰는 테스트는 모두 불변식도 검증한다.
@@ -38,6 +40,8 @@ NAV_TIMEOUT_AFTER_S = 2.0
 BLOCK_REPORT_S = 1.0  # 물체 앞에서 이만큼 서 있으면 BLOCKED(핑키 계약 4절: 2초 안)
 BLOCK_CLEAR_S = 1.0  # 물체가 이만큼 안 보이면 BLOCKED를 끄고 이어 간다
 LINE_TOLERANCE_M = 1e-6
+OBJECT_LOOK_M = 0.12  # 갈 길을 이만큼 앞까지 보고 몸이 물체에 닿으면 선다(제동 거리)
+OBJECT_STOP_GAP_M = 0.005  # 물체 앞에 서는 틈
 
 DEFAULT_ROBOTS = {
     "pinky1": {"start": "P-6", "speed_mps": 0.20, "pose_noise_m": 0.03},
@@ -92,6 +96,61 @@ class VirtualRobot:
     bad_path_offset: float = 0.0
     retreat_speed: float = 0.0  # 물러나기 속도. 갈 곳은 via와 target
     retreat_turns: bool = False  # path를 따르는 물러나기: 진행 반대 방향을 본다
+    trail: list = field(default_factory=list)  # 이번 이동 목표에서 지나온 꼭짓점(첫 점은 출발 자리)
+
+
+class _Track:
+    """ObstacleRecovery가 쓰는 fake_robots.motion.Motion의 꼴을 VirtualRobot 위에 둔다."""
+
+    def __init__(self, world, r):
+        self.world, self.r = world, r
+        self.arrived = False
+
+    @property
+    def x(self):
+        return self.r.x
+
+    @x.setter
+    def x(self, value):
+        self.r.x = value
+
+    @property
+    def y(self):
+        return self.r.y
+
+    @y.setter
+    def y(self, value):
+        self.r.y = value
+
+    @property
+    def trail(self):
+        return self.r.trail
+
+    @property
+    def via(self):
+        return self.r.via
+
+    @property
+    def travelled(self) -> float:
+        points = [*self.r.trail, (self.r.x, self.r.y)]
+        return sum(math.dist(a, b) for a, b in zip(points, points[1:], strict=False))
+
+    @property
+    def since_vertex(self) -> float:
+        return math.dist(self.r.trail[-1], (self.r.x, self.r.y))
+
+    def way_back(self, distance):
+        from fake_robots.motion import Motion
+        return Motion.way_back(self, distance)
+
+    def back(self, distance):
+        """지나온 선을 따라 후진한다(방향 그대로). 되짚은 모서리는 다시 거칠 점이 된다."""
+        from fake_robots.motion import Motion
+        Motion.back(self, distance)
+
+    def step(self, dt, speed, limit=math.inf):
+        if self.r.target is not None:
+            self.arrived = self.world._advance(self.r, min(speed * dt, limit))
 
 
 @dataclass
@@ -143,6 +202,9 @@ class SimWorld:
                            "swap_silent": 0}
         self.pending_faults = sorted(self.faults, key=lambda f: f["at_s"])
         self.objects = self._objects()
+        self.recovery = self._recoveries()
+        self.min_object_gap = float("inf")  # 로봇 몸과 물체 사이 가장 짧은 틈(겹치면 음수)
+        self._object_gaps: dict = {}
         self.reported: dict[str, tuple[float, float]] = {}
         self.virtual = {}
         for name, spec in self.robots.items():
@@ -169,6 +231,14 @@ class SimWorld:
         from fake_robots.scenario import OBJECT_RADIUS_M  # 이 고장을 쓰는 세계만 필요하다
         return [(f["at_s"], f["at_s"] + f["duration_s"], f["x"], f["y"],
                  f.get("radius_m", OBJECT_RADIUS_M)) for f in found]
+
+    def _recoveries(self) -> dict:
+        """object가 있는 세계만 로봇마다 핑키의 앞 물체 처리(자기 복구)를 둔다."""
+        if not self.objects:
+            return {}
+        from fake_robots.recovery import ObstacleRecovery, RecoveryParams
+        params = RecoveryParams(robot_radius_m=self.params.robot_radius_m)
+        return {name: ObstacleRecovery(params) for name in self.robots}
 
     def objects_now(self) -> list[tuple[float, float, float]]:
         """지금 바닥에 있는 물체 (x, y, 반지름)."""
@@ -300,7 +370,11 @@ class SimWorld:
         """move 중 물체 앞에서 서면 1초 뒤 BLOCKED. 물체가 1초 안 보이면 끄고 이어 간다.
 
         취소된 뒤에도 물체가 있는 동안은 BLOCKED다. 창이 열릴 때 move가 없으면 다음 move에 걸린다.
+        object가 있는 세계는 _watch_objects가 대신한다.
         """
+        if self.recovery:
+            self._watch_objects()
+            return
         for r in self.virtual.values():
             if r.obstacle_until is not None and self.t < r.obstacle_until:
                 r.clear_at = None
@@ -317,6 +391,56 @@ class SimWorld:
             if self.t - r.clear_at >= BLOCK_CLEAR_S:
                 r.blocked = False
                 r.stopped_at = r.clear_at = None
+
+    def _watch_objects(self):
+        """갈 길 앞 물체(object, blocked 고장)를 로봇의 ObstacleRecovery에 알린다.
+
+        stopped_at, clear_at은 측정용(baseline Meter): 물체 앞에 선 때부터 물체가 BLOCK_CLEAR_S
+        동안 안 보일 때까지다.
+        """
+        for r in self.virtual.values():
+            if r.removed:
+                continue
+            fault = r.obstacle_until is not None and self.t < r.obstacle_until
+            ahead = fault or self._object_ahead(r)
+            moving = r.goal_kind == "move"
+            self.recovery[r.name].watch(self.t, ahead, moving, _Track(self, r))
+            if ahead:
+                r.clear_at = None
+                if moving and r.stopped_at is None:
+                    r.stopped_at = self.t
+            elif r.stopped_at is not None:
+                if r.clear_at is None:
+                    r.clear_at = self.t
+                if self.t - r.clear_at >= BLOCK_CLEAR_S:
+                    r.stopped_at = r.clear_at = None
+
+    def _object_ahead(self, r) -> bool:
+        """갈 길 OBJECT_LOOK_M 안에서 몸이 지금 있는 물체에 닿고, 그 길이 물체에 가까워진다.
+        이동 목표가 없으면 보는 방향으로 같은 거리를 본다. 지나온 물체(뒤나 옆)는 막지 않는다."""
+        objects = self.objects_now()
+        if not objects:
+            return False
+        if r.goal_kind == "move" and r.target is not None:
+            line = [(r.x, r.y), *r.via, r.target]
+        else:
+            line = [(r.x, r.y), (r.x + math.cos(r.heading) * OBJECT_LOOK_M,
+                                 r.y + math.sin(r.heading) * OBJECT_LOOK_M)]
+        ahead, left = [line[0]], OBJECT_LOOK_M
+        for a, b in zip(line, line[1:], strict=False):
+            span = math.dist(a, b)
+            if span >= left:
+                f = left / span if span else 0.0
+                ahead.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+                break
+            ahead.append(b)
+            left -= span
+        reach = self.params.robot_radius_m + OBJECT_STOP_GAP_M
+        for ox, oy, radius in objects:
+            gap = path_gap(ox, oy, ahead)
+            if gap <= reach + radius and gap < math.dist((ox, oy), (r.x, r.y)) - 1e-9:
+                return True
+        return False
 
     # ---- central stand-in ----------------------------------------------------------------
 
@@ -351,6 +475,8 @@ class SimWorld:
                 self._drive_move(r)
 
     def _finish_goal(self, r, callback, *args):
+        if r.name in self.recovery:
+            self.recovery[r.name].restart()
         goal_id = r.goal_id
         r.goal_id = None
         r.goal_kind = ""
@@ -364,18 +490,35 @@ class SimWorld:
             if r.goal_elapsed >= NAV_TIMEOUT_AFTER_S:
                 self._finish_goal(r, self.core.on_move_result, False, "TIMEOUT")
             return
-        if r.stopped_at is not None:
+        recovery = self.recovery.get(r.name)
+        if recovery is None and r.stopped_at is not None:
             return  # 물체 앞에서 goal을 쥔 채 서 있다
         if r.nav_aborts > 0 and r.goal_elapsed >= NAV_ABORT_AFTER_S:
             r.nav_aborts -= 1
             self._finish_goal(r, self.core.on_move_result, False, "NAV_ABORTED")
             return
-        step = r.speed * DT
+        if recovery is None:
+            arrived = self._advance(r, r.speed * DT)
+        else:  # 물체 앞에 서고, 조금 후진하고, 다시 가 본다
+            track = _Track(self, r)
+            radius = self.params.robot_radius_m
+            others = [(o.x, o.y, radius) for o in self.virtual.values()
+                      if o is not r and not o.removed]
+            recovery.drive(self.t, DT, track, r.speed, others + self.objects_now())
+            arrived = track.arrived
+            if arrived:
+                recovery.succeeded()
+        if arrived:
+            self._finish_goal(r, self.core.on_move_result, True, "")
+
+    def _advance(self, r, step) -> bool:
+        """path를 따라 step만큼 앞으로 간다. 목표에 닿으면 True(자리는 목표에 맞춘다)."""
         while r.via:  # 선분을 차례로 따른다
             gap = math.dist((r.x, r.y), r.via[0])
             if gap > step:
                 break
             r.x, r.y = r.via.pop(0)
+            r.trail.append((r.x, r.y))
             step -= gap
         aim = r.via[0] if r.via else r.target
         dx, dy = aim[0] - r.x, aim[1] - r.y
@@ -384,10 +527,11 @@ class SimWorld:
             r.heading = math.atan2(dy, dx)
         if dist <= step and not r.via:
             r.x, r.y = r.target
-            self._finish_goal(r, self.core.on_move_result, True, "")
-        elif dist > 0:
+            return True
+        if dist > 0:
             r.x += dx / dist * min(step, dist)
             r.y += dy / dist * min(step, dist)
+        return False
 
     def _drive_retreat(self, r):
         """뒤로 간다(로봇은 돌아서지 않는다). 남은 길 전체에서 몸이 다른 로봇이나 물체에 닿으면
@@ -505,7 +649,15 @@ class SimWorld:
             x -= math.sin(r.heading) * r.drift
             y += math.cos(r.heading) * r.drift
             self.reported[r.name] = (x, y)
-            state = "BLOCKED" if r.blocked else "MOVING" if r.goal_id else "IDLE"
+            recovery = self.recovery.get(r.name)
+            if recovery is not None:
+                r.blocked = recovery.blocked
+            if r.blocked:
+                state = "BLOCKED"
+            elif recovery is not None and recovery.recovering and r.goal_kind == "move":
+                state = "RECOVERING"  # 자기 복구 중(계약 4절, 제안)
+            else:
+                state = "MOVING" if r.goal_id else "IDLE"
             yaw = r.heading if self.report_heading else 0.0
             battery = self.batteries.get(r.name)
             if battery is None:
@@ -545,6 +697,8 @@ class SimWorld:
         if r.goal_id is None:
             return
         old = r.goal_id
+        if r.name in self.recovery:
+            self.recovery[r.name].restart()
         if r.goal_kind == "move":
             self._queued_results.append((r.name, self.core.on_move_result,
                                          (r.name, old, False, "CANCELED")))
@@ -590,6 +744,7 @@ class SimWorld:
         r.goal_kind = "move"
         r.target = (cmd.x, cmd.y)
         r.via = via
+        r.trail = [(r.x, r.y)]
         r.goal_elapsed = 0.0
 
     def _refuses_path(self, r, cmd) -> bool:
@@ -763,6 +918,22 @@ class SimWorld:
                     self.min_true_release_distance,
                     self.site.distance_to_zone(true.x, true.y, zone))
 
+    def _check_objects(self, present):
+        """로봇은 물체 쪽으로 움직여 몸을 대지 않는다. 물체가 몸 위에 나타나 겹친 것만 예외다."""
+        if not self.objects:
+            return
+        radius = self.params.robot_radius_m
+        gaps = {}
+        for r in present:
+            for obj in self.objects_now():
+                gap = math.dist((r.x, r.y), obj[:2]) - radius - obj[2]
+                before = self._object_gaps.get((r.name, obj))
+                assert not (gap < -1e-9 and before is not None and gap < before - 1e-9), (
+                    f"{r.name} drove into the object at {obj[:2]} at {self.t}: {gap:.3f} m")
+                gaps[(r.name, obj)] = gap
+                self.min_object_gap = min(self.min_object_gap, gap)
+        self._object_gaps = gaps
+
     def _physical_zone(self, r):
         return self.site.zone_of[self.site.nearest_waypoint(r.x, r.y)]
 
@@ -799,6 +970,7 @@ class SimWorld:
             gap = math.hypot(a.x - b.x, a.y - b.y)
             assert gap >= 2 * self.params.robot_radius_m, (
                 f"{a.name} and {b.name} touch at {self.t}: {gap:.3f} m")
+        self._check_objects(present)
         in_baskets = sum(sum(r.basket.values()) for r in self.virtual.values())
         left = sum(self.stock.values())
         assert all(v >= 0 for v in self.stock.values())
