@@ -21,6 +21,7 @@ WAIT_COST = 0.8  # 서서 기다린 값의 배수: 1보다 작아야 같은 시�
 LINE_COST = 4.0  # 고정 선 칸을 자유 경로가 지날 때의 거리 배수: 도크 앞을 가로지르지 않게
 ARC_RADIUS_M = 0.15  # 꺾임을 둥글리는 원호 반지름(이보다 작게 줄 수 있다)
 ARC_STEP_M = 0.05
+GAP_DEPTH_M = 0.10  # a start with no clear cell this near is inside the gap of a narrow line
 MERGE_M = 0.05  # a report off a narrow line joins the line this far ahead of its foot
 JOIN_M = 0.12  # 이만큼 안에 있으면 들어가는 고정 선 위에 선 것으로 보고 그 자리에서 잇는다
 STEP_ONTO_CLEAR_M = 0.2  # a start stopped this close to clear floor steps onto it first
@@ -109,6 +110,10 @@ class FloorPlanner:
         in_line: 마지막에 따를 고정 선(도크로 들어감). 길이 없으면 None."""
         lines = self.floor.fixed_lines
         narrow = self.floor.narrow_lines
+        if out_line in narrow and rest_of_exit(start, lines[out_line].points) is None:
+            out_line = None  # off or past a narrow way out: never back into the gap along it
+        if in_line in narrow and math.dist(start, lines[in_line].points[-1]) <= 1e-9:
+            return Route([tuple(start)])  # on the dock of a narrow line already
         gap = None if out_line else self._gap_line(start)  # the narrow line start stands on
         head = [tuple(start)]
         fixed = []
@@ -124,15 +129,14 @@ class FloorPlanner:
         if in_line:
             tail = list(lines[in_line].points)
             rest = None if out_line else _rest_of_line(start, tail)
-            on_line = self.floor.clear | (self.floor.line_floor if in_line in narrow
-                                          else frozenset())
+            on_line = self.floor.clear | self.floor.line_floor_of.get(in_line, frozenset())
             if (rest is not None and gap != in_line
                     and not line_cells(self.floor, [start, rest[0]]) <= on_line):
                 rest = None  # the step onto the line would leave clear floor: plan as usual
             if rest is not None:
                 # already standing on the approach line (it waited there): go on up the line
-                if gap == in_line:
-                    rest = self._ahead(start, in_line)
+                if in_line in narrow:
+                    rest = self._ahead(start, in_line)  # every point on the line
                 route = Route([tuple(start), *rest])
                 route.fixed = [(0.0, route.length, in_line)]
                 return route
@@ -156,11 +160,19 @@ class FloorPlanner:
     # ---- narrow lines -------------------------------------------------------------------
 
     def _gap_line(self, start):
-        """Name of the narrow line in whose gap start stands: off clear floor and within JOIN_M
-        of the line where it runs over line floor (a report is a few cm off; in a gap the robot
-        is on the line). The line whose end it has passed does not count. Else None."""
+        """Name of the narrow line in whose gap start stands: off clear floor, no clear cell
+        within GAP_DEPTH_M (nearer than that it may be a robot passing the mouth with a report
+        a few cm off, which steps back onto clear floor as anywhere else) and within JOIN_M of
+        the line where it runs over its line floor (deep in a gap the robot is on the line).
+        The line whose end it has passed does not count. Else None."""
         floor = self.floor
-        if not floor.narrow_lines or floor.cell_of(*start) in floor.clear:
+        a = floor.cell_of(*start)
+        if not floor.narrow_lines or a in floor.clear:
+            return None
+        reach = math.ceil(GAP_DEPTH_M / floor.cell_m) + 1
+        if any(cell in floor.clear and math.dist(start, floor.centre(cell)) <= GAP_DEPTH_M
+               for cell in ((a[0] + di, a[1] + dj) for di in range(-reach, reach + 1)
+                            for dj in range(-reach, reach + 1))):
             return None
         found = []
         for name in sorted(floor.narrow_lines):
@@ -168,7 +180,7 @@ class FloorPlanner:
             near = _nearest_on(start, pts)
             if near is None or near[0] > JOIN_M or (near[1] == len(pts) - 2 and near[2] >= 1.0):
                 continue
-            if floor.cell_of(*near[3]) in floor.line_floor:
+            if floor.cell_of(*near[3]) in floor.line_floor_of[name]:
                 found.append((near[0], name))
         return min(found)[1] if found else None
 

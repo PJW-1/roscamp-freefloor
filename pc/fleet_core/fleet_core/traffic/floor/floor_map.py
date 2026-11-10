@@ -11,6 +11,7 @@ narrow_lines에 적은 고정 선은 clear 칸이 없는 좁은 틈(두 팔 사�
 달리므로 칸이 아니라 선의 모든 점이 막힌 곳까지 반지름 + wall_margin_m 이상이면 된다(픽셀 1/4 간격으로
 재고, 점마다 그 간격의 반만큼 더 요구한다). 그 선이 지나는 칸 중 clear가 아닌 칸이 line_floor다(틈 안).
 자유 경로는 틈에 들어가지 않는다: 틈에는 그 선으로만 들어가고, 틈 안의 로봇은 선을 따라 앞으로만 나온다.
+좁은 선은 rolling_lines에도 있어야 한다(통째 잠금과 접근선 한 대 규칙은 틈에서 따져 보지 않았다).
 robot_half_width_m(있으면): 차동구동 로봇은 옆으로 가지 않으니 곧게 달리는 동안은 반폭 + cell_margin_m만
 잠그고, 제자리에서 돌 수 있는 곳(출발점, 끝점, 크게 꺾이는 점 앞)만 반지름 + cell_margin_m 원으로 잠근다.
 """
@@ -110,10 +111,11 @@ class FloorMap:
         self.free = frozenset(c for c in self._ids if self._cell_free(c))
         wall = self.robot_radius_m + self.wall_margin_m
         self.clear = frozenset(c for c in self.free if self._box_gap_to_wall(c) >= wall)
-        # cells under the narrow lines that are not clear (the gap): driven along those lines only
-        self.line_floor = frozenset(
-            self.cell_of(x, y) for name in sorted(self.narrow_lines)
-            for x, y in self._samples(self.fixed_lines[name], self.px_m / 4)) - self.clear
+        # cells under each narrow line that are not clear (the gap): driven along that line only
+        self.line_floor_of = {name: frozenset(
+            self.cell_of(x, y) for x, y in self._samples(self.fixed_lines[name], self.px_m / 4)
+        ) - self.clear for name in sorted(self.narrow_lines)}
+        self.line_floor = frozenset().union(*self.line_floor_of.values())
         self._check()
 
     # ---- reading ------------------------------------------------------------------------
@@ -122,6 +124,8 @@ class FloorMap:
         if not isinstance(names, list) or any(not isinstance(n, str) or n not in self.fixed_lines
                                               for n in names):
             raise FloorMapError(f"narrow_lines {names!r} must list fixed line names")
+        if not set(names) <= self.rolling_lines:
+            raise FloorMapError(f"narrow_lines {names!r} must be rolling lines too")
         return frozenset(names)
 
     def _samples(self, line, step: float) -> list:

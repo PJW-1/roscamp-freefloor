@@ -472,3 +472,18 @@ def test_docks_are_checked_before_lines_as_before():
             "fixed_lines": {"across": [[0.3, 0.5], [1.7, 0.5]]}}
     with pytest.raises(FloorMapError, match="WORK"):
         FloorMap(data)
+
+
+def test_a_narrow_line_has_to_be_a_rolling_line():
+    """Whole-line locks and the one-robot rule of the other lines are not worked out for a robot
+    that leaves a gap along lines it was not sent by."""
+    with pytest.raises(FloorMapError, match="narrow_lines"):
+        FloorMap(gap_data(rolling_lines=["work_in"]))
+
+
+def test_each_narrow_line_has_its_own_floor():
+    floor = FloorMap(gap_data())
+    assert set(floor.line_floor_of) == {"work_in", "work_out"}
+    assert floor.line_floor == floor.line_floor_of["work_in"] | floor.line_floor_of["work_out"]
+    assert floor.cell_of(0.75, 0.55) in floor.line_floor_of["work_in"]
+    assert floor.cell_of(0.75, 0.55) not in floor.line_floor_of["work_out"]

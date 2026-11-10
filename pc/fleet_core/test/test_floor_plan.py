@@ -366,7 +366,9 @@ def test_a_robot_in_the_gap_without_a_line_to_follow_leaves_forward_along_the_na
 def test_a_report_off_the_centre_line_in_the_gap_goes_on_without_a_sideways_step(x):
     """Reports are a few cm off. Every point the robot is sent to is on the centre line, and it
     joins the line 0.05 m ahead, not square to it (a turn on the spot in the gap), whichever
-    line the robot is on."""
+    line the robot is on. This is where it is sent, not proof that the body clears the walls:
+    a robot that really stands 2.5 cm off the line has 0.075 m to the box, less than the 0.09 m
+    the line keeps."""
     from fleet_core.traffic.floor.planner import FloorPlanner
     planner = FloorPlanner(_gap_floor())
     way_in = planner.leg((x, 0.55), (0.75, 0.45), in_line="work_in")
@@ -401,3 +403,31 @@ def test_a_robot_on_clear_floor_beside_the_way_in_does_not_cut_into_the_gap():
     route = planner.leg((0.69, 0.72), (0.75, 0.45), in_line="work_in")
     assert route is not None and route.points[-2:] == [(0.75, 0.75), (0.75, 0.45)]
     assert all(p[0] == 0.75 for p in _in_gap(route.points))
+
+
+def test_a_report_beside_the_mouth_of_the_gap_is_not_taken_for_a_robot_in_it():
+    """A robot passing the mouth whose report falls a few cm into the wall margin (clear floor
+    is within 0.10 m) steps back onto clear floor as anywhere else; it is not sent through
+    the dock."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    assert planner._gap_line((0.69, 0.62)) is None
+    assert planner._gap_line((0.75, 0.50)) == "work_in"
+    route = planner.leg((0.69, 0.62), (0.21, 0.75))
+    assert route is not None and not _in_gap(route.points)
+    assert not route.fixed
+
+
+def test_a_robot_past_the_end_of_a_narrow_way_out_is_not_sent_back_into_the_gap():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.75, 0.14), (1.29, 0.15), out_line="work_out")
+    assert route is not None and not _in_gap(route.points)
+    assert route.points[0] == (0.75, 0.14) and route.points[-1] == (1.29, 0.15)
+
+
+def test_a_robot_on_the_dock_of_a_narrow_line_is_there_already():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.75, 0.45), (0.75, 0.45), in_line="work_in")
+    assert route is not None and route.points == [(0.75, 0.45)] and route.length == 0.0
