@@ -1,6 +1,8 @@
 # arena_v4에서 핑키 2대가 주문 10건(10초마다)을 나르는 리허설. 2대면 출고 도크와 틈이 비어 있을 때가 많다.
 # 지름길(outbound_short, 파라미터 floor_shortcut)은 기본이 꺼짐이라 이 명령으로는 접근선(outbound_in)만 탄다:
-#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_arena_v4_two traffic_mode:=freefloor #       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.15 #       nav_collision_check:=false
+#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_arena_v4_two traffic_mode:=freefloor \
+#       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.15 \
+#       nav_collision_check:=false
 # 지름길을 켜려면 fleet_params_real_arena.yaml을 복사해 floor_shortcut: true로 바꾼 파일의 경로를
 # fleet_params_file로 준다. 그러면 출고로 가는 로봇이 갈림길 (0.97, 0.445)에서 물체 2와 3 사이로 꺾는다.
 #   머리 없는 실행(2026-11-11, 씨앗 5개): 한 판에 지름길 5번, 지름길 없는 길보다 끝나는 시각이 2.2% 이르다.

@@ -304,6 +304,20 @@ def test_a_robot_takes_the_shortcut_when_it_is_through_before_the_docked_robot_c
             if isinstance(c, EventOut) and c.robot == "b"].count("FLOOR_SHORTCUT") == 1
 
 
+def test_the_floor_without_the_shortcut_is_the_figure_eight_alone():
+    """Switched off, the controller's floor is the one before the shortcut was drawn: the other
+    lines and the floor under them as they are, the gap between objects 1 and 3 no floor."""
+    plain = FLOOR.without_shortcuts()
+    assert set(plain.fixed_lines) == set(FLOOR.fixed_lines) - {"outbound_short"}
+    assert all(plain.fixed_lines[name] == FLOOR.fixed_lines[name] for name in plain.fixed_lines)
+    assert plain.rolling_lines == plain.narrow_lines == {"outbound_in", "outbound_out"}
+    assert plain.line_floor_of == {name: FLOOR.line_floor_of[name] for name in plain.narrow_lines}
+    gap = FLOOR.cell_of(*GAP_13)
+    assert gap in FLOOR.line_floor_of["outbound_short"] and gap not in plain.line_floor
+    assert (plain.free, plain.clear, plain.docks) == (FLOOR.free, FLOOR.clear, FLOOR.docks)
+    assert plain.parking == FLOOR.parking
+
+
 def test_no_robot_takes_the_shortcut_while_the_switch_is_off():
     """floor_shortcut is off unless asked for: the floor is then the one without the shortcut
     (its line, its gap cells), and a robot that would take it stays on the way in."""
@@ -538,6 +552,53 @@ def test_a_robot_keeps_to_the_way_in_while_another_leaves_the_dock_for_the_gaps(
     traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "P-1")
     assert traffic._legs["a"].out_line == "outbound_out"
     assert heads_in(traffic, "b").in_line == "outbound_in"
+
+
+def test_a_robot_on_its_way_out_keeps_the_line_after_a_leg_that_was_not_planned():
+    """A robot leaving the dock is asked for a new leg on every tick while another robot stands on
+    its parking spot. On a tick with no plan to spare the leg has no route; the leg after it has to
+    go on along the way out all the same, the only way out of the west part. (Gazebo,
+    gz_arena_v4_slow_work, 2026-11-11: FLOOR_NO_PATH on every tick, then the robot stood 0.26 m
+    from the dock for good and the next one could not leave it.)"""
+    spots = dict(FLOOR.parking)
+    traffic = fleet({"a": DOCK, "b": (*spots["P-1"], EAST)})
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    assert traffic._legs["a"].out_line == "outbound_out" and traffic._legs["a"].route is not None
+    traffic._drive(a)
+    moved(traffic, "a", 0.23, 0.27, -math.pi / 4)  # out of the dock, before the gap
+    traffic._plan_budget = 0
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    assert traffic._legs["a"].route is None  # planned on the next tick
+    traffic._plan_budget = 99
+    traffic._start_leg(a, "TO_PARK", None, "P-1")  # asked again before that
+    leg = traffic._legs["a"]
+    assert leg.out_line == "outbound_out"
+    assert leg.route is not None and points(leg.route)[-1] == pytest.approx(spots["P-1"])
+    assert not [c for c in traffic._out if isinstance(c, EventOut) and c.code == "FLOOR_NO_PATH"]
+
+
+def test_a_robot_off_its_way_out_does_not_take_it_up_again_after_a_leg_with_no_route():
+    """The line is kept only while the robot is on it. A leg begun past its end is a free one and
+    forgets the line, so that it is not taken up again where the robot comes near it later."""
+    spots = dict(FLOOR.parking)
+    traffic = fleet({"a": DOCK})
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    traffic._drive(a)
+    moved(traffic, "a", 0.23, 0.27, -math.pi / 4)
+    traffic._plan_budget = 0
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    assert traffic._legs["a"].route is None and traffic._legs["a"].out_line == "outbound_out"
+    moved(traffic, "a", 1.45, 0.87, EAST)  # past the mouth of the north corridor, the line's end
+    traffic._start_leg(a, "TO_PARK", None, "P-2")
+    assert traffic._legs["a"].route is None and traffic._legs["a"].out_line is None
+    moved(traffic, "a", 1.20, 0.875, EAST)  # on the line again, in the north corridor
+    traffic._plan_budget = 99
+    traffic._start_leg(a, "TO_PARK", None, "P-2")
+    leg = traffic._legs["a"]
+    assert leg.out_line is None and leg.route is not None and not leg.route.fixed
+    assert points(leg.route)[-1] == pytest.approx(spots["P-2"])
 
 
 def test_a_robot_takes_the_shortcut_when_the_one_that_left_is_past_the_gaps():
