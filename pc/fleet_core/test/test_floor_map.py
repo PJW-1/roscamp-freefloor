@@ -487,3 +487,72 @@ def test_each_narrow_line_has_its_own_floor():
     assert floor.line_floor == floor.line_floor_of["work_in"] | floor.line_floor_of["work_out"]
     assert floor.cell_of(0.75, 0.55) in floor.line_floor_of["work_in"]
     assert floor.cell_of(0.75, 0.55) not in floor.line_floor_of["work_out"]
+
+
+# ---- shortcuts: another way in to the same dock, taken on the way when it is free in time ----
+
+
+def shortcut_data(**extra):
+    """Open floor 2 x 1 m. The way in goes up the east side, west along the north side and down
+    to the dock; the shortcut leaves it on the east side and joins it again above the dock."""
+    data = {"bounds": [0, 0, 2, 1], "cell_m": 0.1, "robot_radius_m": 0.08, "cell_margin_m": 0.05,
+            "docks": {"OUTBOUND": [0.35, 0.25]},
+            "fixed_lines": {
+                "outbound_in": [[1.65, 0.25], [1.65, 0.75], [0.35, 0.75], [0.35, 0.55],
+                                [0.35, 0.25]],
+                "outbound_short": [[1.65, 0.25], [1.65, 0.45], [0.75, 0.45], [0.35, 0.55],
+                                   [0.35, 0.25]]},
+            "rolling_lines": ["outbound_in", "outbound_short"],
+            "shortcuts": {"outbound_short": "outbound_in"}}
+    data.update(extra)
+    return data
+
+
+def test_a_floor_without_shortcuts_has_none(floor):
+    assert floor.shortcuts == {}
+
+
+def test_a_shortcut_leaves_its_line_and_joins_it_again():
+    floor = FloorMap(shortcut_data())
+    assert floor.shortcuts == {"outbound_short": "outbound_in"}
+    fork, merge = floor.shortcut_parts["outbound_short"]
+    assert fork == pytest.approx(0.20)  # on the line up to (1.65, 0.45), between two of its points
+    assert merge == pytest.approx(0.20 + 0.90 + math.hypot(0.40, 0.10))  # (0.35, 0.55) on
+
+
+@pytest.mark.parametrize("bad", [
+    "outbound_in", ["outbound_short"], {"outbound_short": "nowhere"},
+    {"nowhere": "outbound_in"}, {"outbound_short": "outbound_short"},
+    {"outbound_short": "outbound_in", "outbound_in": "outbound_short"}])
+def test_a_shortcut_that_does_not_name_two_fixed_lines_is_refused(bad):
+    with pytest.raises(FloorMapError, match="shortcuts"):
+        FloorMap(shortcut_data(shortcuts=bad))
+
+
+@pytest.mark.parametrize("points", [
+    [[1.65, 0.35], [1.65, 0.45], [0.75, 0.45], [0.35, 0.55], [0.35, 0.25]],  # starts elsewhere
+    [[1.65, 0.25], [1.65, 0.45], [0.75, 0.45], [0.35, 0.55], [0.35, 0.35]],  # ends elsewhere
+    [[1.65, 0.25], [1.65, 0.75], [0.35, 0.75], [0.35, 0.25]],  # never leaves the line
+], ids=["start", "end", "same"])
+def test_a_shortcut_has_to_start_and_end_where_its_line_does_and_leave_it_between(points):
+    lines = dict(shortcut_data()["fixed_lines"], outbound_short=points)
+    with pytest.raises(FloorMapError, match="outbound_short"):
+        FloorMap(shortcut_data(fixed_lines=lines))
+
+
+def test_a_shortcut_and_its_line_have_to_be_rolling_lines():
+    """The robot leaves its line for the shortcut on the way, without stopping: there is no turn
+    to wait for on a rolling line (a line locked whole has one)."""
+    with pytest.raises(FloorMapError, match="shortcuts"):
+        FloorMap(shortcut_data(rolling_lines=["outbound_in"]))
+    with pytest.raises(FloorMapError, match="shortcuts"):
+        FloorMap(shortcut_data(rolling_lines=["outbound_short"]))
+
+
+def test_a_line_has_one_shortcut_at_most():
+    data = shortcut_data()
+    data["fixed_lines"]["outbound_other"] = data["fixed_lines"]["outbound_short"]
+    data["rolling_lines"].append("outbound_other")
+    with pytest.raises(FloorMapError, match="shortcuts"):
+        FloorMap(dict(data, shortcuts={"outbound_short": "outbound_in",
+                                       "outbound_other": "outbound_in"}))

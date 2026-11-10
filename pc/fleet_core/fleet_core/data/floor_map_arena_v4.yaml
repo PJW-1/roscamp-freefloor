@@ -45,6 +45,15 @@ parking:
 #   outbound_out: on south out of the dock (the dock is driven through), east between objects 1
 #                 and 2 (0.20 m) and between objects 2 and 3 (0.21 m) back into the middle passage,
 #                 up the rest of it and east through the corridor north of object 4 to its mouth.
+#   outbound_short: the shortcut the user drew on 2026-11-11 (red), 0.35 m shorter than
+#                 outbound_in: as outbound_in up the middle passage to (0.97, 0.445), then west
+#                 between objects 2 and 3 on the centre line of outbound_out (against it), north
+#                 through the gap between objects 1 and 3 (0.19 m; 0.0905 m from both sides on
+#                 this line, more than outbound_in keeps north of object 3) and on outbound_in
+#                 again above the dock, into it from the north. A robot sets off on outbound_in;
+#                 before the fork the traffic control turns it onto the shortcut when it holds the
+#                 whole stretch it shares with the way out and is through it before a robot at or
+#                 leaving the dock gets there.
 # So a robot is on a line all the way round the west loop and through both corridors, and drives
 # a planned path only in the empty east part: from the mouth of the north corridor to the waiting
 # spots or to work_in, and from the work dock to the start of outbound_in. (With the way out
@@ -55,5 +64,7 @@ fixed_lines:
   work_in: [[1.50, 0.45], [1.78, 0.17]]
   outbound_in: [[1.32, 0.125], [0.97, 0.125], [0.97, 0.905], [0.60, 0.905], [0.30, 0.86], [0.17, 0.74], [0.17, 0.52]]
   outbound_out: [[0.17, 0.52], [0.17, 0.33], [0.26, 0.24], [0.586, 0.274], [0.649, 0.432], [0.70, 0.445], [0.97, 0.445], [0.97, 0.875], [1.30, 0.875]]
-rolling_lines: [outbound_in, outbound_out]
-narrow_lines: [outbound_in, outbound_out]
+  outbound_short: [[1.32, 0.125], [0.97, 0.125], [0.97, 0.445], [0.70, 0.445], [0.65, 0.445], [0.61, 0.62], [0.17, 0.74], [0.17, 0.52]]
+rolling_lines: [outbound_in, outbound_out, outbound_short]
+narrow_lines: [outbound_in, outbound_out, outbound_short]
+shortcuts: {outbound_short: outbound_in}

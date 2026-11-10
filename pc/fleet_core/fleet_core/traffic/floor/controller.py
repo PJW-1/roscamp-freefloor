@@ -32,6 +32,11 @@ m.path는 [출발할 때 가까운 지점, 목적지 지점] 두 개다. 선택�
     고정 선 칸에 닿지 않는 빈 자리에서 기다리고, 선이 비면 먼저 온 로봇부터 들어간다.
   - BLOCKED가 blocked_mark_s 이어지면 앞 칸을 막힘(주인 BLOCK_OWNER)으로 표시하고 목표를 거둔다.
     BLOCKED가 아닌 보고가 release_confirm_samples번 오면 표시를 지우고 다시 계획한다.
+  - 지름길(지도 shortcuts): 로봇은 원래 접근선으로 출발하고, 잠금이 갈림목 TURN_LEAD_M 앞에
+    닿을 때 한 번 고른다(_take_shortcut). 같은 도크로 그 선을 앞서 가는 로봇이 없고, 다른 로봇이
+    지름길에서 다른 선과 겹치는 구간에 닿기(도크에서 일하는 로봇은 일이 끝나는 것부터)
+    SHORTCUT_MARGIN_S 전에 이 로봇이 그 구간을 지나고, 그 구간 끝까지의 칸을 한꺼번에 잡으면
+    지름길로 간다. 그 구간 안에서는 서지 않으므로 나오는 로봇과 틈에서 마주 서지 않는다.
 """
 from __future__ import annotations
 
@@ -83,6 +88,8 @@ REST_RELEASE_SAMPLES = 10
 # 반폭 잠금(지도 robot_half_width_m). RPP가 제자리에서 돌 수 있는 곳만 몸 원 전체를 잠근다
 TURN_LEAD_M = 0.25  # RPP max_lookahead_dist: 꺾이기 이만큼 앞에서부터 돌기 시작할 수 있다
 TURN_START_M = 0.05  # 다리 출발 뒤 이만큼은 출발 자리에서 돌 수 있다
+# 지름길: 다른 로봇이 겹치는 구간에 닿기 이만큼 전에 지나갈 수 있어야 탄다(ETA 오차 몫)
+SHORTCUT_MARGIN_S = 1.0
 
 
 @dataclass
@@ -110,6 +117,7 @@ class _Leg:
     yields: tuple = ()  # 그중 지금 이 로봇의 잠금을 막고 있는 로봇들(서서 기다린다)
     yield_since: float | None = None
     no_yield: tuple = ()  # 너무 오래 기다려 이 다리에서는 더 비켜 주지 않는 로봇들
+    short_decided: bool = False  # 지름길을 탈지 골랐다(다리마다 한 번)
 
 
 def _along(points, xy) -> tuple[float, float]:
@@ -155,7 +163,7 @@ class FloorController(TrafficController):
         self._rest_outside: dict[str, dict[str, int]] = {name: {} for name in robots}
         self._wp_cell: dict = {}
         self.metrics = {"slowdowns": 0, "replans": 0, "sidesteps": 0, "no_path": 0,
-                        "pre_admits": 0}
+                        "pre_admits": 0, "shortcuts": 0}
         self._block_since: dict[str, float] = {}  # robot -> first BLOCKED report of this run
         self._clear_n: dict[str, int] = {}  # robot -> non-BLOCKED reports since its mark
         self._marks: dict[str, set[str]] = {}  # robot -> cells it marked as blocked
@@ -170,6 +178,10 @@ class FloorController(TrafficController):
         self._line_ids = {name: self._swept(line.points)
                           for name, line in self.floor.fixed_lines.items()}
         self._all_line_ids = set().union(*self._line_ids.values()) if self._line_ids else set()
+        # 지름길: 접근선 -> 지름길, 지름길 -> (갈림목에서 접근선 끝까지 m, 겹치는 구간 끝에서
+        # 지름길 끝까지 m, 합류점에서 지름길 끝까지 m)
+        self._shortcut = {base: short for short, base in self.floor.shortcuts.items()}
+        self._short_geo = {short: self._shortcut_geometry(short) for short in self.floor.shortcuts}
         self._deadlock_seen = 0.0
         self._unresolved_robot = ""
         self._plan_budget = PLANS_PER_TICK
@@ -478,8 +490,12 @@ class FloorController(TrafficController):
         span = old.route.fixed_at(old.s) if old is not None and old.route is not None else None
         if out_line is None and span is not None and span[2] == old.out_line:
             out_line = old.out_line  # 출구선을 나가던 중: 남은 선을 마저 간다
+        in_line = self._line(station, "in") if station else None
+        if (span is not None and span[2] == old.in_line
+                and self._shortcut.get(in_line) == old.in_line):
+            in_line = old.in_line  # 지름길 위에서 같은 도크로: 지름길을 마저 간다
         leg = _Leg(None, self.site.waypoint_pose(goal_waypoint), out_line=out_line,
-                   in_line=self._line(station, "in") if station else None)
+                   in_line=in_line)
         m.path = [self.site.nearest_waypoint(m.x, m.y), goal_waypoint]
         m.idx = 0
         m.settle_idx = None
@@ -574,6 +590,7 @@ class FloorController(TrafficController):
     # ---- ETA (관측) ----------------------------------------------------------------------
 
     def _line_station(self, line: str) -> str | None:
+        line = self.floor.shortcuts.get(line, line)  # 지름길은 그 선의 도크로 간다
         for sid in self.site.stations:
             if line in (f"{sid.lower()}_in", f"{sid.lower()}_out"):
                 return sid
@@ -790,6 +807,128 @@ class FloorController(TrafficController):
         leg.route = first
         leg.s = leg.s_lock = leg.s_sent = 0.0
         leg.stuck_since = None
+
+    # ---- 지름길 ----------------------------------------------------------------------------
+
+    def _shortcut_geometry(self, short: str) -> tuple[float, float, float]:
+        """지름길 short의 (갈림목에서 원래 선 끝까지, 겹치는 구간 끝에서 지름길 끝까지, 합류점에서
+        지름길 끝까지) m. 겹치는 구간: 갈림목부터 몸이 다른 고정 선(원래 선 말고)을 따라가는 몸에
+        닿는 동안. 그 끝에 선 로봇은 그 선들로 가는 로봇을 막지 않는다. 도크 가까이에서 다시 닿는
+        것(도크에서 나가는 선의 시작)은 원래 선도 같다."""
+        base = self.floor.shortcuts[short]
+        fork, merge = self.floor.shortcut_parts[short]
+        route = Route(list(self.floor.fixed_lines[short].points))
+        others = set().union(*(ids for name, ids in self._line_ids.items()
+                               if name not in (short, base)))
+        step = self.floor.cell_m / 2
+        clear = s = fork
+        while s < merge + 1e-9 and not self._body_cells(*route.at(s)).isdisjoint(others):
+            s += step
+            clear = s
+        clear = min(merge, clear)
+        gone, length = _along(self.floor.fixed_lines[base].points, route.at(fork))
+        return length - gone, route.length - clear, route.length - merge
+
+    def _take_shortcut(self, m: _Mission, leg: _Leg) -> None:
+        """원래 접근선을 가는 로봇이 갈림목 앞에 오면 지름길을 탈지 한 번 고른다(모듈 설명)."""
+        short = self._shortcut.get(leg.in_line)
+        if short is None or leg.short_decided or leg.route is None or leg.waiting:
+            return
+        to_end, clear_left, tail = self._short_geo[short]
+        route = leg.route
+        s_fork = route.length - to_end
+        span = next((a for a, _, line in route.fixed if line == leg.in_line), None)
+        if span is None or s_fork < span - 1e-9 or leg.s >= s_fork - 1e-6:
+            leg.short_decided = True  # 갈림목을 지났거나 선을 갈림목 뒤에서 탔다
+            return
+        if leg.s + self.params.floor_lock_ahead_m < s_fork - TURN_LEAD_M:
+            return  # 아직 멀다: 잠금이 갈림목에서 돌기 시작하는 곳에 닿을 때 고른다
+        leg.short_decided = True
+        mine = route.length - leg.s
+        for name, other in self._legs.items():
+            if (name != m.name and other.in_line == leg.in_line and not other.waiting
+                    and other.route is not None and self._in_service(name)
+                    and tail < other.route.length - other.s <= mine):
+                return  # 합류점 전에 같은 선을 앞서 가는 로봇: 두 길로 합류점을 다투지 않는다
+        new = self.planner.leg((m.x, m.y), leg.goal_xy, None, short)
+        if new is None or [f[2] for f in new.fixed] != [short]:
+            return
+        end = new.length - clear_left
+        if end <= 0.0:
+            return
+        trial = _Leg(new, leg.goal_xy, in_line=short)
+        cells = self._drive_cells(m, trial, end, self._drive_path(m, trial, end))
+        through = route_s([(m.x, m.y)] + new.between(0.0, end), self.params, heading=m.yaw)
+        for name in self._missions:
+            if name == m.name:
+                continue
+            if not cells.isdisjoint(self.zones.held_set(name)):
+                return
+            if not self._in_service(name):
+                continue
+            t = self._reach_s(name, cells, (leg.in_line, short))
+            if t is not None and t < through + SHORTCUT_MARGIN_S:
+                return  # 다른 로봇이 지나가기 전에 겹치는 구간에 온다: 원래 선으로
+        if not self.zones.acquire_all(m.name, cells):
+            self.zones.cancel_all_requests(m.name)  # 막힘 표시 따위: 원래 선으로(줄 서지 않는다)
+            return
+        base = leg.in_line
+        leg.route, leg.in_line = new, short
+        leg.s, leg.s_lock, leg.s_sent = 0.0, end, 0.0
+        leg.planned_at = self._clock()
+        leg.stuck_since = leg.no_way_since = None
+        leg.behind, leg.yields, leg.yield_since = (), (), None
+        self.metrics["shortcuts"] += 1
+        self._event("INFO", "FLOOR_SHORTCUT", f"takes {short} instead of {base} "
+                    f"(through the shared stretch in {through:.1f} s)", m.name)
+
+    def _reach_s(self, name: str, cells, ways) -> float | None:
+        """name의 몸이 cells에 처음 닿기까지(초, ETA). 닿지 않거나, ways(같은 도크로 가는 선)를 가는
+        로봇이거나(앞선 로봇은 따로 보고 뒤 로봇은 따라온다), 갈 길을 모르면 None. 도크에 서 있는
+        로봇은 일이 끝난 뒤 그 도크의 출구선으로 나간다고 본다."""
+        r, leg = self._missions[name], self._legs.get(name)
+        if leg is not None and leg.in_line in ways:
+            return None
+        wait = 0.0
+        if leg is not None and leg.route is not None:
+            pts = [(r.x, r.y)] + leg.route.between(leg.s, leg.route.length)
+        else:
+            station = self._dock_here(r)
+            out = self._line(station, "out") if station else None
+            if out is None:
+                return None
+            pts = list(self.floor.fixed_lines[out].points)
+            if leg is None:
+                wait = self._work_left_s(r, station)
+        until = self._until_cells(pts, cells)
+        return None if until is None else wait + route_s(until, self.params, heading=r.yaw)
+
+    def _work_left_s(self, r: _Mission, station: str) -> float:
+        """도크에 선 로봇이 일을 마치기까지(초). 모르면 0: 곧 나갈 수 있다."""
+        p = self.params
+        if r.phase == DOCKING:
+            return max(0.0, p.eta_dock_s - self._since(r)) + self._work_s(station)
+        if r.phase == AT_STATION:
+            left = self.station_left(r.name) if self.station_left else None
+            if left is None:
+                left = self._work_s(station) if self._since(r) < 1.0 else 0.0
+            return left
+        return 0.0
+
+    def _until_cells(self, pts, cells) -> list | None:
+        """꺾은선 pts 위를 가는 몸이 cells에 처음 닿는 곳까지의 꺾은선. 닿지 않으면 None."""
+        step = self.floor.cell_m / 2
+        done = [tuple(pts[0])]
+        if not self._body_cells(*pts[0]).isdisjoint(cells):
+            return done
+        for a, b in zip(pts, pts[1:], strict=False):
+            n = max(1, math.ceil(math.dist(a, b) / step))
+            for k in range(1, n + 1):
+                q = (a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n)
+                if not self._body_cells(*q).isdisjoint(cells):
+                    return done + [q]
+            done.append(tuple(b))
+        return None
 
     def _route(self, m: _Mission, start, goal, out_line=None, in_line=None, extra=frozenset(),
                cautious=False):
@@ -1119,6 +1258,7 @@ class FloorController(TrafficController):
             return
         if m.goal is None and self._clock() < m.retry_at:
             return
+        self._take_shortcut(m, leg)
         grew = self._extend(m, leg)
         cap = self._line_cap(m, leg)
         if cap is not None and leg.s_lock >= cap - 1e-9:
