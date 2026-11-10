@@ -273,6 +273,7 @@ def moved(traffic, name, x, y, yaw, reports=20):
     for memory in (traffic._stand, traffic._recent):
         memory.pop(name, None)
     for _ in range(reports):
+        m.last_seen = (m.last_seen or 0.0) + 0.1  # a new report each time
         traffic._follow(m)
     return m
 
@@ -437,7 +438,10 @@ def test_a_report_thrown_aside_before_the_last_corner_does_not_put_the_robot_pas
         moved(traffic, "b", *leg.route.at(leg.s + 0.10), west)
     moved(traffic, "b", *leg.route.at(corner - 0.16), west)
     assert leg.s == pytest.approx(corner - 0.16, abs=0.01)
-    moved(traffic, "b", 0.223, 0.641, west, reports=1)
+    b = moved(traffic, "b", 0.223, 0.641, west, reports=1)
+    assert leg.s < corner
+    for _ in range(5):  # the ticks until the next report see the same one: no further
+        traffic._follow(b)
     assert leg.s < corner
 
 
