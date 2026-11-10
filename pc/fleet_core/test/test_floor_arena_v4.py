@@ -648,6 +648,29 @@ def test_a_stop_inside_the_junction_does_not_end_a_lock_inside_it():
     assert traffic._candidates(leg) == [s1]  # without the cap: the whole span
 
 
+def test_a_robot_keeps_the_junction_until_it_is_through_it():
+    """The robot leaving turns on the spot at (0.97, 0.445). A noisy report north of the corner
+    had put its progress past it while its reports now lag 7 cm west: the cells of the corner
+    behind the progress were let go under the turning robot (headless runs, 3 robots, 16 orders
+    every 12 s, seeds 16 and 28: "on cells it does not hold" at the junction). The span is held
+    whole until the progress is through it."""
+    traffic = fleet({"a": DOCK})
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "P-1")
+    leg = traffic._legs["a"]
+    (s0, s1), = traffic._box_spans(leg.route)
+    corner, _ = leg.route.project(*MERGE)
+    while leg.s < corner + 0.04:
+        drive_on(traffic, "a")
+    assert leg.s_lock == pytest.approx(s1)
+    a = moved(traffic, "a", MERGE[0] - 0.066, MERGE[1] + 0.014, NORTH, reports=1)
+    traffic._active["a"].clear()  # nothing old to follow: only the leg keeps cells
+    for cell_id in traffic.zones.held_set("a"):
+        a.outside[cell_id] = 99
+    traffic._release_cells(a)
+    held = traffic.zones.held_set("a")
+    assert traffic._body_cells(*MERGE) <= held
+
+
 def test_the_junction_is_the_only_box_on_this_map():
     """A box is the turn circle of a rolling line where another rolling line runs through the
     turn and comes in from another side. Where the way in and the way out part at the top of the

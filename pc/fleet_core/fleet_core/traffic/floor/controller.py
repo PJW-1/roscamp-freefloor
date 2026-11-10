@@ -706,6 +706,12 @@ class FloorController(TrafficController):
             keep |= self._lock_cells(leg.route, leg.s, leg.s_lock)
         if leg is not None and leg.in_line in self._short_route:
             keep |= self._stretch_ahead(m, leg.in_line)
+        if leg and leg.route:
+            # 교차 상자 구간은 통째로 잡았으니 진행이 구간을 지날 때까지 통째로 쥔다: 모퉁이에서
+            # 튄 보고로 진행이 모퉁이를 넘어도 제자리에서 도는 로봇 밑의 칸을 놓지 않는다
+            for s0, s1 in self._box_spans(leg.route):
+                if s0 - 1e-9 <= leg.s < s1 - 1e-9 <= leg.s_lock:
+                    keep |= self._lock_cells(leg.route, s0, s1)
         for active in self._active[m.name].values():
             s, _ = active.project(m.x, m.y)
             keep |= self._lock_cells(active, s, active.length)
