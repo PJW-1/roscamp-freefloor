@@ -1,5 +1,5 @@
 # Free-floor map for the measured arena (2026-11-10): 2.00 x 1.00 m inside the walls, as the
-# lidar of a real Pinky measured it, with the two temporary objects that stood in it that day
+# lidar of a real Pinky measured it, with the two objects that stood in it that day
 # (docs/실측_2026-11-10.md); three Pinkys. arena_1110_fine.pgm is the same file as
 # sim/fleet_gz_sim/maps/arena_1110_fine.pgm (a test compares them; rebuild both with
 # python3 -m fleet_gz_sim.arena --site arena_1110). Coordinates are those of the lane map
@@ -10,37 +10,38 @@ origin: [-0.15, -0.15, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.25
-# Same robot, cells and margins as floor_map_real_arena.yaml (see there). The 0.20 m gap between
-# the two objects has no clear cell, so the floor is one ring round both: 0.35-0.45 m corridors
-# north and south, 0.65-0.70 m at the west and east ends.
+# Same robot, cells and margins as floor_map_real_arena.yaml (see there). The two objects are
+# the two arms of the work cell and the robots dock in the 0.20 m gap between them (0.21 m
+# measured). A clear cell keeps 0.09 m from a wall, so the gap holds none: the WORK lines are
+# narrow lines, checked by their own distance to the objects (0.10 m on the centre line
+# x 0.95), and free paths never enter the gap. A Pinky is 0.11 m wide and sweeps 0.083 m when
+# it turns. Round the objects: 0.35-0.45 m corridors north and south, 0.65-0.70 m at the ends.
 cell_m: 0.03
 robot_radius_m: 0.08
 cell_margin_m: 0.03
 robot_half_width_m: 0.06
 side_margin_m: 0.02
 wall_margin_m: 0.01
-# Station dock poses: the dock waypoints of the lane map (a test compares them). Where the
-# stations stand in the real arena is not settled; these are assumed.
+# Station dock poses: the dock waypoints of the lane map (a test compares them). The user set
+# the layout on 2026-11-10: WORK docks between the two arms, OUTBOUND before the east wall, the
+# robots charge and start before the west wall.
 docks:
-  WORK: [0.45, 0.50]
-  OUTBOUND: [1.55, 0.50]
-# Parking spots as the line waiting for WORK (lane map parking; the last is next to the way in
-# and goes first): between the end walls and the station
-# lines, 0.40 m apart and 0.19 m from the wall, off every line and off the ring. Two spots
-# 0.25 m apart beside an object, or spots 0.13 m from the wall, drove over cells they did not
-# hold from the start with 3 cm report noise.
+  WORK: [0.95, 0.50]
+  OUTBOUND: [1.81, 0.50]
+# Charging spots as the line waiting for WORK (lane map parking; the last is next to the way in
+# and goes first): a column 0.19 m from the west wall, 0.30 m apart.
 parking:
-  - {id: P-3, x: 1.81, y: 0.50}
-  - {id: P-1, x: 0.19, y: 0.30}
-  - {id: P-2, x: 0.19, y: 0.70}
-# The robots go round the ring one way: south at the west end (WORK: in from the north, out to
-# the south), east along the south corridor, north at the east end (OUTBOUND: in from the
-# south, out to the north), west along the north corridor. The station lines run 0.45 m inside
-# the end walls. Every line is one way and the way in and the way out share only the dock end,
-# so the lines roll like the floor.
+  - {id: P-1, x: 0.19, y: 0.20}
+  - {id: P-2, x: 0.19, y: 0.50}
+  - {id: P-3, x: 0.19, y: 0.80}
+# A figure of eight. The WORK line runs through the gap from north to south; a loaded robot goes
+# east along the south corridor, into OUTBOUND from the south and out to the north (0.19 m from
+# the east wall), and back along the north corridor. Every line is one way and the way in and
+# the way out share only the dock end, so the lines roll like the floor.
 fixed_lines:
-  work_in: [[0.45, 0.85], [0.45, 0.50]]
-  work_out: [[0.45, 0.50], [0.45, 0.15]]
-  outbound_in: [[1.55, 0.15], [1.55, 0.50]]
-  outbound_out: [[1.55, 0.50], [1.55, 0.85]]
+  work_in: [[0.95, 0.80], [0.95, 0.50]]
+  work_out: [[0.95, 0.50], [0.95, 0.20]]
+  outbound_in: [[1.81, 0.20], [1.81, 0.50]]
+  outbound_out: [[1.81, 0.50], [1.81, 0.80]]
 rolling_lines: [work_in, work_out, outbound_in, outbound_out]
+narrow_lines: [work_in, work_out]

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <!-- 생성 파일: python3 -m fleet_gz_sim.arena (arena_1110.yaml) 로 다시 만든다. 손으로 고치지 않는다.
      월드 좌표 = 지도 좌표 = lane_map.yaml 좌표. 레인은 바닥 그림이고 벽·상자는 레인에서
-     0.12 m 넘게 떨어져 있다. -->
+     0.1 m 넘게 떨어져 있다. -->
 <sdf version="1.9">
   <world name="lane_arena">
     <physics name="4ms" type="ignored">
@@ -55,15 +55,19 @@
       <visual name="object_west_visual"><pose>0.75 0.55 0.15 0 0 0</pose><geometry><box><size>0.2 0.2 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
       <collision name="object_east"><pose>1.175 0.5 0.15 0 0 0</pose><geometry><box><size>0.25 0.2 0.3</size></box></geometry></collision>
       <visual name="object_east_visual"><pose>1.175 0.5 0.15 0 0 0</pose><geometry><box><size>0.25 0.2 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
-      <visual name="lane_QW-W"><pose>0.45 0.675 0.0005 0 0 -1.5708</pose><geometry><box><size>0.35 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_W-WS"><pose>0.45 0.325 0.0005 0 0 -1.5708</pose><geometry><box><size>0.35 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_WS-QO"><pose>1 0.15 0.0005 0 0 0</pose><geometry><box><size>1.1 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_QO-O"><pose>1.55 0.325 0.0005 0 0 1.5708</pose><geometry><box><size>0.35 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_O-ON"><pose>1.55 0.675 0.0005 0 0 1.5708</pose><geometry><box><size>0.35 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_ON-QW"><pose>1 0.85 0.0005 0 0 3.1416</pose><geometry><box><size>1.1 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_WS-P-1"><pose>0.32 0.225 0.0005 0 0 2.6183</pose><geometry><box><size>0.3002 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_QW-P-2"><pose>0.32 0.775 0.0005 0 0 -2.6183</pose><geometry><box><size>0.3002 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_ON-P-3"><pose>1.68 0.675 0.0005 0 0 -0.9319</pose><geometry><box><size>0.436 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_QW-W"><pose>0.95 0.65 0.0005 0 0 -1.5708</pose><geometry><box><size>0.3 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_W-WS"><pose>0.95 0.35 0.0005 0 0 -1.5708</pose><geometry><box><size>0.3 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_WS-QO"><pose>1.38 0.2 0.0005 0 0 0</pose><geometry><box><size>0.86 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_QO-O"><pose>1.81 0.35 0.0005 0 0 1.5708</pose><geometry><box><size>0.3 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_O-ON"><pose>1.81 0.65 0.0005 0 0 1.5708</pose><geometry><box><size>0.3 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_ON-QW"><pose>1.38 0.8 0.0005 0 0 3.1416</pose><geometry><box><size>0.86 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_WS-SW"><pose>0.7 0.2 0.0005 0 0 3.1416</pose><geometry><box><size>0.5 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_SW-WM"><pose>0.45 0.35 0.0005 0 0 1.5708</pose><geometry><box><size>0.3 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_WM-NW"><pose>0.45 0.65 0.0005 0 0 1.5708</pose><geometry><box><size>0.3 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_NW-QW"><pose>0.7 0.8 0.0005 0 0 0</pose><geometry><box><size>0.5 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_SW-P-1"><pose>0.32 0.2 0.0005 0 0 3.1416</pose><geometry><box><size>0.26 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_WM-P-2"><pose>0.32 0.5 0.0005 0 0 3.1416</pose><geometry><box><size>0.26 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_NW-P-3"><pose>0.32 0.8 0.0005 0 0 3.1416</pose><geometry><box><size>0.26 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       </link>
     </model>
   </world>

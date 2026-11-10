@@ -386,3 +386,89 @@ def test_a_half_width_that_is_not_inside_the_radius_is_refused(bad):
             "cell_margin_m": 0.05, "robot_half_width_m": bad}
     with pytest.raises(FloorMapError, match="robot_half_width_m"):
         FloorMap(data)
+
+
+def gap_data(**extra):
+    """Two boxes 0.20 m apart (x 0.65 to 0.85). Clear cells keep 0.09 m from a wall, so no 3 cm
+    cell between the boxes is clear; the centre line x = 0.75 keeps 0.10 m."""
+    data = {"bounds": [0, 0, 1.5, 0.9], "resolution": 0.01, "cell_m": 0.03,
+            "boxes": [[0.45, 0.30, 0.65, 0.60], [0.85, 0.30, 1.05, 0.60]],
+            "robot_radius_m": 0.08, "cell_margin_m": 0.03, "wall_margin_m": 0.01,
+            "docks": {"WORK": [0.75, 0.45]},
+            "fixed_lines": {"work_in": [[0.75, 0.75], [0.75, 0.45]],
+                            "work_out": [[0.75, 0.45], [0.75, 0.15]]},
+            "rolling_lines": ["work_in", "work_out"],
+            "narrow_lines": ["work_in", "work_out"]}
+    data.update(extra)
+    return data
+
+
+def test_a_line_through_a_gap_with_no_clear_cell_is_refused_unless_the_map_says_narrow():
+    with pytest.raises(FloorMapError, match="leaves clear floor"):
+        FloorMap(gap_data(narrow_lines=[], docks={}))
+    with pytest.raises(FloorMapError, match="WORK"):
+        FloorMap(gap_data(narrow_lines=[], fixed_lines={}, rolling_lines=[]))
+    floor = FloorMap(gap_data())
+    assert floor.narrow_lines == frozenset({"work_in", "work_out"})
+
+
+def test_a_narrow_line_keeps_the_body_and_wall_margin_off_the_walls_by_itself():
+    """The robot drives on the line, so the line keeps radius + wall margin from the walls; the
+    cells it runs over need not, and they stay out of the clear floor."""
+    floor = FloorMap(gap_data())
+    between = {floor.cell_of(0.75, y / 100) for y in range(31, 60)}
+    assert between <= floor.line_floor and not between & floor.clear
+    assert floor.line_floor <= floor.free
+    for name in floor.narrow_lines:
+        (ax, ay), (bx, by) = floor.fixed_lines[name].points
+        for k in range(101):
+            point = (ax + (bx - ax) * k / 100, ay + (by - ay) * k / 100)
+            assert floor._gap_to_wall(*point) >= 0.08 + 0.01 - 1e-9
+
+
+@pytest.mark.parametrize("x", [0.73, 0.77])
+def test_a_narrow_line_nearer_a_wall_than_the_body_and_margin_is_refused(x):
+    lines = {"work_in": [[x, 0.75], [x, 0.45]], "work_out": [[x, 0.45], [x, 0.15]]}
+    with pytest.raises(FloorMapError, match="work_in"):
+        FloorMap(gap_data(fixed_lines=lines, docks={}))
+    with pytest.raises(FloorMapError, match="WORK"):  # the dock on it is refused first
+        FloorMap(gap_data(fixed_lines=lines, docks={"WORK": [x, 0.45]}))
+
+
+def test_a_dock_between_the_boxes_has_to_stand_on_the_narrow_line():
+    with pytest.raises(FloorMapError, match="WORK"):
+        FloorMap(gap_data(docks={"WORK": [0.73, 0.45]}))  # same cell column, 0.08 m from a box
+    with pytest.raises(FloorMapError, match="P-1"):
+        FloorMap(gap_data(parking=[{"id": "P-1", "x": 0.75, "y": 0.45}]))  # parking: clear only
+
+
+@pytest.mark.parametrize("bad", [["nowhere"], "work_in", [3]])
+def test_a_narrow_line_that_is_not_a_fixed_line_is_refused(bad):
+    with pytest.raises(FloorMapError, match="narrow_lines"):
+        FloorMap(gap_data(narrow_lines=bad))
+
+
+def test_the_default_floor_has_no_narrow_line(floor):
+    assert floor.narrow_lines == frozenset() and floor.line_floor == frozenset()
+
+
+def test_the_cells_under_a_narrow_line_that_are_clear_anyway_are_not_line_floor():
+    floor = FloorMap(gap_data())
+    assert not floor.line_floor & floor.clear
+    assert floor.cell_of(0.75, 0.75) in floor.clear  # the open end of the way in
+
+
+def test_a_narrow_line_keeps_its_distance_between_the_points_that_are_checked_too():
+    """Checked every quarter pixel, each point half that spacing beyond the limit, so no point
+    of the line is nearer: a line at exactly radius + wall margin is refused."""
+    lines = {"work_in": [[0.74, 0.75], [0.74, 0.45]], "work_out": [[0.74, 0.45], [0.74, 0.15]]}
+    with pytest.raises(FloorMapError, match="work_in"):
+        FloorMap(gap_data(fixed_lines=lines, docks={}))
+
+
+def test_docks_are_checked_before_lines_as_before():
+    data = {"bounds": [0, 0, 2, 1], "boxes": [[0.9, 0.0, 1.1, 1.0]], "cell_m": 0.1,
+            "robot_radius_m": 0.08, "cell_margin_m": 0.05, "docks": {"WORK": [0.05, 0.5]},
+            "fixed_lines": {"across": [[0.3, 0.5], [1.7, 0.5]]}}
+    with pytest.raises(FloorMapError, match="WORK"):
+        FloorMap(data)

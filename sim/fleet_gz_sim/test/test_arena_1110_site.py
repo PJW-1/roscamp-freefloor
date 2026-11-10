@@ -18,7 +18,7 @@ EPS = 1e-9
 
 def test_the_walls_are_the_measured_two_by_one_metres():
     assert SITE.inside == (0.0, 0.0, 2.00, 1.00)
-    assert SITE.lane_clearance_m == arena.load_site(PKG / "sites" / "real_arena.yaml").lane_clearance_m
+    assert SITE.lane_clearance_m == 0.10  # the WORK lane runs down the middle of the 0.20 m gap
 
 
 def test_the_two_objects_are_where_the_lidar_saw_them_to_five_centimetres():
@@ -29,13 +29,20 @@ def test_the_two_objects_are_where_the_lidar_saw_them_to_five_centimetres():
         assert all(abs(a - b) <= 0.025 + EPS for a, b in zip(got, seen)), (box.name, got)
 
 
-def test_a_pinky_fits_round_the_objects_but_not_between_them():
+def test_a_pinky_fits_round_the_objects_and_docks_between_them():
+    """The gap is the WORK dock: 0.20 m (0.21 m measured). A Pinky is 0.11 m wide and sweeps
+    0.083 m when it turns, so the centre line leaves 0.045 m beside it and 0.017 m in a turn."""
     west, east = sorted(SITE.features, key=lambda b: b.x0)
     x0, y0, x1, y1 = SITE.inside
     round_them = [west.x0 - x0, x1 - east.x1, west.y0 - y0, east.y0 - y0, y1 - west.y1,
                   y1 - east.y1]
     assert all(gap >= 0.35 - EPS for gap in round_them), round_them
-    assert east.x0 - west.x1 <= 0.20 + EPS  # clear cells need 0.09 m to each side
+    gap = east.x0 - west.x1
+    assert gap == pytest.approx(0.20) and gap / 2 >= 0.083 + 0.01
+    lanes = lane_map_module.load_lane_map(FAKE / "maps" / "arena_1110.yaml")
+    dock = lanes.waypoint_pose(lanes.stations["WORK"].dock)
+    assert dock[0] == pytest.approx((west.x1 + east.x0) / 2)
+    assert max(west.y0, east.y0) <= dock[1] <= min(west.y1, east.y1)
 
 
 def test_the_scenario_gets_its_world_maps_and_lane_map():

@@ -306,3 +306,98 @@ def test_the_step_onto_clear_floor_leaves_a_start_cell_held_by_a_close_robot():
     start = (1.0, 0.76)
     path = FloorPlanner(floor).plan(start, (1.6, 0.4), avoid=frozenset({floor.cell_of(*start)}))
     assert path is not None and floor.cell_of(*path[1]) in floor.clear
+
+
+# ---- narrow lines: a dock in a gap that holds no clear cell --------------------------------
+
+def _gap_floor():
+    from test_floor_map import gap_data
+    from fleet_core.traffic.floor.floor_map import FloorMap
+    return FloorMap(gap_data())
+
+
+def test_a_leg_goes_into_and_out_of_a_dock_on_a_narrow_line():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    floor = _gap_floor()
+    planner = FloorPlanner(floor)
+    way_in = planner.leg((0.21, 0.75), (0.75, 0.45), in_line="work_in")
+    assert way_in is not None and way_in.points[-2:] == [(0.75, 0.75), (0.75, 0.45)]
+    way_out = planner.leg((0.75, 0.45), (1.29, 0.15), out_line="work_out")
+    assert way_out is not None and way_out.points[:2] == [(0.75, 0.45), (0.75, 0.15)]
+
+
+def test_a_robot_stopped_on_a_narrow_line_goes_on_along_it():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.75, 0.57), (0.75, 0.45), in_line="work_in")
+    assert route is not None and route.points == [(0.75, 0.57), (0.75, 0.45)]
+
+
+def test_free_paths_keep_out_of_the_gap_of_a_narrow_line():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    path = planner.plan((0.75, 0.75), (0.75, 0.15))  # straight through would be the shortest
+    assert path is not None
+    route_points = [(a[0] + (b[0] - a[0]) * k / 50, a[1] + (b[1] - a[1]) * k / 50)
+                    for a, b in zip(path, path[1:]) for k in range(51)]
+    assert not [p for p in route_points if 0.65 < p[0] < 0.85 and 0.30 < p[1] < 0.60]
+    assert planner.plan((0.21, 0.75), (0.75, 0.45)) is None  # the dock is reached by its line only
+
+
+def _in_gap(points):
+    return [p for p in points if 0.65 < p[0] < 0.85 and 0.30 < p[1] < 0.60]
+
+
+def test_a_robot_in_the_gap_without_a_line_to_follow_leaves_forward_along_the_narrow_lines():
+    """Told to go somewhere else while on the way in (no out line, no in line): on to the dock
+    and out along the way out, tagged as fixed line all the way, then over the floor."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.75, 0.55), (0.21, 0.75))
+    assert route is not None
+    assert route.points[:3] == [(0.75, 0.55), (0.75, 0.45), (0.75, 0.15)]
+    assert [name for _, _, name in route.fixed] == ["work_in", "work_out"]
+    assert route.fixed[0][0] == 0.0 and route.fixed[-1][1] == pytest.approx(0.40)
+    assert all(p[0] == 0.75 for p in _in_gap(route.points))
+    assert route.points[-1] == (0.21, 0.75)
+
+
+@pytest.mark.parametrize("x", [0.725, 0.775])
+def test_a_report_off_the_centre_line_in_the_gap_goes_on_without_a_sideways_step(x):
+    """Reports are a few cm off. Every point the robot is sent to is on the centre line, and it
+    joins the line 0.05 m ahead, not square to it (a turn on the spot in the gap), whichever
+    line the robot is on."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    way_in = planner.leg((x, 0.55), (0.75, 0.45), in_line="work_in")
+    assert way_in is not None
+    assert way_in.points == [(x, 0.55), pytest.approx((0.75, 0.50)), (0.75, 0.45)]
+    way_out = planner.leg((x, 0.40), (1.29, 0.15), out_line="work_out")
+    assert way_out is not None
+    assert way_out.points[:3] == [(x, 0.40), pytest.approx((0.75, 0.35)), (0.75, 0.15)]
+    lost = planner.leg((x, 0.40), (1.29, 0.15))
+    assert lost is not None
+    assert lost.points[:3] == [(x, 0.40), pytest.approx((0.75, 0.35)), (0.75, 0.15)]
+    assert [name for _, _, name in lost.fixed] == ["work_out"]
+    docked = planner.leg((x, 0.455), (1.29, 0.15), out_line="work_out")  # report behind the dock
+    assert docked is not None
+    assert docked.points[:3] == [(x, 0.455), pytest.approx((0.75, 0.40)), (0.75, 0.15)]
+    near_end = planner.leg((x, 0.48), (0.75, 0.45), in_line="work_in")  # 0.03 m before the dock
+    assert near_end is not None and near_end.points == [(x, 0.48), (0.75, 0.45)]
+
+
+def test_no_free_path_starts_in_the_gap():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    assert planner.plan((0.75, 0.50), (0.21, 0.75)) is None
+    assert planner.plan((0.77, 0.40), (0.21, 0.75)) is None
+
+
+def test_a_robot_on_clear_floor_beside_the_way_in_does_not_cut_into_the_gap():
+    """0.06 m beside the line just past its start: not straight to the dock (that would enter
+    the gap off its centre line) but to the line start first."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.69, 0.72), (0.75, 0.45), in_line="work_in")
+    assert route is not None and route.points[-2:] == [(0.75, 0.75), (0.75, 0.45)]
+    assert all(p[0] == 0.75 for p in _in_gap(route.points))

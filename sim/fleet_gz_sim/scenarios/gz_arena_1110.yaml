@@ -1,7 +1,8 @@
 # 실측 경기장(arena_1110) 리허설: 핑키 3대, 주문 8건이 20초마다 들어온다(gz_real_arena와 같은 주문).
-# 2026-11-10에 실물 핑키의 라이다로 잰 벽(2.00 x 1.00 m)과 그날 놓여 있던 임시 물체 둘이다
-# (docs/실측_2026-11-10.md). 로봇은 벽 앞 주차 칸 P-1, P-2(서쪽), P-3(동쪽)에서 출발해 서쪽 WORK와
-# 동쪽 OUTBOUND를 오가며 두 물체를 한 방향으로 돈다(sim/fake_robots/maps/arena_1110.yaml 그림).
+# 2026-11-10에 실물 핑키의 라이다로 잰 벽(2.00 x 1.00 m)과 그날 놓여 있던 물체 둘이다(워크셀의 팔 둘로
+# 본다, docs/실측_2026-11-10.md). 로봇은 서쪽 벽 앞 충전 자리 P-1, P-2, P-3에서 출발해
+# 두 팔 사이 틈에 도킹해 싣고(WORK), 동쪽 벽 출고(OUTBOUND)에 내리고 돌아온다
+# (sim/fake_robots/maps/arena_1110.yaml 그림).
 # 자유바닥 전용이고, 도킹은 sim_dock_stub:=true가 있어야 끝까지 돈다. 로봇과 잠금은 실제 경기장과
 # 같아 관제 파라미터도 fleet_params_real_arena를 쓰고 0.15 m/s로 돈다. RPP 충돌 검사는 다른
 # 경기장과 같게 끈다(nav_collision_check:=false).
@@ -24,9 +25,9 @@ orders:
   - {at_s: 120, id: R-007, items: {C: 1, B: 1}}
   - {at_s: 140, id: R-008, items: {D: 1}}
 robots:
-  pinky1: {start: P-2}
-  pinky2: {start: P-1}
-  pinky3: {start: P-3}
+  pinky1: {start: P-3}
+  pinky2: {start: P-2}
+  pinky3: {start: P-1}
 arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
 dock: {duration_s: 3.0, error_cm: 1.0}
 faults: []
