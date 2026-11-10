@@ -1,11 +1,11 @@
-# arena_v4에서 가운데 지름길(outbound_short)을 자주 쓰는 리허설: 핑키 2대, 주문 10건이 10초마다 들어온다.
-# 2대면 출고 도크와 틈이 비어 있을 때가 많아, 출고로 가는 로봇이 갈림길 (0.97, 0.445)에서 물체 2와 3
-# 사이로 꺾어 들어간다. 머리 없는 실행(2026-11-11, 씨앗 5개): 한 판에 지름길 5번, 지름길 없는 길보다
-# 끝나는 시각이 2.2% 이르다(docs/worklog_freefloor_2026-11-11.md).
-# 실행 명령과 지도는 gz_arena_v4.yaml과 같다:
-#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_arena_v4_two traffic_mode:=freefloor \
-#       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.15 \
-#       nav_collision_check:=false
+# arena_v4에서 핑키 2대가 주문 10건(10초마다)을 나르는 리허설. 2대면 출고 도크와 틈이 비어 있을 때가 많다.
+# 지름길(outbound_short, 파라미터 floor_shortcut)은 기본이 꺼짐이라 이 명령으로는 접근선(outbound_in)만 탄다:
+#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_arena_v4_two traffic_mode:=freefloor #       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.15 #       nav_collision_check:=false
+# 지름길을 켜려면 fleet_params_real_arena.yaml을 복사해 floor_shortcut: true로 바꾼 파일의 경로를
+# fleet_params_file로 준다. 그러면 출고로 가는 로봇이 갈림길 (0.97, 0.445)에서 물체 2와 3 사이로 꺾는다.
+#   머리 없는 실행(2026-11-11, 씨앗 5개): 한 판에 지름길 5번, 지름길 없는 길보다 끝나는 시각이 2.2% 이르다.
+#   Gazebo(2026-11-11, 2회): 두 번 다 지름길 6~7번째에 (0.65, 0.445) 모퉁이를 안쪽으로 돌다 물체 3
+#   모서리에 걸려 멈췄다. 그래서 기본이 꺼짐이다(docs/worklog_freefloor_2026-11-11.md).
 map: arena_v4
 seed: 64
 speed_factor: 5.0
@@ -33,4 +33,4 @@ expect:
   orders_shipped: 10
   orders_partial: 0
   orders_held: 0
-  events_include: [ORDER_BOUND, ORDER_SHIPPED, FLOOR_SHORTCUT]
+  events_include: [ORDER_BOUND, ORDER_SHIPPED]

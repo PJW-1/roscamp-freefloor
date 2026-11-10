@@ -54,6 +54,10 @@ parking:
 #                 before the fork the traffic control turns it onto the shortcut when it holds the
 #                 whole stretch it shares with the way out and is through it before a robot at or
 #                 leaving the dock gets there.
+#                 Only while the parameter floor_shortcut is on. It is off by default: in Gazebo
+#                 (2026-11-11, two robots, 2 runs) a robot cut the corner at (0.65, 0.445) by about
+#                 4.5 cm and stopped against the corner of object 3. Switched off, the floor is the
+#                 one without this line.
 # So a robot is on a line all the way round the west loop and through both corridors, and drives
 # a planned path only in the empty east part: from the mouth of the north corridor to the waiting
 # spots or to work_in, and from the work dock to the start of outbound_in. (With the way out

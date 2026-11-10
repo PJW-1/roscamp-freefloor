@@ -116,7 +116,7 @@ def test_the_three_pinkys_start_on_the_three_parking_spots():
     ("gz_arena_v4_two", ["pinky1", "pinky2"], 10),
     ("gz_arena_v4_slow_work", ["pinky1", "pinky2", "pinky3"], 8),
 ])
-def test_the_scenarios_that_take_the_shortcut_more_run_on_the_same_site(name, robots, orders):
+def test_the_two_robot_and_slow_work_scenarios_run_on_the_same_site(name, robots, orders):
     path = PKG / "scenarios" / f"{name}.yaml"
     found = arena_for(path, PKG, FAKE)
     assert found.name == "arena_v4"
@@ -125,3 +125,5 @@ def test_the_scenarios_that_take_the_shortcut_more_run_on_the_same_site(name, ro
     assert {cfg.start for cfg in scenario.robots.values()} <= set(site.parking)
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert len(data["orders"]) == data["expect"]["orders_shipped"] == orders
+    # the shortcut is off by default, so no run has to take it
+    assert "FLOOR_SHORTCUT" not in data["expect"]["events_include"]

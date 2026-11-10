@@ -152,6 +152,9 @@ class FloorController(TrafficController):
     def __init__(self, site, params, robots, clock, next_goal_id=None, floor=None):
         super().__init__(site, params, robots, clock, next_goal_id)
         self.floor = floor or floor_map_for(site)
+        if not params.floor_shortcut:
+            # 지름길을 끄면 지름길이 없는 바닥으로 돈다: 그 선도, 그 선 밑의 좁은 칸도 없다
+            self.floor = self.floor.without_shortcuts()
         if self.floor.robot_radius_m < params.robot_radius_m:
             raise ValueError(f"the floor map radius {self.floor.robot_radius_m} m is smaller "
                              f"than the fleet radius {params.robot_radius_m} m")

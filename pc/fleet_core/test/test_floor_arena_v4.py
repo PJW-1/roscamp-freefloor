@@ -29,7 +29,9 @@ FLOOR = floor_map_for(LANES)
 REAL = floor_map_for(load_lane_map(REPO / "sim" / "fake_robots" / "maps" / "real_arena.yaml"))
 BODY = FLOOR.robot_radius_m + FLOOR.cell_margin_m
 SPEED = 0.15
-LOCKS = {"floor_lock_ahead_m": 0.15, "floor_extend_step_m": 0.05, "release_distance_m": 0.17}
+# floor_shortcut: the shortcut is off unless asked for; the tests here drive it
+LOCKS = {"floor_lock_ahead_m": 0.15, "floor_extend_step_m": 0.05, "release_distance_m": 0.17,
+         "floor_shortcut": True}
 THREE = (("pinky1", "P-3"), ("pinky2", "P-2"), ("pinky3", "P-1"))
 KINDS = [{"A": 1, "C": 1}, {"B": 1}, {"D": 1, "A": 1}, {"C": 1}, {"B": 1, "D": 1}, {"A": 1}]
 MIDDLE_X = (0.85, 1.08)   # between objects 2 and 3 and object 4
@@ -237,10 +239,10 @@ DOCK = (*FLOOR.docks["OUTBOUND"], SOUTH)
 ON_THE_WAY = (0.97, 0.20, NORTH)  # going up the middle passage, 0.245 m before the fork
 
 
-def fleet(poses, left=None):
+def fleet(poses, left=None, **over):
     """Traffic of a fleet manager on this floor, robots standing at poses (x, y, yaw).
-    left: robot -> seconds of arm work it has left at its station."""
-    params = replace(load_params(), traffic_mode="freefloor", **LOCKS)
+    left: robot -> seconds of arm work it has left at its station. over: other parameters."""
+    params = replace(load_params(), traffic_mode="freefloor", **{**LOCKS, **over})
     core = FleetManager(LANES, params, list(poses), lambda: 0.0)
     for _ in range(3):
         for name, (x, y, yaw) in poses.items():
@@ -300,6 +302,23 @@ def test_a_robot_takes_the_shortcut_when_it_is_through_before_the_docked_robot_c
     assert move.y > OBJECT_3[1] + 0.05 and move.x < GAP_13[0]  # sent past the gaps in one go
     assert [c.code for c in traffic._out
             if isinstance(c, EventOut) and c.robot == "b"].count("FLOOR_SHORTCUT") == 1
+
+
+def test_no_robot_takes_the_shortcut_while_the_switch_is_off():
+    """floor_shortcut is off unless asked for: the floor is then the one without the shortcut
+    (its line, its gap cells), and a robot that would take it stays on the way in."""
+    for name in ("fleet_params.yaml", "fleet_params_real_arena.yaml"):
+        assert load_params(DEFAULT_FLOOR.parent / name).floor_shortcut is False
+    traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 8.0}, floor_shortcut=False)
+    assert traffic.floor.shortcuts == {} and "outbound_short" not in traffic.floor.fixed_lines
+    assert traffic.floor.cell_of(*GAP_13) not in traffic.floor.line_floor
+    at_work(traffic, "a")
+    leg = heads_in(traffic, "b")
+    assert leg.in_line == "outbound_in"
+    assert cell(traffic, *GAP_13) not in traffic.zones.held_set("b")
+    assert not [c for c in traffic._out if isinstance(c, EventOut) and c.code == "FLOOR_SHORTCUT"]
+    on = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 8.0})
+    assert on.floor.shortcuts == {"outbound_short": "outbound_in"}  # the tests here turn it on
 
 
 def test_a_robot_sent_again_to_the_dock_from_the_gap_goes_on_along_the_shortcut():
@@ -622,3 +641,11 @@ def test_every_robot_drives_the_figure_eight_one_way(monkeypatch):
 def test_robots_take_the_shortcut_in_a_run_and_ship_every_order(tmp_path, monkeypatch):
     _, world = run(tmp_path, monkeypatch, 1, THREE, 6, 20, 600)
     assert any(e.code == "FLOOR_SHORTCUT" for e in world.events)
+
+
+def test_robots_ship_every_order_without_the_shortcut_while_the_switch_is_off(tmp_path,
+                                                                              monkeypatch):
+    monkeypatch.setitem(LOCKS, "floor_shortcut", False)
+    _, world = run(tmp_path, monkeypatch, 1, THREE, 6, 20, 600)
+    assert world.core.traffic.metrics["shortcuts"] == 0
+    assert not any(e.code == "FLOOR_SHORTCUT" for e in world.events)

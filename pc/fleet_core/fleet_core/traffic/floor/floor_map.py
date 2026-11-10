@@ -94,6 +94,7 @@ def _read_pgm(path: Path) -> tuple[int, int, bytes]:
 class FloorMap:
     def __init__(self, data: dict, base: Path | None = None, source_text: str = ""):
         self.source_text = source_text
+        self._data, self._base = data, base  # kept to draw this floor again (without_shortcuts)
         self.cell_m = float(data["cell_m"])
         self.robot_radius_m = float(data["robot_radius_m"])
         self.cell_margin_m = float(data["cell_margin_m"])
@@ -137,6 +138,20 @@ class FloorMap:
         ) - self.clear for name in sorted(self.narrow_lines)}
         self.line_floor = frozenset().union(*self.line_floor_of.values())
         self._check()
+
+    def without_shortcuts(self) -> "FloorMap":
+        """This floor drawn without its shortcuts: they are no line of it, so no floor under them
+        is driven either (the floor of a controller whose floor_shortcut is off). The floor
+        itself when it has none."""
+        if not self.shortcuts:
+            return self
+        data = dict(self._data)
+        data["fixed_lines"] = {name: points for name, points in data["fixed_lines"].items()
+                               if name not in self.shortcuts}
+        for key in ("rolling_lines", "narrow_lines"):
+            data[key] = [name for name in data.get(key) or [] if name not in self.shortcuts]
+        del data["shortcuts"]
+        return FloorMap(data, self._base, self.source_text)
 
     # ---- reading ------------------------------------------------------------------------
 
