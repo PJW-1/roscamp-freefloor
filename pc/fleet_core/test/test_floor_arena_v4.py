@@ -265,6 +265,16 @@ def heads_in(traffic, name):
     return traffic._legs[name]
 
 
+def moved(traffic, name, x, y, yaw):
+    """name now reports from (x, y): it drove there (the averaged place starts again there)."""
+    m = traffic._missions[name]
+    m.x, m.y, m.yaw = x, y, yaw
+    for memory in (traffic._stand, traffic._recent):
+        memory.pop(name, None)
+    traffic._follow(m)
+    return m
+
+
 def cell(traffic, x, y):
     return traffic.floor.cell_id(traffic.floor.cell_of(x, y))
 
@@ -296,8 +306,7 @@ def test_a_robot_sent_again_to_the_dock_from_the_gap_goes_on_along_the_shortcut(
     at_work(traffic, "a")
     assert heads_in(traffic, "b").in_line == "outbound_short"
     b = traffic._missions["b"]
-    b.x, b.y, b.yaw = GAP_23[0], GAP_23[1], math.pi
-    traffic._follow(b)
+    b = moved(traffic, "b", GAP_23[0], GAP_23[1], math.pi)
     traffic._start_leg(b, "TO_OUTBOUND", "OUTBOUND", "O")
     leg = traffic._legs["b"]
     assert leg.in_line == "outbound_short" and leg.route is not None
@@ -318,8 +327,7 @@ def test_a_robot_on_the_shortcut_keeps_the_stretch_ahead_while_it_is_planned_aga
     assert heads_in(traffic, "b").in_line == "outbound_short"
     assert cell(traffic, *AHEAD) in traffic.zones.held_set("b")
     b = traffic._missions["b"]
-    b.x, b.y, b.yaw = GAP_23[0], GAP_23[1], math.pi
-    traffic._follow(b)
+    b = moved(traffic, "b", GAP_23[0], GAP_23[1], math.pi)
     traffic._plan_budget = 0
     traffic._plan(b, traffic._legs["b"])
     assert traffic._legs["b"].route is None
@@ -341,8 +349,7 @@ def test_a_robot_on_the_shortcut_takes_the_stretch_back_when_an_object_in_it_is_
     at_work(traffic, "a")
     assert heads_in(traffic, "b").in_line == "outbound_short"
     b = traffic._missions["b"]
-    b.x, b.y, b.yaw = GAP_23[0], GAP_23[1], math.pi
-    traffic._follow(b)
+    b = moved(traffic, "b", GAP_23[0], GAP_23[1], math.pi)
     traffic._mark_blocked(b)
     traffic._active["b"].clear()  # the cancelled MoveTo has ended: the cells go to the mark
     traffic._take_ahead(b)
@@ -360,14 +367,76 @@ def test_a_robot_through_the_stretch_lets_it_go_as_before():
     at_work(traffic, "a")
     assert heads_in(traffic, "b").in_line == "outbound_short"
     b = traffic._missions["b"]
-    b.x, b.y, b.yaw = 0.40, 0.678, math.pi  # past the end of the stretch at (0.50, 0.65)
-    traffic._follow(b)
+    b = moved(traffic, "b", 0.40, 0.678, math.pi)  # past the end of the stretch at (0.50, 0.65)
     traffic._active["b"].clear()
     b.goal = None
     for cell_id in traffic.zones.held_set("b"):
         b.outside[cell_id] = 99
     traffic._release_cells(b)
     assert cell(traffic, *GAP_13) not in traffic.zones.held_set("b")
+
+
+def test_a_robot_on_the_shortcut_waits_at_the_end_of_the_stretch_while_the_dock_is_taken():
+    """The docked robot works on for long. From the end of the shared stretch the shortcut passes
+    the dock closer than two bodies and a report's noise, so a lock rolled on there and the docked
+    robot's place wait for each other's cells (a deadlock nobody can step out of). The robot stops
+    at the end of the stretch, where it is in nobody's way, until the cells before the dock are
+    free, and then goes on."""
+    traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 30.0})
+    at_work(traffic, "a")
+    leg = heads_in(traffic, "b")
+    assert leg.in_line == "outbound_short"
+    end = leg.s_lock  # the end of the shared stretch
+    x, y = leg.route.at(end)
+    b = moved(traffic, "b", x, y, math.atan2(0.12, -0.44))
+    b.goal = None
+    traffic._active["b"].clear()
+    for _ in range(3):
+        traffic._drive(b)
+    assert traffic._legs["b"].s_lock == pytest.approx(end)
+    held = traffic.zones.held_set("b")
+    docked = (FLOOR.docks["OUTBOUND"][0] + 0.03, FLOOR.docks["OUTBOUND"][1] + 0.04)  # noisy report
+    assert held.isdisjoint(traffic._body_cells(*docked))
+    assert traffic._legs["b"].in_line == "outbound_short" and traffic._legs["b"].route is not None
+    # the docked robot has left: the lock rolls on to the dock
+    a = traffic._missions["a"]
+    for cell_id in list(traffic.zones.held_set("a")):
+        traffic.zones.release("a", cell_id)
+    a.x, a.y = 0.97, 0.80
+    traffic._drive(b)
+    assert traffic._legs["b"].s_lock > end + 0.01
+
+
+def test_a_robot_on_the_shortcut_rolls_on_past_the_stretch_when_the_dock_is_free():
+    traffic = fleet({"a": (1.86, 0.58, 0.0), "b": ON_THE_WAY})
+    leg = heads_in(traffic, "b")
+    assert leg.in_line == "outbound_short"
+    end = leg.s_lock
+    x, y = leg.route.at(end - 0.10)
+    b = moved(traffic, "b", x, y, math.atan2(0.12, -0.44))
+    traffic._drive(b)
+    assert traffic._legs["b"].s_lock > end + 0.01
+
+
+@pytest.mark.parametrize("report", [(1.04, 0.085), (1.04, 0.125), (1.049, 0.155)])
+def test_a_robot_whose_report_is_off_the_line_takes_the_shortcut_from_where_it_is(report):
+    """The shortcut goes on from the robot's place. (Planned like a new leg, a report a few cm
+    beside the line led back east to the start of the line and along it again: 0.6 m more,
+    against the robots behind.)"""
+    traffic = fleet({"a": (1.86, 0.58, 0.0), "b": (1.25, 0.125, math.pi)})
+    leg = heads_in(traffic, "b")
+    assert leg.in_line == "outbound_in"
+    for x in (1.20, 1.15, 1.10):
+        moved(traffic, "b", x, 0.125, math.pi)
+        traffic._drive(traffic._missions["b"])
+    assert not traffic._legs["b"].short_decided
+    b = moved(traffic, "b", *report, math.pi)
+    traffic._drive(b)
+    leg = traffic._legs["b"]
+    assert leg.in_line == "outbound_short"
+    assert max(x for x, _ in points(leg.route)) <= report[0] + 1e-9
+    assert leg.route.length < 1.60
+    assert leg.route.fixed == [(0.0, leg.route.length, "outbound_short")]
 
 
 def test_a_robot_takes_the_shortcut_behind_one_already_past_the_merge():
@@ -419,7 +488,7 @@ def test_a_robot_past_the_fork_stays_on_the_way_in():
 
 
 def test_a_robot_far_before_the_fork_does_not_choose_yet():
-    traffic = fleet({"a": DOCK, "b": (0.97, 0.125, NORTH)}, left={"a": 2.0})
+    traffic = fleet({"a": DOCK, "b": (1.25, 0.125, math.pi)}, left={"a": 2.0})
     at_work(traffic, "a")
     leg = heads_in(traffic, "b")  # the docked robot would come out first, but not yet known
     assert leg.in_line == "outbound_in" and not leg.short_decided
