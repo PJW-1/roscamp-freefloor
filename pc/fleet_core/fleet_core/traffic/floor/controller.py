@@ -181,6 +181,8 @@ class FloorController(TrafficController):
         # 지름길: 접근선 -> 지름길, 지름길 -> (갈림목에서 접근선 끝까지 m, 겹치는 구간 끝에서
         # 지름길 끝까지 m, 합류점에서 지름길 끝까지 m)
         self._shortcut = {base: short for short, base in self.floor.shortcuts.items()}
+        self._short_route = {short: Route(list(self.floor.fixed_lines[short].points))
+                             for short in self.floor.shortcuts}
         self._short_geo = {short: self._shortcut_geometry(short) for short in self.floor.shortcuts}
         self._deadlock_seen = 0.0
         self._unresolved_robot = ""
@@ -364,6 +366,10 @@ class FloorController(TrafficController):
                     self.zones.release(BLOCK_OWNER, cell)
                 self._event("INFO", "FLOOR_CLEARED", "the object is gone", name)
                 leg = self._legs.get(name)
+                if leg is not None and leg.in_line in self._short_route:
+                    # 지름길의 겹치는 구간에서 막혔다: 남은 구간의 빈 칸을 나오는 로봇보다 먼저 쥔다
+                    self.zones.acquire_all(name, {c for c in self._stretch_ahead(m, leg.in_line)
+                                                  if self.zones.holder(c) is None})
                 if leg is not None and leg.route is not None:
                     self._plan(m, leg)
 
@@ -452,6 +458,8 @@ class FloorController(TrafficController):
         leg = self._legs.get(m.name)
         if leg and leg.route and leg.s_lock > leg.s:
             keep |= self._lock_cells(leg.route, leg.s, leg.s_lock)
+        if leg is not None and leg.in_line in self._short_route:
+            keep |= self._stretch_ahead(m, leg.in_line)
         for active in self._active[m.name].values():
             s, _ = active.project(m.x, m.y)
             keep |= self._lock_cells(active, s, active.length)
@@ -814,10 +822,10 @@ class FloorController(TrafficController):
         """지름길 short의 (갈림목에서 원래 선 끝까지, 겹치는 구간 끝에서 지름길 끝까지, 합류점에서
         지름길 끝까지) m. 겹치는 구간: 갈림목부터 몸이 다른 고정 선(원래 선 말고)을 따라가는 몸에
         닿는 동안. 그 끝에 선 로봇은 그 선들로 가는 로봇을 막지 않는다. 도크 가까이에서 다시 닿는
-        것(도크에서 나가는 선의 시작)은 원래 선도 같다."""
+        것(도크에서 나가는 선의 시작)은 원래 선도 같다. 그 밖에서 다시 닿으면 ValueError."""
         base = self.floor.shortcuts[short]
         fork, merge = self.floor.shortcut_parts[short]
-        route = Route(list(self.floor.fixed_lines[short].points))
+        route = self._short_route[short]
         others = set().union(*(ids for name, ids in self._line_ids.items()
                                if name not in (short, base)))
         step = self.floor.cell_m / 2
@@ -826,8 +834,25 @@ class FloorController(TrafficController):
             s += step
             clear = s
         clear = min(merge, clear)
+        # 그 뒤 합류점까지는 합류점 뒤 꼬리(원래 선도 가는 도크 앞)가 닿는 칸에만 닿아도 된다.
+        # 다른 데서 다시 닿으면 잡지 않은 채 남의 선에 선다: 지도 잘못
+        tail_cells = self._swept(route.between(merge, route.length))
+        while s < merge + 1e-9:
+            if (self._body_cells(*route.at(s)) & others) - tail_cells:
+                x, y = route.at(s)
+                raise ValueError(f"shortcut {short} meets another line again at ({x:.3f}, "
+                                 f"{y:.3f}), away from its dock")
+            s += step
         gone, length = _along(self.floor.fixed_lines[base].points, route.at(fork))
         return length - gone, route.length - clear, route.length - merge
+
+    def _stretch_ahead(self, m: _Mission, short: str) -> set[str]:
+        """지름길 short 위 로봇 m이 아직 지나지 않은 겹치는 구간의 칸. 다시 계획해도 지나갈 때까지
+        놓지 않는다: 나오는 로봇이 틈의 먼 끝을 잡아 틈에서 마주 서지 않게."""
+        route = self._short_route[short]
+        end = route.length - self._short_geo[short][1]
+        s, _ = route.project(m.x, m.y)
+        return self._lock_cells(route, s, end) if s < end else set()
 
     def _take_shortcut(self, m: _Mission, leg: _Leg) -> None:
         """원래 접근선을 가는 로봇이 갈림목 앞에 오면 지름길을 탈지 한 번 고른다(모듈 설명)."""

@@ -521,7 +521,7 @@ def test_a_shortcut_leaves_its_line_and_joins_it_again():
 
 
 @pytest.mark.parametrize("bad", [
-    "outbound_in", ["outbound_short"], {"outbound_short": "nowhere"},
+    "outbound_in", ["outbound_short"], [], 0, {"outbound_short": "nowhere"},
     {"nowhere": "outbound_in"}, {"outbound_short": "outbound_short"},
     {"outbound_short": "outbound_in", "outbound_in": "outbound_short"}])
 def test_a_shortcut_that_does_not_name_two_fixed_lines_is_refused(bad):
@@ -556,3 +556,16 @@ def test_a_line_has_one_shortcut_at_most():
     with pytest.raises(FloorMapError, match="shortcuts"):
         FloorMap(dict(data, shortcuts={"outbound_short": "outbound_in",
                                        "outbound_other": "outbound_in"}))
+
+
+def test_a_shortcut_that_meets_another_line_again_away_from_its_dock_is_refused():
+    """The traffic control holds the stretch a shortcut shares with the other lines from its fork
+    at once. Meeting another line again further on (not only where it touches the robot at the
+    dock, as the shortcut's own line does) would be a place it stands in the way, not held."""
+    from fleet_core.traffic.floor.controller import FloorController
+    site = load_lane_map()
+    FloorController(site, load_params(), ["r1"], lambda: 0.0, floor=FloorMap(shortcut_data()))
+    data = shortcut_data()
+    data["fixed_lines"]["across"] = [[1.15, 0.75], [1.15, 0.25]]  # crosses it at x 1.15
+    with pytest.raises(ValueError, match="outbound_short"):
+        FloorController(site, load_params(), ["r1"], lambda: 0.0, floor=FloorMap(data))

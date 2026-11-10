@@ -115,7 +115,8 @@ class FloorMap:
         self.narrow_lines = self._read_narrow(data.get("narrow_lines") or [])
         # shortcut -> the line into the same dock it may be taken instead of, and where along the
         # shortcut it leaves that line and joins it again (m)
-        self.shortcuts = self._read_shortcuts(data.get("shortcuts") or {})
+        shortcuts = data.get("shortcuts")
+        self.shortcuts = self._read_shortcuts({} if shortcuts is None else shortcuts)
         self.shortcut_parts = {name: self._shortcut_parts(name, base)
                                for name, base in self.shortcuts.items()}
         self.robot_half_width_m = self._read_half_width(data.get("robot_half_width_m"))

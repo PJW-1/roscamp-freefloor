@@ -306,6 +306,78 @@ def test_a_robot_sent_again_to_the_dock_from_the_gap_goes_on_along_the_shortcut(
     assert all(p[0] <= GAP_23[0] + 1e-6 for p in pts)  # on west, never back east
 
 
+AHEAD = (0.55, 0.636)  # on the shortcut past the gap between objects 1 and 3, in the stretch
+
+
+def test_a_robot_on_the_shortcut_keeps_the_stretch_ahead_while_it_is_planned_again():
+    """Planned again inside the shared stretch with no plan to spare this tick (the route goes and
+    the goal is cancelled): the cells of the stretch still ahead stay its own until it is through,
+    so a robot coming out never takes the far end of the gap while this one is in it."""
+    traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 8.0})
+    at_work(traffic, "a")
+    assert heads_in(traffic, "b").in_line == "outbound_short"
+    assert cell(traffic, *AHEAD) in traffic.zones.held_set("b")
+    b = traffic._missions["b"]
+    b.x, b.y, b.yaw = GAP_23[0], GAP_23[1], math.pi
+    traffic._follow(b)
+    traffic._plan_budget = 0
+    traffic._plan(b, traffic._legs["b"])
+    assert traffic._legs["b"].route is None
+    traffic._active["b"].clear()  # the cancelled MoveTo has ended
+    b.goal = None
+    for cell_id in traffic.zones.held_set("b"):
+        b.outside[cell_id] = 99  # beyond the release distance for long
+    traffic._release_cells(b)
+    held = traffic.zones.held_set("b")
+    assert cell(traffic, *AHEAD) in held and cell(traffic, *GAP_13) in held
+    assert cell(traffic, 0.97, 0.30) not in held  # behind it: let go as before
+
+
+def test_a_robot_on_the_shortcut_takes_the_stretch_back_when_an_object_in_it_is_gone():
+    """An object reported in the gap marks the cells ahead blocked (moved from the robot to the
+    mark). When it is gone the robot holds the cells of the stretch still ahead again, before
+    a robot coming out can take them."""
+    traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 8.0})
+    at_work(traffic, "a")
+    assert heads_in(traffic, "b").in_line == "outbound_short"
+    b = traffic._missions["b"]
+    b.x, b.y, b.yaw = GAP_23[0], GAP_23[1], math.pi
+    traffic._follow(b)
+    traffic._mark_blocked(b)
+    traffic._active["b"].clear()  # the cancelled MoveTo has ended: the cells go to the mark
+    traffic._take_ahead(b)
+    assert traffic.zones.holder(cell(traffic, *GAP_13)) == "#blocked"
+    b.robot_state = "IDLE"
+    for _ in range(traffic.params.release_confirm_samples):
+        traffic._note_block_report(b)
+    assert "b" not in traffic._marks
+    assert traffic.zones.holder(cell(traffic, *GAP_13)) == "b"
+    assert traffic.zones.holder(cell(traffic, *AHEAD)) == "b"
+
+
+def test_a_robot_through_the_stretch_lets_it_go_as_before():
+    traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 8.0})
+    at_work(traffic, "a")
+    assert heads_in(traffic, "b").in_line == "outbound_short"
+    b = traffic._missions["b"]
+    b.x, b.y, b.yaw = 0.40, 0.678, math.pi  # past the end of the stretch at (0.50, 0.65)
+    traffic._follow(b)
+    traffic._active["b"].clear()
+    b.goal = None
+    for cell_id in traffic.zones.held_set("b"):
+        b.outside[cell_id] = 99
+    traffic._release_cells(b)
+    assert cell(traffic, *GAP_13) not in traffic.zones.held_set("b")
+
+
+def test_a_robot_takes_the_shortcut_behind_one_already_past_the_merge():
+    """One on the last stretch into the dock (past the merge) is not raced: both ways end
+    behind it, so the shortcut is taken."""
+    traffic = fleet({"c": (0.17, 0.66, SOUTH), "b": ON_THE_WAY})
+    traffic._start_leg(traffic._missions["c"], "TO_OUTBOUND", "OUTBOUND", "O")
+    assert heads_in(traffic, "b").in_line == "outbound_short"
+
+
 @pytest.mark.parametrize("left", [0.0, 2.0])
 def test_a_robot_keeps_to_the_way_in_when_the_docked_robot_comes_out_first(left):
     traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": left})
