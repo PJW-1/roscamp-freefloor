@@ -554,6 +554,47 @@ def test_a_robot_keeps_to_the_way_in_while_another_leaves_the_dock_for_the_gaps(
     assert heads_in(traffic, "b").in_line == "outbound_in"
 
 
+def test_a_robot_on_its_way_out_keeps_the_line_after_a_leg_that_was_not_planned():
+    """A robot leaving the dock is asked for a new leg on every tick while another robot stands on
+    its parking spot. On a tick with no plan to spare the leg has no route; the leg after it has to
+    go on along the way out all the same, the only way out of the west part. (Gazebo,
+    gz_arena_v4_slow_work, 2026-11-11: FLOOR_NO_PATH on every tick, then the robot stood 0.26 m
+    from the dock for good and the next one could not leave it.)"""
+    spots = dict(FLOOR.parking)
+    traffic = fleet({"a": DOCK, "b": (*spots["P-1"], EAST)})
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    assert traffic._legs["a"].out_line == "outbound_out" and traffic._legs["a"].route is not None
+    traffic._drive(a)
+    moved(traffic, "a", 0.23, 0.27, -math.pi / 4)  # out of the dock, before the gap
+    traffic._plan_budget = 0
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    assert traffic._legs["a"].route is None  # planned on the next tick
+    traffic._plan_budget = 99
+    traffic._start_leg(a, "TO_PARK", None, "P-1")  # asked again before that
+    leg = traffic._legs["a"]
+    assert leg.out_line == "outbound_out"
+    assert leg.route is not None and points(leg.route)[-1] == pytest.approx(spots["P-1"])
+    assert not [c for c in traffic._out if isinstance(c, EventOut) and c.code == "FLOOR_NO_PATH"]
+
+
+def test_a_robot_off_its_way_out_does_not_take_it_up_again_after_a_leg_with_no_route():
+    """The line is kept only while the robot is on it: past its end the next leg is a free one."""
+    spots = dict(FLOOR.parking)
+    traffic = fleet({"a": DOCK})
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    traffic._drive(a)
+    moved(traffic, "a", 1.45, 0.87, EAST, reports=200)  # past the mouth of the north corridor
+    traffic._plan_budget = 0
+    traffic._start_leg(a, "TO_PARK", None, "P-2")
+    traffic._plan_budget = 99
+    traffic._start_leg(a, "TO_PARK", None, "P-2")
+    leg = traffic._legs["a"]
+    assert leg.route is not None and not leg.route.fixed
+    assert points(leg.route)[-1] == pytest.approx(spots["P-2"])
+
+
 def test_a_robot_takes_the_shortcut_when_the_one_that_left_is_past_the_gaps():
     traffic = fleet({"a": (1.10, 0.875, EAST), "b": ON_THE_WAY})
     traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "P-1")
