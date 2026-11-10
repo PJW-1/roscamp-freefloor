@@ -5,6 +5,7 @@ import pytest
 from conftest import GRID_MAP
 from fake_robots.common import load_fleet_params, split_fake_arms
 from fake_robots.scenario import (
+    OBJECT_RADIUS_M,
     ScenarioError,
     expand_random,
     load_scenario,
@@ -664,3 +665,49 @@ def test_every_node_loads_the_same_expanded_scenario_with_scenario_seed(site, tm
     node = _ParamNode(scenario_file=str(path), scenario_seed=8)
     assert load_scenario_param(node, site) == load_scenario(path, site, seed=8)
     assert node.declared["scenario_seed"] == 8
+
+
+def object_fault(**over):
+    fault = {"at_s": 8, "type": "object", "x": 1.0, "y": 0.5, "duration_s": 4}
+    fault.update(over)
+    return fault
+
+
+def test_an_object_not_on_the_map_is_read(site):
+    """지도에 없는 물체: 로봇에 묶이지 않는다. 짧으면 지나가는 사람, 길면 놓고 간 상자."""
+    sc = parse_scenario(minimal(expect={"orders_shipped_min": 1}, faults=[
+        object_fault(), object_fault(at_s=20, x=1.5, y=0.8, duration_s=300, radius_m=0.15)]),
+        site)
+    person, box = sc.faults
+    assert (person.type, person.at_s, person.duration_s, person.x, person.y, person.robot) == (
+        "object", 8.0, 4.0, 1.0, 0.5, "")
+    assert person.radius_m == OBJECT_RADIUS_M == 0.10
+    assert (box.x, box.y, box.duration_s, box.radius_m) == (1.5, 0.8, 300.0, 0.15)
+    assert not sc.gone_robots
+
+
+@pytest.mark.parametrize("change", [
+    {"x": None}, {"y": None}, {"x": "1.0"}, {"y": True}, {"x": float("nan")},
+    {"duration_s": None}, {"duration_s": 0}, {"duration_s": -1},
+    {"radius_m": 0}, {"radius_m": -0.1}, {"radius_m": "big"},
+    {"robot": "pinky1"},
+    {"x": 50.0}, {"y": -50.0},
+])
+def test_a_bad_object_is_refused(site, change):
+    fault = {k: v for k, v in object_fault(**change).items() if v is not None}
+    with pytest.raises(ScenarioError):
+        parse_scenario(minimal(expect={"orders_shipped_min": 1}, faults=[fault]), site)
+
+
+def test_object_fields_are_refused_on_other_faults(site):
+    fault = {"at_s": 8, "robot": "pinky1", "type": "blocked", "duration_s": 15, "x": 1.0}
+    with pytest.raises(ScenarioError, match="object"):
+        parse_scenario(minimal(expect={"orders_shipped_min": 1}, faults=[fault]), site)
+
+
+def test_the_shipped_scenarios_parse_as_before_with_no_object(site):
+    """예전 시나리오는 그대로 읽힌다: 새 필드는 기본값이다."""
+    for name, f in shipped().items():
+        for fault in load_scenario(f, site_of(f, site)).faults:
+            assert fault.type != "object", name
+            assert (fault.x, fault.y, fault.radius_m) == (0.0, 0.0, OBJECT_RADIUS_M), name
