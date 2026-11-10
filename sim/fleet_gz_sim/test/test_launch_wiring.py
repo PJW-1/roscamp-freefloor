@@ -670,7 +670,8 @@ def test_an_unknown_params_name_stops_the_launch(made):
 
 def test_gazebo_can_give_every_nav2_a_second_rpp_without_the_approach_slow_down(made, tmp_path):
     """The robot Nav2 params already load FollowPathThrough; the sim copy only changes AMCL and
-    pinky_fsm sends lock-boundary paths there by default (B)."""
+    pinky_fsm sends lock-boundary paths there by default (B). FollowPathReverse (the Retreat
+    controller) is loaded next to them and the sim copy leaves it as it is."""
     actions = run(made, result_dir=str(tmp_path / "b"))
     fsms = includes(actions, "pinky_fsm.launch.py")
     assert len(fsms) == 3
@@ -679,7 +680,7 @@ def test_gazebo_can_give_every_nav2_a_second_rpp_without_the_approach_slow_down(
     assert len(used) == 3
     source = nav2_source()
     base = source["controller_server"]["ros__parameters"]
-    assert base["controller_plugins"] == ["FollowPath", THROUGH]
+    assert base["controller_plugins"] == ["FollowPath", THROUGH, "FollowPathReverse"]
     for robot, params in used.items():
         assert params["controller_server"] == source["controller_server"], "nothing added twice"
         assert {k: v for k, v in params.items() if k != "amcl"} == \
