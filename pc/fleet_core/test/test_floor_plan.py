@@ -4,7 +4,7 @@ import math
 import pytest
 from fleet_core.traffic.floor.cells import line_cells, sample_line
 from fleet_core.traffic.floor.floor_map import FloorMap, load_floor_map
-from fleet_core.traffic.floor.planner import FloorPlanner, Route, polyline_length
+from fleet_core.traffic.floor.planner import NEIGHBOURS, FloorPlanner, Route, polyline_length
 
 
 @pytest.fixture(scope="module")
@@ -151,6 +151,80 @@ def test_reservation_time_is_the_distance_driven_not_the_cost(planner, floor):
     planner.astar(a, b, floor.clear, penalty)
     assert seen
     assert max(s for _, s in seen) < 10.0
+
+
+def strip(floor):
+    """(1.8, 1.15)를 가로지르는 세로 띠(두 칸 두께): 남이 지나가는 길."""
+    return {floor.cell_of(1.75 + 0.1 * i, 0.85 + 0.1 * k) for i in range(2) for k in range(7)}
+
+
+def waiting(band, free_at):
+    """띠는 거리 시각 free_at까지 남이 쓴다: 그 전에 닿으면 빌 때까지 기다린다."""
+    def wait(cell, s, heading):
+        return (max(0.0, free_at - s), 0.0) if cell in band else (0.0, 0.0)
+    return wait
+
+
+def test_a_short_wait_on_the_way_keeps_the_straight_way(planner, floor):
+    straight = planner.plan((1.0, 1.15), (2.6, 1.15))
+    waited = planner.plan((1.0, 1.15), (2.6, 1.15), wait=waiting(strip(floor), 0.9))
+    assert waited == straight  # 0.2 m어치 기다림이 띠를 도는 길보다 싸다
+
+
+def test_a_long_wait_on_the_way_goes_round(planner, floor):
+    band = strip(floor)
+    cells = planner.astar(floor.cell_of(1.05, 1.15), floor.cell_of(2.65, 1.15), floor.clear,
+                          wait=waiting(band, 20.0))
+    assert not set(cells) & band
+
+
+def driven(floor, cells) -> float:
+    return sum(math.dist(floor.centre(p), floor.centre(q))
+               for p, q in zip(cells, cells[1:], strict=False))
+
+
+def timed(planner, floor, a, b, wait):
+    """(칸 경로, 그 경로로 b에 닿을 때 wait가 받은 s)."""
+    seen = {}
+
+    def spy(cell, s, heading):
+        seen[cell, heading] = s
+        return wait(cell, s, heading)
+
+    cells = planner.astar(a, b, floor.clear, wait=spy)
+    last = (cells[-1][0] - cells[-2][0], cells[-1][1] - cells[-2][1])
+    return cells, seen[b, last]
+
+
+def test_cells_after_a_wait_are_reached_that_much_later(planner, floor):
+    """기다린 만큼 그 뒤 칸에 늦게 닿는다(띠의 둘째 칸에서 또 기다리지 않는다)."""
+    band = strip(floor)
+    a, b = floor.cell_of(1.05, 1.15), floor.cell_of(2.65, 1.15)
+    free = planner.astar(a, b, floor.clear)
+    enters = driven(floor, free[:next(k for k, c in enumerate(free) if c in band) + 1])
+    cells, s = timed(planner, floor, a, b, waiting(band, enters + 0.2))
+    assert cells == free  # 0.2 m어치 기다림: 길은 그대로
+    assert s == pytest.approx(driven(floor, free) + 0.2)
+
+
+def test_a_flat_cost_from_the_wait_callback_does_not_delay_later_cells(planner, floor):
+    band = strip(floor)
+    a, b = floor.cell_of(1.05, 1.15), floor.cell_of(2.65, 1.15)
+    cells, s = timed(planner, floor, a, b,
+                     lambda cell, s, heading: (0.0, 0.01) if cell in band else (0.0, 0.0))
+    assert set(cells) & band
+    assert s == pytest.approx(driven(floor, cells))
+
+
+def test_the_wait_callback_gets_the_step_direction(planner, floor):
+    seen = set()
+
+    def wait(cell, s, heading):
+        seen.add(heading)
+        return (0.0, 0.0)
+
+    planner.astar(floor.cell_of(1.05, 1.15), floor.cell_of(1.55, 1.15), floor.clear, wait=wait)
+    assert (1, 0) in seen and all(h in NEIGHBOURS for h in seen)
 
 
 def test_joining_the_line_from_a_cell_too_close_to_a_wall_is_refused():

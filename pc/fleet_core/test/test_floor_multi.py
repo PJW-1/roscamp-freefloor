@@ -144,14 +144,34 @@ def test_a_route_reserves_its_cells_in_time_order():
     assert t_far <= load_params().floor_plan_window_s
 
 
-def test_a_second_robot_is_steered_off_a_reserved_corridor():
+def test_a_second_robot_pays_the_wait_where_a_route_crosses_its_way():
+    """가로질러 갈 칸을 남이 쓰는 시각에 닿으면 빌 때까지 기다리는 값(m)만 문다."""
     traffic = two_robot_floor()
     traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")  # a: west -> east
-    penalty = traffic._penalty_for("b")
-    floor = traffic.floor
-    corridor = floor.cell_of(1.8, 1.15)
-    assert max(penalty(corridor, s) for s in (0.2 * t for t in range(0, 40))) > 0.0
-    assert penalty(floor.cell_of(1.8, 0.45), 1.0) == 0.0  # nobody plans to be there
+    wait = traffic._wait_for("b")
+    floor, v = traffic.floor, load_params().detour_speed_mps
+    corridor, north = floor.cell_of(1.8, 1.15), (0, 1)
+    there = 0.8  # a가 이 칸에 닿는 거리(1.0 -> 1.8)
+    w, flat = wait(corridor, there, north)
+    assert flat == 0.0
+    assert 0.0 < w <= 2 * traffic._body + load_params().release_distance_m
+    later, _ = wait(corridor, there + 0.1, north)
+    assert later == pytest.approx(w - 0.1)  # 늦게 닿으면 그만큼 덜 기다린다
+    assert wait(corridor, there + w + 0.01, north) == (0.0, 0.0)  # a가 지나간 뒤
+    assert wait(corridor, there - 2 * traffic._body - 0.01, north) == (0.0, 0.0)  # 오기 전
+    assert wait(floor.cell_of(1.8, 0.45), 1.0, north) == (0.0, 0.0)  # 아무도 안 지난다
+    assert v > 0
+
+
+def test_a_robot_coming_the_other_way_costs_a_flat_penalty_not_a_wait():
+    """마주 오는 로봇은 기다려도 비키지 않는다: 예전처럼 칸마다 벌점."""
+    from fleet_core.traffic.floor.controller import RESERVE_PENALTY_M
+    traffic = two_robot_floor()
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")  # a: west -> east
+    wait = traffic._wait_for("b")
+    corridor = traffic.floor.cell_of(1.8, 1.15)
+    assert wait(corridor, 0.8, (-1, 0)) == (0.0, RESERVE_PENALTY_M)
+    assert wait(corridor, 0.8, (-1, 1)) == (0.0, RESERVE_PENALTY_M)
 
 
 # ---- wait cycles ----------------------------------------------------------------------

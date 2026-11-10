@@ -5,6 +5,9 @@
 
 penalty(cell, s)는 다른 로봇의 예약 벌점이다(P3). s는 출발점에서 그 칸까지의 경로 거리라
 속도로 나누면 그 칸에 닿는 시각이 된다.
+wait(cell, s, (di, dj))는 (기다림 m, 벌점 m)을 준다: 남이 쓰는 칸이 빌 때까지 서 있는 값이다.
+기다림은 그 뒤 칸의 s에 더하고(그만큼 늦게 닿는다) 비용에는 WAIT_COST배로 더한다. 벌점은
+비용에만 더한다.
 """
 from __future__ import annotations
 
@@ -14,6 +17,7 @@ from dataclasses import dataclass, field
 
 from fleet_core.traffic.floor.cells import line_cells, swept_cells
 
+WAIT_COST = 0.8  # 서서 기다린 값의 배수: 1보다 작아야 같은 시간을 빙 돌아 때우는 길보다 싸다
 LINE_COST = 4.0  # 고정 선 칸을 자유 경로가 지날 때의 거리 배수: 도크 앞을 가로지르지 않게
 ARC_RADIUS_M = 0.15  # 꺾임을 둥글리는 원호 반지름(이보다 작게 줄 수 있다)
 ARC_STEP_M = 0.05
@@ -98,7 +102,8 @@ class FloorPlanner:
 
     # ---- whole legs ---------------------------------------------------------------------
 
-    def leg(self, start, goal, out_line=None, in_line=None, avoid=frozenset(), penalty=None):
+    def leg(self, start, goal, out_line=None, in_line=None, avoid=frozenset(), penalty=None,
+            wait=None):
         """출발 (x, y)에서 goal까지. out_line: 먼저 따를 고정 선(도크에서 나감),
         in_line: 마지막에 따를 고정 선(도크로 들어감). 길이 없으면 None."""
         lines = self.floor.fixed_lines
@@ -122,7 +127,7 @@ class FloorPlanner:
                 route = Route([tuple(start), *rest])
                 route.fixed = [(0.0, route.length, in_line)]
                 return route
-        middle = self.plan(head[-1], tail[0], avoid, penalty, polyline_length(head))
+        middle = self.plan(head[-1], tail[0], avoid, penalty, polyline_length(head), wait)
         if middle is None:
             return None
         points = head[:-1] + middle + tail[1:]
@@ -135,7 +140,7 @@ class FloorPlanner:
 
     # ---- free part ----------------------------------------------------------------------
 
-    def plan(self, start, goal, avoid=frozenset(), penalty=None, s0=0.0):
+    def plan(self, start, goal, avoid=frozenset(), penalty=None, s0=0.0, wait=None):
         """자유 바닥 위 start에서 goal까지 둥글린 꺾은선, 없으면 None."""
         floor = self.floor
         a, b = floor.cell_of(*start), floor.cell_of(*goal)
@@ -144,14 +149,14 @@ class FloorPlanner:
         if a not in floor.clear:
             # stopped a few cm into a wall margin: one straight step back onto clear floor first
             for step in self._steps_onto_clear(start, avoid):
-                rest = self.plan(step, goal, avoid, penalty, s0 + math.dist(start, step))
+                rest = self.plan(step, goal, avoid, penalty, s0 + math.dist(start, step), wait)
                 if rest is not None:
                     return [tuple(start), *rest]
             return None
         allowed = (floor.clear - avoid) | {a, b}
         if math.dist(start, goal) < 1e-9:
             return [tuple(start)]
-        cells = self.astar(a, b, allowed, penalty, s0)
+        cells = self.astar(a, b, allowed, penalty, s0, wait)
         if cells is None:
             return None
         raw = [tuple(start)] + [floor.centre(c) for c in cells[1:-1]] + [tuple(goal)]
@@ -180,15 +185,15 @@ class FloorPlanner:
                     steps.append((d, xy))
         return [xy for _, xy in sorted(steps)]
 
-    def astar(self, a, b, allowed, penalty=None, s0=0.0):
+    def astar(self, a, b, allowed, penalty=None, s0=0.0, wait=None):
         floor = self.floor
         step = floor.cell_m
         goal_xy = floor.centre(b)
         best = {a: 0.0}
         came = {}
-        heap = [(math.dist(floor.centre(a), goal_xy), 0.0, 0.0, a)]
+        heap = [(math.dist(floor.centre(a), goal_xy), 0.0, 0.0, 0.0, a)]
         while heap:
-            _, g, dist, cell = heapq.heappop(heap)
+            _, g, dist, late, cell = heapq.heappop(heap)  # late: 여기까지 기다린 값(m)
             if cell == b:
                 path = [cell]
                 while cell in came:
@@ -208,11 +213,15 @@ class FloorPlanner:
                 cost = g + (d * LINE_COST if nxt in self.line_cells and nxt not in (a, b) else d)
                 if penalty is not None:
                     cost += penalty(nxt, s0 + dist + d)  # reached after driving dist + d
+                held = 0.0
+                if wait is not None:
+                    held, flat = wait(nxt, s0 + dist + late + d, (di, dj))
+                    cost += held * WAIT_COST + flat
                 if cost < best.get(nxt, math.inf) - 1e-12:
                     best[nxt] = cost
                     came[nxt] = cell
                     heapq.heappush(heap, (cost + math.dist(floor.centre(nxt), goal_xy), cost,
-                                          dist + d, nxt))
+                                          dist + d, late + held, nxt))
         return None
 
     def visible(self, p, q, allowed) -> bool:
