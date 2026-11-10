@@ -49,6 +49,9 @@ NAV_ABORT_DELAY_S = 0.2  # 해제 거리(0.2 m)를 지나기 전, 관제가 선�
 OFF_COURSE_M = 1.0  # 운영자가 치운 로봇이 가는 곳(지도 모서리 밖)
 FEEDBACK_PERIOD_S = 0.2
 CONTROL_RATE_HZ = 20.0
+# 실물 pinky_fsm의 경로 물러나기와 같게(FollowPathReverse 속도, 이보다 짧게 남으면 FAILED)
+REVERSE_SPEED_MPS = 0.05
+REVERSE_MIN_M = 0.02
 RETREAT_REASONS = (Retreat.Result.REASON_OBSTACLE_BEHIND, Retreat.Result.REASON_TIMEOUT,
                    Retreat.Result.REASON_CANCELED, Retreat.Result.REASON_FAILED)
 
@@ -243,17 +246,24 @@ class FakePinkyNode(Node):
     def _start_retreat(self, t: float, goal: _Goal, request) -> None:
         """보는 방향 그대로 뒤로. 갈 길을 지나온 선(trail)으로 두고 Motion.back으로 간다.
 
-        path가 없으면 뒤로 곧게 distance_m. 있으면 첫 점(로봇 자리) 다음 점부터 끝 점까지
-        차례로 가고, 거리는 그 길이다. 로봇 자리에서 시작하지 않는 path는 따르지 않는다(이동의
-        path와 같은 연결 허용 거리).
+        path가 없으면 뒤로 곧게 distance_m을 시킨 속도로. 있으면 실물 pinky_fsm처럼 제 자리에서
+        가장 가까운 선분부터 끝 점까지 차례로, 0.05 m/s를 넘지 않게 간다. 로봇 자리에서 시작하지
+        않는 path(이동의 path와 같은 연결 허용 거리)나 남은 길이 0.02 m보다 짧은 path는 따르지
+        않는다.
         """
         distance, speed = float(request.distance_m), float(request.speed_mps)
         path = [(p.position.x, p.position.y) for p in request.path]
         m = self._motion
-        ahead = path[1:] if path else [
-            (m.x - math.cos(m.yaw) * distance, m.y - math.sin(m.yaw) * distance)]
+        if path:
+            gaps = [path_gap(m.x, m.y, path[k:k + 2]) for k in range(max(1, len(path) - 1))]
+            nearest = min(gaps)
+            i = max(k for k, gap in enumerate(gaps) if gap <= nearest + 1e-9)  # 같으면 뒤 선분
+            ahead = path[i + 1:]
+            speed = min(speed, REVERSE_SPEED_MPS)
+        else:
+            ahead = [(m.x - math.cos(m.yaw) * distance, m.y - math.sin(m.yaw) * distance)]
         length = sum(math.dist(a, b) for a, b in zip([(m.x, m.y), *ahead], ahead, strict=False))
-        if (distance <= 0.0 or speed <= 0.0 or length <= 1e-9
+        if (distance <= 0.0 or speed <= 0.0 or length <= (REVERSE_MIN_M if path else 1e-9)
                 or (path and self._path_misses_me(t, path))):
             self._end(goal, False, Retreat.Result.REASON_FAILED)
             return
