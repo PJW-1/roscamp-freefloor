@@ -6,6 +6,8 @@
 - R번호 = Drive 핑키_제어파트_전달사항_2026-11-06 3절
 - 자가 복구 = 핑키_계약 3절 7번(2026-11-09 제안): 막히면 쥔 구역 안에서 짧게 물러나고 지도
   장애물을 비운 뒤 같은 선을 다시 따른다. 두 번까지 하고, 그동안 RECOVERING으로 보고한다.
+- 물러나기 = FMS 개선 계획 버전 2 1-A(계약 0.9-draft 제안): 관제의 Retreat goal. 이동을 먼저
+  멈추고(둘 다 cmd_vel) 자가 복구와 같은 BackUp을 낸다. 결과는 backup.reason_of로 만든다.
 
 시각은 모두 벽시계 초다(heartbeat는 벽시계로 재야 하고, 나머지도 같은 축을 쓴다).
 노드는 SendPath를 Nav2 FollowPath 목표로, CancelNav를 그 취소로, Finish를 액션 결과로 옮긴다.
@@ -16,7 +18,15 @@ import math
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 
-from pinky_fsm.backup import BackUp, CancelBackUp, backup_distance, keep_lateral
+from pinky_fsm.backup import (
+    FAILED,
+    OBSTACLE_BEHIND,
+    BackUp,
+    CancelBackUp,
+    backup_distance,
+    keep_lateral,
+    reason_of,
+)
 from pinky_fsm.geometry import Point, Polyline, Pose, poses_along
 
 # RobotState.STATE_* 와 같은 값
@@ -32,6 +42,7 @@ RECOVERING = "RECOVERING"  # 2026-11-09 제안: 자가 복구 중
 NAV_ABORTED = "NAV_ABORTED"
 CANCELED = "CANCELED"
 TIMEOUT = "TIMEOUT"
+RETREAT_REASONS = (OBSTACLE_BEHIND, TIMEOUT, CANCELED, FAILED)  # 계약 0.9 Retreat.action
 HEARTBEAT_LOST = "HEARTBEAT_LOST"
 PATH_NOT_CONNECTED = "PATH_NOT_CONNECTED"
 DOCK_UNAVAILABLE = "DOCK_UNAVAILABLE"  # Dock 결과에는 reason이 없다. 로그에만 남는다
@@ -71,6 +82,7 @@ class FsmParams:
     backup_lateral_limit_m: float = 0.03
     backup_speed_mps: float = 0.08
     backup_time_allowance_s: float = 5.0
+    retreat_stop_wait_s: float = 3.0  # 물러나기 전 달리던 로봇이 서기를 기다리는 한계(1-A, 추정)
     backup_result_grace_s: float = 2.0  # time allowance 뒤에도 결과가 없으면 멈추고 이어 간다
     recovery_pass_m: float = 0.05  # 막힌 곳을 이만큼 지나면 복구가 끝난다
     recovery_timeout_s: float = 10.0  # 다시 보낸 뒤 이만큼 못 지나면 다음 시도로 친다
@@ -151,6 +163,21 @@ class _Dock:
     dock_id: str
 
 
+@dataclass
+class _Retreat:
+    """관제가 시킨 물러나기(버전 2 1-A). BackUp 하나를 내고 그 결과로 끝난다.
+
+    달리던 이동이나 결과가 안 온 BackUp이 있었으면 로봇이 설 때까지(stopped_speed) BackUp을
+    미룬다(seq 0).
+    """
+    goal_id: Hashable
+    seq: int
+    since: float
+    allowance_s: float
+    distance_m: float = 0.0
+    speed_mps: float = 0.0
+
+
 class PinkyFsm:
     def __init__(self, params: FsmParams):
         self.p = params
@@ -164,6 +191,7 @@ class PinkyFsm:
         self._nav_running = False
         # 마지막으로 낸 LimitSpeed. 처음에는 모른다: 재시작 전에 건 제한을 첫 tick에 푼다
         self._speed_limit: float | None = None
+        self._nav_live: set[int] = set()  # 결과가 아직 안 온 FollowPath(seq). 물러나기 전에 비운다
         self._alive = -math.inf  # 마지막 heartbeat나 목표 수락
         self._stopped_since: float | None = None
         self._blocked = False
@@ -174,6 +202,9 @@ class PinkyFsm:
         self._attempt_origin: Point | None = None  # 첫 시도를 시작한 자리
         self._bseq = 0
         self._backup_running = False  # 보낸 BackUp이 아직 끝나지 않았을 수 있다
+        # 결과가 아직 안 온 BackUp(순번 → 이 시각 뒤에는 nav2가 time_allowance로 이미 세웠다).
+        # 목표가 바뀌거나 끝나도 남는다: 취소 요청은 그 BackUp이 섰다는 뜻이 아니다
+        self._backup_unanswered: dict[int, float] = {}
 
     # -- 보고 -----------------------------------------------------------------------------
 
@@ -184,7 +215,7 @@ class PinkyFsm:
             return RECOVERING
         if self._blocked:
             return BLOCKED
-        if isinstance(self._active, _Move):
+        if isinstance(self._active, (_Move, _Retreat)):
             return MOVING
         if isinstance(self._active, _Dock):
             return DOCKING
@@ -249,6 +280,42 @@ class PinkyFsm:
         cmds = self._end_active(CANCELED, stop=True)
         return cmds + [Finish(goal_id, False, DOCK_UNAVAILABLE)]
 
+    def retreat(self, goal_id: Hashable, now: float, distance_m: float,
+                speed_mps: float) -> list:
+        """뒤로 곧게 distance_m. 달리던 이동과 자가 복구 후진을 먼저 멈춘다."""
+        self._alive = max(self._alive, now)
+        # 결과가 안 온 BackUp도 기다린다. 같은 behavior_server라 바로 보내면 앞 후진이 다 서기
+        # 전에 새 후진이 이어진다(V2 교차 검수 1)
+        was_driving = self._nav_running or bool(self._nav_live) or self._backup_busy(now)
+        cmds = self._end_active(CANCELED, stop=True)
+        if not (distance_m > 0.0 and speed_mps > 0.0):
+            return cmds + [Finish(goal_id, False, FAILED)]
+        self._stopped_since = None
+        if was_driving:
+            # FollowPath나 BackUp이 끝나고(결과) 바퀴가 설 때까지 기다린다
+            # (둘 다 cmd_vel, 1-A Codex 1)
+            self._active = _Retreat(goal_id, 0, now, self.p.retreat_stop_wait_s,
+                                    float(distance_m), float(speed_mps))
+            return cmds
+        self._active = _Retreat(goal_id, 0, now, 0.0, float(distance_m), float(speed_mps))
+        return cmds + self._start_retreat(self._active, now)
+
+    def _start_retreat(self, g: _Retreat, now: float) -> list:
+        self._bseq += 1
+        allowance = g.distance_m / g.speed_mps * 2.0 + 2.0  # 가속·감속과 멈칫거림까지 넉넉히
+        g.seq, g.since, g.allowance_s = self._bseq, now, allowance
+        self._backup_running = True
+        self._backup_unanswered[g.seq] = now + allowance + self.p.backup_result_grace_s
+        return [BackUp(g.seq, g.distance_m, g.speed_mps, allowance)]
+
+    def _backup_busy(self, now: float) -> bool:
+        """결과가 안 온 BackUp이 아직 움직이고 있을 수 있다. time_allowance(+ 여유)가 지난 것은
+        nav2가 이미 세웠으므로 잊는다. 결과를 잃어도 다음 Retreat가 늘 TIMEOUT으로 끝나지 않는다."""
+        for seq, until in list(self._backup_unanswered.items()):
+            if now >= until:
+                del self._backup_unanswered[seq]
+        return bool(self._backup_unanswered)
+
     def cancel(self, goal_id: Hashable, now: float) -> list:
         if not self.is_running(goal_id):
             return []
@@ -257,6 +324,7 @@ class PinkyFsm:
     def nav_result(self, seq: int, outcome: str, now: float, pose: Sequence[float] | None,
                    obstacle: Obstacle) -> list:
         """FollowPath 결과. outcome은 succeeded, aborted, canceled, rejected 중 하나."""
+        self._nav_live.discard(seq)
         g = self._active
         if not isinstance(g, _Move) or seq != g.seq:
             return []  # 교체된 옛 목표의 결과(Nav2는 새 목표를 받으면 옛 것을 ABORTED로 끝낸다)
@@ -288,10 +356,18 @@ class PinkyFsm:
         return self._end_active(NAV_ABORTED, stop=True)
 
     def backup_result(self, seq: int, outcome: str, now: float,
-                      pose: Sequence[float] | None) -> list:
-        """BackUp 결과. 어떤 결과든(뒤에 물체, 시간 초과 포함) 지도를 비우고 남은 선을
-        다시 따른다."""
+                      pose: Sequence[float] | None, error_code: int = 0) -> list:
+        """BackUp 결과. 자가 복구면 어떤 결과든(뒤에 물체, 시간 초과 포함) 지도를 비우고 남은
+        선을 다시 따른다. 물러나기면 그 결과로 goal을 끝낸다."""
+        self._backup_unanswered.pop(seq, None)
         r, g = self._recovery, self._active
+        if isinstance(g, _Retreat):
+            if g.seq != seq:
+                return []
+            self._backup_running = False
+            self._active = None
+            self._rest = IDLE
+            return [Finish(g.goal_id, outcome == "succeeded", reason_of(outcome, error_code))]
         if r is None or r.backup_seq != seq or not isinstance(g, _Move):
             return []  # 멈춘 BackUp이나 끝난 목표의 결과
         self._backup_running = False
@@ -314,6 +390,18 @@ class PinkyFsm:
             g = None
         if isinstance(g, _Move) and pose is not None:
             g.s = self._track(g, pose)
+        if isinstance(g, _Retreat) and g.seq == 0:
+            lin, ang = speed
+            stopped = abs(lin) < self.p.stopped_speed_mps and abs(ang) < self.p.stopped_turn_rps
+            if stopped and not self._nav_live and not self._backup_busy(now):
+                cmds += self._start_retreat(g, now)
+            elif now - g.since >= g.allowance_s:
+                cmds += self._end_active(TIMEOUT, stop=True)  # 서지 않는다. 물러나지 않는다
+                g = None
+        elif (isinstance(g, _Retreat)
+                and now - g.since >= g.allowance_s + self.p.backup_result_grace_s):
+            cmds += self._end_active(TIMEOUT, stop=True)  # BackUp 결과가 오지 않는다
+            g = None
         cmds += self._watch_recovery(now, g, pose, obstacle)
         g = self._active
         cmds += self._watch_obstacle(now, g, pose, speed, obstacle)  # a clear comes first
@@ -405,6 +493,8 @@ class PinkyFsm:
         self._bseq += 1
         r.backup_seq, r.backup_since = self._bseq, now
         self._backup_running = True
+        self._backup_unanswered[self._bseq] = (now + self.p.backup_time_allowance_s
+                                               + self.p.backup_result_grace_s)
         return cmds + [BackUp(self._bseq, d, self.p.backup_speed_mps,
                               self.p.backup_time_allowance_s)]
 
@@ -488,6 +578,7 @@ class PinkyFsm:
         g.nav_running = True
         g.last_send = now
         self._nav_running = True
+        self._nav_live.add(g.seq)
         poses = poses_along(g.route.rest(g.s), g.target[2], self.p.path_step_m)
         return [SendPath(g.seq, poses, final_goal=g.final_goal)]
 
@@ -500,6 +591,8 @@ class PinkyFsm:
                 self._blocked_points = self._ahead(g, self._pose)
             self._active = None
             self._rest = IDLE
+            if isinstance(g, _Retreat) and reason not in RETREAT_REASONS:
+                reason = FAILED  # 계약 0.9: Retreat reason은 넷뿐이다(heartbeat, 위치 잃음 등)
             cmds.append(Finish(g.goal_id, False, reason))
         if stop and self._nav_running:
             self._nav_running = False
