@@ -304,6 +304,20 @@ def test_a_robot_takes_the_shortcut_when_it_is_through_before_the_docked_robot_c
             if isinstance(c, EventOut) and c.robot == "b"].count("FLOOR_SHORTCUT") == 1
 
 
+def test_the_floor_without_the_shortcut_is_the_figure_eight_alone():
+    """Switched off, the controller's floor is the one before the shortcut was drawn: the other
+    lines and the floor under them as they are, the gap between objects 1 and 3 no floor."""
+    plain = FLOOR.without_shortcuts()
+    assert set(plain.fixed_lines) == set(FLOOR.fixed_lines) - {"outbound_short"}
+    assert all(plain.fixed_lines[name] == FLOOR.fixed_lines[name] for name in plain.fixed_lines)
+    assert plain.rolling_lines == plain.narrow_lines == {"outbound_in", "outbound_out"}
+    assert plain.line_floor_of == {name: FLOOR.line_floor_of[name] for name in plain.narrow_lines}
+    gap = FLOOR.cell_of(*GAP_13)
+    assert gap in FLOOR.line_floor_of["outbound_short"] and gap not in plain.line_floor
+    assert (plain.free, plain.clear, plain.docks) == (FLOOR.free, FLOOR.clear, FLOOR.docks)
+    assert plain.parking == FLOOR.parking
+
+
 def test_no_robot_takes_the_shortcut_while_the_switch_is_off():
     """floor_shortcut is off unless asked for: the floor is then the one without the shortcut
     (its line, its gap cells), and a robot that would take it stays on the way in."""
