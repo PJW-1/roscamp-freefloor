@@ -163,6 +163,16 @@ def test_a_docked_robot_and_parked_robots_leave_the_ways_round_the_objects_open(
         assert len(joined) == 1, name
 
 
+def test_every_point_in_the_mouths_of_the_gap_has_a_step_that_keeps_off_the_objects():
+    """As on the test floor (test_floor_plan): beside the WORK lines but not deep in the gap,
+    every point has a step back onto clear floor and none comes more than half a cell
+    (1.5 cm) nearer an object than where it starts."""
+    from test_floor_plan import mouth_steps, nearer_a_wall
+    found, stuck = mouth_steps(FLOOR, FloorPlanner(FLOOR), parts=(0.25, 0.75))
+    assert found and not stuck
+    assert max(nearer_a_wall(FLOOR, start, step) for start, step in found) <= FLOOR.cell_m / 2
+
+
 def leg(start, goal, out_line=None, in_line=None):
     return FloorPlanner(FLOOR).leg(start, goal, out_line=out_line, in_line=in_line)
 

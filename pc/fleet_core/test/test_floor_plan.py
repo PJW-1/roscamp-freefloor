@@ -433,10 +433,11 @@ def test_a_robot_on_the_dock_of_a_narrow_line_is_there_already():
     assert route is not None and route.points == [(0.75, 0.45)] and route.length == 0.0
 
 
-def test_from_the_mouth_of_a_gap_the_step_onto_clear_floor_stays_on_the_line():
+def test_from_the_mouth_of_a_gap_a_start_steps_only_onto_clear_cells_beside_the_line():
     """Just inside the mouth (clear floor within 0.10 m) a start steps onto clear floor as
-    anywhere else, but only onto the clear cells the narrow line itself runs over, also when
-    the nearest of them are taken: never slantwise past the corner of a box."""
+    anywhere else, but only onto clear cells whose centre is within a cell of the narrow
+    line, also when the nearest of them are taken. (The next test checks the steps keep off
+    the walls, from every point of the mouths.)"""
     from fleet_core.traffic.floor.planner import FloorPlanner
     floor = _gap_floor()
     planner = FloorPlanner(floor)
@@ -452,3 +453,42 @@ def test_from_the_mouth_of_a_gap_the_step_onto_clear_floor_stays_on_the_line():
     assert planner._steps_onto_clear(start, shut) == []  # it waits; nothing slantwise instead
     off_floor = planner._steps_onto_clear((0.30, 0.52))  # a wall margin away from any gap
     assert off_floor and any(abs(x - 0.30) > floor.cell_m for x, _ in off_floor)
+
+
+def mouth_steps(floor, planner, parts=(0.2, 0.5, 0.8)):
+    """(start, step) for points (parts of a cell, squared) in every cell beside a narrow line
+    that is not deep in the gap, and the starts among them that get no step at all."""
+    found, stuck = [], []
+    near = {(c[0] + di, c[1] + dj) for c in floor.line_floor
+            for di in range(-6, 7) for dj in range(-6, 7)}  # JOIN_M and the mouths, in cells
+    for i, j in sorted((floor.free - floor.clear) & near):
+        for a in parts:
+            for b in parts:
+                start = (floor.origin[0] + (i + a) * floor.cell_m,
+                         floor.origin[1] + (j + b) * floor.cell_m)
+                if planner._near_line(start) is None or planner._gap_line(start):
+                    continue
+                steps = planner._steps_onto_clear(start)
+                found += [(start, step) for step in steps]
+                if not steps:
+                    stuck.append(start)
+    return found, stuck
+
+
+def nearer_a_wall(floor, start, step) -> float:
+    """How much nearer a wall the straight step comes than its start is."""
+    along = [(start[0] + (step[0] - start[0]) * k / 20, start[1] + (step[1] - start[1]) * k / 20)
+             for k in range(21)]
+    limit = 0.12  # the starts are in a wall margin, nearer than this; farther is not looked for
+    return floor._gap_to_wall(*start, limit) - min(floor._gap_to_wall(*p, limit) for p in along)
+
+
+def test_every_point_in_the_mouths_of_a_gap_has_a_step_that_keeps_off_the_walls():
+    """No point beside the narrow lines is left without a way back onto clear floor, and no
+    step comes more than half a cell (1.5 cm) nearer a wall than the point it starts from."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    floor = _gap_floor()
+    found, stuck = mouth_steps(floor, FloorPlanner(floor))
+    assert found and not stuck
+    assert max(nearer_a_wall(floor, start, step) for start, step in found) <= floor.cell_m / 2
+
