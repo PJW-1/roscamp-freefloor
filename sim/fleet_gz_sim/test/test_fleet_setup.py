@@ -34,6 +34,37 @@ def test_a_scenario_with_robot_faults_is_refused():
         load(scenario_path("stuck_robot", share()))
 
 
+def _with(tmp_path, **over) -> Path:
+    import yaml
+    data = yaml.safe_load(scenario_path("basic_orders", share()).read_text(encoding="utf-8"))
+    data.update(over)
+    data["expect"] = {**(data.get("expect") or {}), "orders_shipped_min": 1}
+    path = tmp_path / "s.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
+def test_a_low_battery_runs_in_the_arena_the_stand_in_reports_it(tmp_path):
+    """low_battery는 sim_stand_in이 배터리 토픽으로 낸다. 다른 로봇 고장은 여전히 안 된다."""
+    low = {"type": "low_battery", "robot": "pinky1", "at_s": 30, "duration_s": 20}
+    _, scenario = load(_with(tmp_path, faults=[low]))
+    assert [f.type for f in scenario.faults] == ["low_battery"]
+    stuck = {"type": "stuck", "robot": "pinky2", "at_s": 30}
+    with pytest.raises(ScenarioUnfit, match="stuck"):
+        load(_with(tmp_path, faults=[low, stuck]))
+
+
+def test_load_expands_random_with_the_given_seed(tmp_path):
+    path = _with(tmp_path, random={"order_gap_s": [5, 40],
+                                   "low_battery": {"from_s": 20, "to_s": 150, "charge_s": 30}})
+    _, by_file = load(path)
+    _, seeded = load(path, seed=by_file.seed + 1)
+    assert seeded.seed == by_file.seed + 1
+    assert [o.at_s for o in seeded.orders] != [o.at_s for o in by_file.orders]
+    assert load(path, seed=by_file.seed + 1)[1] == seeded
+    assert sum(f.type == "low_battery" for f in seeded.faults) == 3
+
+
 def test_a_scenario_is_a_name_in_fake_robots_or_a_file(tmp_path):
     assert scenario_path("basic_orders", share()).name == "basic_orders.yaml"
     mine = tmp_path / "mine.yaml"

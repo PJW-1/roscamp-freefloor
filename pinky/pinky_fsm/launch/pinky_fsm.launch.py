@@ -27,6 +27,9 @@ def generate_launch_description():
         DeclareLaunchArgument("horizon_cap_mps", default_value=str(FsmParams().horizon_cap_mps),
                               description="잠금 경계 속도 제한의 상한(m/s). RPP는 그 제한을"
                                           " 속도로 쓰므로 Nav2 desired_linear_vel 이하로"),
+        DeclareLaunchArgument("battery_topic", default_value="",
+                              description="BatteryState 토픽(percentage 0~1). 비면 배터리를"
+                                          " 모름(-1)으로 알린다. 시뮬은 시뮬 배터리를 준다"),
         Node(
             package="pinky_fsm", executable="pinky_fsm_node", name="pinky_fsm",
             namespace=namespace, output="screen",
@@ -40,6 +43,8 @@ def generate_launch_description():
                     LaunchConfiguration("through_controller_id"), value_type=str),
                 "horizon_cap_mps": ParameterValue(
                     LaunchConfiguration("horizon_cap_mps"), value_type=float),
+                "battery_topic": ParameterValue(
+                    LaunchConfiguration("battery_topic"), value_type=str),
             }],
             remappings=[("/tf", "tf"), ("/tf_static", "tf_static")]),
     ])

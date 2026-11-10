@@ -4,7 +4,13 @@ from pathlib import Path
 import pytest
 from conftest import GRID_MAP
 from fake_robots.common import load_fleet_params, split_fake_arms
-from fake_robots.scenario import ScenarioError, load_scenario, parse_scenario, scenario_map_file
+from fake_robots.scenario import (
+    ScenarioError,
+    expand_random,
+    load_scenario,
+    parse_scenario,
+    scenario_map_file,
+)
 from fleet_core.traffic.lane_map import load_lane_map
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
@@ -498,3 +504,163 @@ def test_off_lane_drifts_one_robot_and_expects_it_back_with_nothing_released(sit
     assert ex.released_while_off_lane == 0 and ex.all_orders_finished
     assert ex.event_counts["LANE_ERROR"] == 1 and ex.event_counts["BACK_ON_LANE"] == 1
     assert ex.event_counts["OFF_LANE"] == 0
+
+
+# -- low_battery와 random ------------------------------------------------------------------
+
+FIVE_ORDERS = [{"at_s": 0, "id": f"O-{i}", "items": {"A": 1}} for i in range(1, 6)]
+THREE_ROBOTS = {"pinky1": {"start": "P-6"}, "pinky2": {"start": "P-5"},
+                "pinky3": {"start": "P-4"}}
+SOME_SHIPPED = {"orders_shipped_min": 1}
+
+
+def random_data(**random):
+    return minimal(orders=[dict(o) for o in FIVE_ORDERS], robots=dict(THREE_ROBOTS),
+                   stock={"arm1": {"A": 9}, "arm2": {"C": 1}}, expect=SOME_SHIPPED,
+                   random=random or {"order_gap_s": [5, 40],
+                                     "low_battery": {"from_s": 20, "to_s": 150,
+                                                     "charge_s": 30}})
+
+
+def test_low_battery_is_a_robot_fault_with_a_charge_time(site):
+    data = minimal(faults=[{"type": "low_battery", "robot": "pinky1", "at_s": 40,
+                            "duration_s": 30}], expect=SOME_SHIPPED)
+    [f] = parse_scenario(data, site).faults
+    assert (f.type, f.robot, f.at_s, f.duration_s) == ("low_battery", "pinky1", 40.0, 30.0)
+
+
+@pytest.mark.parametrize("fault", [
+    {"type": "low_battery", "robot": "pinky1", "at_s": 40},
+    {"type": "low_battery", "robot": "pinky1", "at_s": 40, "duration_s": 0},
+    {"type": "low_battery", "robot": "nobody", "at_s": 40, "duration_s": 30},
+])
+def test_a_low_battery_needs_a_known_robot_and_a_positive_charge_time(site, fault):
+    with pytest.raises(ScenarioError):
+        parse_scenario(minimal(faults=[fault], expect=SOME_SHIPPED), site)
+
+
+def test_expand_random_draws_order_times_and_one_low_battery_per_robot():
+    data = random_data()
+    before = repr(data)
+    out = expand_random(data, seed=5)
+    assert repr(data) == before  # 입력은 그대로
+    assert "random" not in out and out["seed"] == 5
+    times = [o["at_s"] for o in out["orders"]]
+    assert [o["id"] for o in out["orders"]] == [o["id"] for o in FIVE_ORDERS]  # 파일 순서
+    gaps = [b - a for a, b in zip([0.0, *times], times, strict=False)]
+    assert all(4.85 <= g <= 40.15 for g in gaps), gaps
+    assert all(round(t, 1) == t for t in times)
+    batteries = [f for f in out["faults"] if f["type"] == "low_battery"]
+    assert [f["robot"] for f in batteries] == ["pinky1", "pinky2", "pinky3"]
+    assert all(20 <= f["at_s"] <= 150 and f["duration_s"] == 30 for f in batteries)
+    assert all(round(f["at_s"], 1) == f["at_s"] for f in batteries)
+
+
+def test_expand_random_is_reproducible_and_seeded():
+    data = random_data()
+    assert expand_random(data, 5) == expand_random(data, 5)
+    assert expand_random(data, 5)["orders"] != expand_random(data, 6)["orders"]
+    assert expand_random(data) == expand_random(data, data["seed"])  # None: 파일의 seed
+
+
+def test_expand_random_draws_orders_first_then_robots_by_name():
+    import random as stdlib_random
+    data = random_data()
+    data["robots"] = {"pinky3": {"start": "P-4"}, "pinky1": {"start": "P-6"}}
+    rng = stdlib_random.Random(9)
+    times, t = [], 0.0
+    for _ in FIVE_ORDERS:
+        t += rng.uniform(5, 40)
+        times.append(round(t, 1))
+    lows = {r: round(rng.uniform(20, 150), 1) for r in ("pinky1", "pinky3")}
+    out = expand_random(data, 9)
+    assert [o["at_s"] for o in out["orders"]] == times
+    assert {f["robot"]: f["at_s"] for f in out["faults"]} == lows
+
+
+def test_expand_random_keeps_existing_faults_and_either_part_may_be_missing():
+    data = random_data(low_battery={"from_s": 0, "to_s": 0, "charge_s": 1})
+    data["faults"] = [{"type": "comm_loss", "robot": "pinky1", "at_s": 3, "duration_s": 1}]
+    out = expand_random(data, 1)
+    assert [o["at_s"] for o in out["orders"]] == [0] * 5  # 주문 시각은 그대로
+    assert out["faults"][0] == data["faults"][0]
+    assert [f["at_s"] for f in out["faults"][1:]] == [0.0, 0.0, 0.0]
+    only_orders = expand_random(random_data(order_gap_s=[1, 1]), 1)
+    assert [o["at_s"] for o in only_orders["orders"]] == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert not only_orders.get("faults")
+
+
+def test_data_without_random_comes_back_unchanged(site):
+    data = minimal(faults=[{"type": "comm_loss", "robot": "pinky1", "at_s": 3,
+                            "duration_s": 1}], expect=SOME_SHIPPED)
+    out = expand_random(data, 42)
+    assert out == data and out is not data
+    assert parse_scenario(data, site) == parse_scenario(data, site, seed=42)
+
+
+@pytest.mark.parametrize("random", [
+    {"order_gap_s": [40, 5]},
+    {"order_gap_s": [-1, 5]},
+    {"order_gap_s": [5]},
+    {"order_gap_s": "5"},
+    {"low_battery": {"from_s": 150, "to_s": 20, "charge_s": 30}},
+    {"low_battery": {"from_s": -1, "to_s": 20, "charge_s": 30}},
+    {"low_battery": {"from_s": 0, "to_s": 20, "charge_s": 0}},
+    {"low_battery": {"from_s": 0, "to_s": 20}},
+    {"low_battery": {"from_s": 0, "to_s": 20, "charge_s": 5, "extra": 1}},
+    {"surprise": 1},
+])
+def test_bad_random_blocks_are_refused(site, random):
+    with pytest.raises(ScenarioError):
+        parse_scenario(random_data(**random), site)
+
+
+def test_parse_and_load_expand_random_with_the_given_seed(site, tmp_path):
+    import yaml
+    data = random_data()
+    path = tmp_path / "r.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    by_file = load_scenario(path, site)
+    assert by_file == parse_scenario(expand_random(data), site)
+    assert by_file.seed == data["seed"]
+    seeded = load_scenario(path, site, seed=8)
+    assert seeded == parse_scenario(data, site, seed=8) and seeded.seed == 8
+    assert [o.at_s for o in seeded.orders] != [o.at_s for o in by_file.orders]
+    assert sum(f.type == "low_battery" for f in seeded.faults) == 3
+
+
+def test_parked_while_backlog_may_be_null(site):
+    data = minimal(expect={"parked_while_backlog": None})
+    assert parse_scenario(data, site).expect.parked_while_backlog is None
+
+
+class _ParamNode:
+    """load_scenario_param이 쓰는 rclpy Node의 일부."""
+
+    def __init__(self, **given):
+        self._given, self.declared = given, {}
+
+    def has_parameter(self, name):
+        return name in self.declared
+
+    def declare_parameter(self, name, default):
+        assert name not in self.declared, f"{name} declared twice"
+        self.declared[name] = self._given.get(name, default)
+
+    def get_parameter(self, name):
+        class _P:
+            value = self.declared[name]
+        return _P()
+
+
+def test_every_node_loads_the_same_expanded_scenario_with_scenario_seed(site, tmp_path):
+    import yaml
+    from fake_robots.common import load_scenario_param
+    data = random_data()
+    path = tmp_path / "r.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    by_file = load_scenario_param(_ParamNode(scenario_file=str(path)), site)
+    assert by_file == load_scenario(path, site)  # -1(기본): 파일의 seed
+    node = _ParamNode(scenario_file=str(path), scenario_seed=8)
+    assert load_scenario_param(node, site) == load_scenario(path, site, seed=8)
+    assert node.declared["scenario_seed"] == 8

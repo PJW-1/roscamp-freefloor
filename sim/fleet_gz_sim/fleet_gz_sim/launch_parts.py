@@ -125,6 +125,8 @@ SIM_AMCL = {"z_hit": 0.95, "z_rand": 0.05, "max_beams": 120, "laser_max_range": 
 # Second RPP for paths that end at a lock boundary (MoveTo.final_goal false). The robot Nav2
 # params (pinky_nav_config) load it next to FollowPath; pinky_fsm picks it per goal.
 THROUGH_CONTROLLER = "FollowPathThrough"
+# sim_stand_in이 내는 로봇마다의 시뮬 배터리(BatteryState). low_battery가 있으면 pinky_fsm이 본다
+BATTERY_TOPIC = "/{robot}/sim/battery"
 
 
 def sim_nav_params(base: Path, out: Path, amcl: dict | None = None,
@@ -158,7 +160,8 @@ def sim_nav_params(base: Path, out: Path, amcl: dict | None = None,
 def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn", fsm=True,
           rviz=False, dock_aside=False, nav_composition=False, nav_map="",
           nav_map_fine="", through_controller_id=THROUGH_CONTROLLER,
-          nav_max_speed: float | None = None, nav_collision_check: bool = True) -> list:
+          nav_max_speed: float | None = None, nav_collision_check: bool = True,
+          battery_topic: str = "") -> list:
     """핑키 한 대: 모델, Nav2, pinky_fsm, RViz. 브리지는 bridge()에 이 로봇 이름을 넣는다.
 
     dock_aside: pinky_fsm의 dock 서버를 /<ns>/dock_fsm으로 비켜 둔다(시뮬 전용 도크 대역용).
@@ -168,7 +171,8 @@ def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn"
     FollowPath로 간다. Nav2는 두 controller를 늘 띄운다.
     nav_max_speed: 두 RPP의 최고 속도(m/s). None이면 설정 파일 그대로. pinky_fsm이 잠금
     경계에서 내는 속도 제한의 상한(horizon_cap_mps)도 이 값으로: RPP는 그 제한을 속도로 쓴다.
-    nav_collision_check: 거짓이면 두 RPP의 충돌 검사(use_collision_detection)를 끈다."""
+    nav_collision_check: 거짓이면 두 RPP의 충돌 검사(use_collision_detection)를 끈다.
+    battery_topic: pinky_fsm이 볼 BatteryState 토픽(sim_stand_in의 BATTERY_TOPIC). 비면 안 넘긴다."""
     me, nav = share("fleet_gz_sim"), share("pinky_nav_config")
     x, y, yaw = str(x), str(y), str(yaw)
     description = ParameterValue(
@@ -203,6 +207,8 @@ def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn"
                     "through_controller_id": through_controller_id}
         if nav_max_speed is not None:
             fsm_args["horizon_cap_mps"] = str(nav_max_speed)
+        if battery_topic:
+            fsm_args["battery_topic"] = battery_topic
         include = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(share("pinky_fsm") / "launch" /
                                               "pinky_fsm.launch.py")),

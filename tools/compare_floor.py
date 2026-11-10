@@ -46,7 +46,7 @@ sys.path.insert(0, str(REPO / "tools"))
 sys.path.insert(0, str(REPO / "pc" / "fleet_core" / "test"))
 
 import baseline  # noqa: E402
-from fake_robots.scenario import parse_scenario  # noqa: E402
+from fake_robots.scenario import expand_random, parse_scenario  # noqa: E402
 from fleet_core.common.commands import SHIPPED, ReportOrderCmd  # noqa: E402
 from fleet_core.common.params import load_params  # noqa: E402
 from fleet_core.traffic.floor.floor_map import floor_map_for  # noqa: E402
@@ -106,8 +106,10 @@ def _timed(world, store):
 
 
 def run(map_, scenario, seed, traffic_mode, timeout_s=None, frame_every=0):
-    """One run. Returns (row, world); world is None when the scenario could not be built."""
-    data = baseline.load_scenario(scenario)
+    """One run. Returns (row, world); world is None when the scenario could not be built.
+
+    random 블록(주문 시각, 배터리 부족)은 이 실행의 seed로 푼다: seed마다 다른 시간표."""
+    data = expand_random(baseline.load_scenario(scenario), seed)
     row = baseline._blank_row(baseline.map_name(map_), baseline.scenario_name(scenario),
                               traffic_mode, seed, data["robots"], len(data["orders"]))
     row.update({c: "" for c in EXTRA})

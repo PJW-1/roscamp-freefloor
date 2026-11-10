@@ -730,3 +730,118 @@ def test_lanes_keep_the_painted_world(made, tmp_path):
 def launch_parts_share():
     from ament_index_python.packages import get_package_share_directory
     return get_package_share_directory("fleet_gz_sim")
+
+
+# ---- scenario_seed, battery_low_pct, 배터리 토픽 -----------------------------------------------
+
+SCENARIO_NODES = {"fake_workcell_node", "fake_vision_node", "fake_arm_node", "fake_central_node",
+                  "scenario_monitor_node", "sim_stand_in"}
+
+
+def random_scenario(tmp_path, low_battery=True) -> str:
+    """basic_orders(기본 지도) + random 블록."""
+    import yaml
+    from ament_index_python.packages import get_package_share_directory
+    path = Path(get_package_share_directory("fake_robots")) / "scenarios" / "basic_orders.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["random"] = {"order_gap_s": [5, 40]}
+    if low_battery:
+        data["random"]["low_battery"] = {"from_s": 20, "to_s": 150, "charge_s": 30}
+    data["expect"] = {**(data.get("expect") or {}), "orders_shipped_min": 1}
+    out = tmp_path / "random.yaml"
+    out.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return str(out)
+
+
+def scenario_nodes(actions):
+    every = [*actions, *after_ready(actions)]
+    return [n for n in nodes(every) if n.kw["executable"] in SCENARIO_NODES]
+
+
+def test_scenario_seed_reaches_every_node_that_loads_the_scenario(made, tmp_path):
+    found = scenario_nodes(run(made, scenario=random_scenario(tmp_path), scenario_seed="7"))
+    assert {n.kw["executable"] for n in found} == SCENARIO_NODES
+    assert {params(n)["scenario_seed"] for n in found} == {7}
+
+
+def test_without_scenario_seed_the_nodes_use_the_file_seed(made, tmp_path):
+    found = scenario_nodes(run(made, scenario=random_scenario(tmp_path)))
+    assert found and all("scenario_seed" not in params(n) for n in found)
+
+
+def test_a_scenario_seed_that_is_no_integer_stops_the_launch(made, tmp_path):
+    with pytest.raises(ValueError, match="scenario_seed"):
+        run(made, scenario=random_scenario(tmp_path), scenario_seed="seven")
+
+
+def test_the_launch_loads_the_scenario_with_the_same_seed(made, tmp_path, monkeypatch):
+    from fleet_gz_sim import fleet_setup
+    seen = []
+    real = fleet_setup.load
+    monkeypatch.setattr(fleet_setup, "load",
+                        lambda *a, **kw: seen.append(kw.get("seed")) or real(*a, **kw))
+    run(made, scenario=random_scenario(tmp_path), scenario_seed="7")
+    run(made, scenario=random_scenario(tmp_path))
+    assert seen == [7, None]
+
+
+def fsm_args(actions) -> dict:
+    return {launch_args(i)["namespace"]: launch_args(i)
+            for i in includes(actions, "pinky_fsm.launch.py")}
+
+
+def test_a_low_battery_scenario_wires_the_sim_battery_into_every_pinky_fsm(made, tmp_path):
+    fsms = fsm_args(run(made, scenario=random_scenario(tmp_path)))
+    assert {r: a["battery_topic"] for r, a in fsms.items()} == {
+        r: f"/{r}/sim/battery" for r in ROBOTS}
+
+
+def test_without_low_battery_the_pinky_fsm_gets_no_battery_topic(made, tmp_path):
+    for actions in (run(made), run(made, scenario=random_scenario(tmp_path, low_battery=False))):
+        assert all("battery_topic" not in a for a in fsm_args(actions).values())
+
+
+def test_the_pinky_fsm_launch_passes_battery_topic_on():
+    """설치본이 아니라 이 저장소의 launch 파일을 읽는다."""
+    path = Path(__file__).resolve().parents[3] / "pinky" / "pinky_fsm" / "launch" / \
+        "pinky_fsm.launch.py"
+    spec = importlib.util.spec_from_file_location("pinky_fsm_launch_here", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    entities = module.generate_launch_description().entities
+    [arg] = [a for a in entities if type(a).__name__ == "DeclareLaunchArgument"
+             and a.name == "battery_topic"]
+    assert arg.default_value[0].text == ""
+    [node] = [a for a in entities if type(a).__name__ == "Node"]
+    [given] = node._Node__parameters
+    names = {"".join(part.text for part in key) for key in given}
+    assert "battery_topic" in names
+
+
+def test_battery_low_pct_goes_into_the_params_copy(made, tmp_path):
+    import yaml
+    from fleet_core.common.params import DEFAULT_PARAMS
+    out = tmp_path / "result"
+    actions = run(made, battery_low_pct="20", result_dir=str(out))
+    used = params_files([*actions, *after_wait(actions)])
+    [path] = set(used.values())
+    assert Path(path).parent == out
+    copy = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    given = yaml.safe_load(DEFAULT_PARAMS.read_text(encoding="utf-8"))
+    assert copy == {**given, "battery_low_pct": 20.0}  # traffic_mode는 파일 그대로
+
+
+def test_battery_low_pct_and_traffic_mode_share_one_copy(gz, tmp_path):
+    import yaml
+    mine = tmp_path / "mine.yaml"
+    mine.write_text("traffic_mode: lanes\n", encoding="utf-8")
+    copy = yaml.safe_load(Path(gz.params_for(str(mine), "freefloor", str(tmp_path / "a"), "15"))
+                          .read_text(encoding="utf-8"))
+    assert copy == {"traffic_mode": "freefloor", "mark_final_goal": True, "battery_low_pct": 15.0}
+    assert gz.params_for(str(mine), "", str(tmp_path / "b"), "") == str(mine)
+
+
+@pytest.mark.parametrize("text", ["low", "-1", "nan"])
+def test_a_bad_battery_low_pct_stops_the_launch(gz, tmp_path, text):
+    with pytest.raises(ValueError, match="battery_low_pct"):
+        gz.params_for("", "", str(tmp_path / "a"), text)

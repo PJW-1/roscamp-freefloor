@@ -2,7 +2,7 @@
 
 로봇은 직선으로 달리며 잡음 섞인 자세를 보고한다. 가짜 중앙 서버가 주문판을 관리한다.
 장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 앞 물체(막힘), 보고 밀림,
-로봇에서 떨어진 path(bad_path), 팔 실패와 무응답을 넣는다.
+로봇에서 떨어진 path(bad_path), 팔 실패와 무응답, 배터리 부족(low_battery)을 넣는다.
 로봇은 핑키처럼 받은 path가 제 자리를 지나는지 본다(지시서 7.5). 멀면 PATH_NOT_CONNECTED.
 매 단계 안전 불변식을 검사하므로 이 세계를 쓰는 테스트는 모두 불변식도 검증한다.
 """
@@ -152,6 +152,17 @@ class SimWorld:
         self._queued_results: list = []
         self.min_true_release_distance = float("inf")
         self.path_refusals: list[tuple[float, str, int]] = []  # (시각, 로봇, goal_id)
+        self.batteries = self._battery_models()
+
+    def _battery_models(self) -> dict:
+        """low_battery가 있는 로봇만 배터리 모형을 둔다. 나머지는 예전처럼 배터리를 안 보낸다."""
+        low = [f for f in self.faults if f["type"] == "low_battery"]
+        if not low:
+            return {}
+        from fake_robots.battery import Battery  # 이 고장을 쓰는 세계만 fake_robots가 필요하다
+        spots = [self.site.waypoint_pose(w) for w in getattr(self.site, "parking", ())]
+        return {name: Battery([f for f in low if f["robot"] == name], spots)
+                for name in sorted({f["robot"] for f in low})}
 
     # ---- public helpers for tests -------------------------------------------------------
 
@@ -257,6 +268,8 @@ class SimWorld:
                 self.arm_faults[kind] += fault.get("count", 1)
             elif kind == "run_mode":
                 self.run_mode = fault["mode"]
+            elif kind == "low_battery":
+                pass  # 배터리 모형(self.batteries)이 시각을 직접 본다
             else:
                 raise ValueError(kind)
 
@@ -433,7 +446,13 @@ class SimWorld:
             y += math.cos(r.heading) * r.drift
             self.reported[r.name] = (x, y)
             state = "BLOCKED" if r.blocked else "MOVING" if r.goal_id else "IDLE"
-            self.core.on_robot_state(r.name, x, y, 0.0, state)
+            battery = self.batteries.get(r.name)
+            if battery is None:
+                self.core.on_robot_state(r.name, x, y, 0.0, state)
+            else:
+                # 실제 자세와 서 있는지로 충전한다
+                level = battery.percent(self.t, r.x, r.y, r.goal_kind != "move")
+                self.core.on_robot_state(r.name, x, y, 0.0, state, battery=level)
 
     # ---- commands -----------------------------------------------------------------------
 
