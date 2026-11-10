@@ -233,3 +233,95 @@ def test_a_waiting_robot_takes_no_cell_of_the_others_way_and_gives_up_after_a_wh
     assert not traffic._extend(m, leg)
     assert leg.no_yield == ("a",) and leg.yields == ()
     assert traffic._extend(m, leg)  # 더 기다리지 않고 잡는다(예전 방식으로 돌아간다)
+
+
+# ---- Codex 리뷰(d099005) ------------------------------------------------------------------
+
+
+def test_a_cell_used_by_two_robots_one_after_the_other_costs_the_wait_for_both(monkeypatch):
+    """[1, 3]초와 [2.5, 5]초에 쓰는 칸에 1.5초에 닿으면 5초까지 기다린다(첫 로봇만 보지 않는다)."""
+    traffic = pair()
+    floor, v = traffic.floor, traffic.params.detour_speed_mps
+    cell = floor.cell_of(1.85, 1.15)
+    tables = {"a": {cell: [1.0, 3.0, 1.0, 0.0]}, "b": {cell: [2.5, 5.0, 1.0, 0.0]}}
+    traffic._legs["c"] = traffic._legs["b"]  # 계획하는 셋째 로봇 자리(시각표만 본다)
+    monkeypatch.setattr(traffic, "_spans", lambda name: tables.get(name, {}))
+    lag = max(0.0, traffic.params.release_distance_m - traffic._body) / v
+    held, flat = traffic._wait_for("c")(cell, 1.5 * v, (0, 1))
+    assert flat == 0.0 and held == pytest.approx((5.0 + lag - 1.5) * v)
+
+
+def test_a_cell_with_an_oncoming_and_a_crossing_robot_costs_both(monkeypatch):
+    from fleet_core.traffic.floor.controller import RESERVE_PENALTY_M
+    traffic = pair()
+    floor, v = traffic.floor, traffic.params.detour_speed_mps
+    cell = floor.cell_of(1.85, 1.15)
+    tables = {"a": {cell: [1.0, 3.0, 0.0, -1.0]}, "b": {cell: [1.0, 3.0, 1.0, 0.0]}}
+    traffic._legs["c"] = traffic._legs["b"]
+    monkeypatch.setattr(traffic, "_spans", lambda name: tables.get(name, {}))
+    held, flat = traffic._wait_for("c")(cell, 1.5 * v, (0, 1))  # a는 마주 온다, b는 가로지른다
+    assert flat == RESERVE_PENALTY_M and held > 0.0
+
+
+def test_a_robot_standing_at_its_line_stop_or_blocked_is_not_waited_for(monkeypatch):
+    traffic = pair()
+    timetable(traffic, monkeypatch, a_at=3.0, b_at=3.8)
+    m, leg = traffic._missions["b"], traffic._legs["b"]
+    assert set(traffic._give_way(m, leg)) == {"a"}
+    leg.behind = ()
+    traffic._missions["a"].robot_state = "BLOCKED"  # 물체에 막혀 섰다
+    assert traffic._give_way(m, leg) == {}
+    traffic._missions["a"].robot_state = "MOVING"
+    monkeypatch.setattr(traffic, "_line_cap", lambda mission, its_leg: its_leg.s_lock)
+    assert traffic._give_way(m, leg) == {}  # 접근선 앞 설 자리까지 잠갔다: 서 있는다
+
+
+def test_waiting_and_queueing_in_turn_still_reaches_the_time_limit(monkeypatch):
+    """비켜 주기와 줄 서기가 번갈아 와도 기다린 시간은 이어서 센다."""
+    traffic, advance = pair_clock()
+    m, leg = traffic._missions["b"], traffic._legs["b"]
+    timetable(traffic, monkeypatch, a_at=3.0, b_at=3.8, shared=(leg.route.at(0.6),))
+    while traffic._extend(m, leg):
+        pass
+    assert leg.yields == ("a",) and leg.yield_since is not None
+    since = leg.yield_since
+    real = traffic.zones.acquire_all
+    monkeypatch.setattr(traffic.zones, "acquire_all", lambda name, cells: False)
+    monkeypatch.setattr(traffic, "_give_way", lambda mission, its_leg: {"a": set()})  # 금지 칸에 안 닿는다
+    assert not traffic._extend(m, leg)  # 이번에는 남이 쥔 칸에 줄을 섰다
+    assert leg.yields == () and leg.yield_since == since
+    monkeypatch.setattr(traffic.zones, "acquire_all", real)
+    monkeypatch.undo()
+    timetable(traffic, monkeypatch, a_at=3.0, b_at=3.8, shared=(leg.route.at(0.6),))
+    advance(traffic.params.floor_pass_wait_s + traffic.params.floor_plan_window_s)
+    assert not traffic._extend(m, leg)
+    assert leg.no_yield == ("a",)
+
+
+def test_a_waiting_robot_that_cannot_resend_its_locked_part_makes_no_request(monkeypatch):
+    traffic = pair()
+    m, leg = traffic._missions["b"], traffic._legs["b"]
+    timetable(traffic, monkeypatch, a_at=3.0, b_at=3.8, shared=(leg.route.at(0.6),))
+    while traffic._extend(m, leg):
+        pass
+    assert leg.yields == ("a",) and m.goal is None and leg.s_lock - leg.s > 0.01
+    floor = traffic.floor
+    near = floor.cell_id(floor.cell_of(*leg.route.at(0.05)))
+    traffic.zones.release("b", near)
+    assert traffic.zones.acquire_all("a", {near})  # 보낼 길의 한 칸을 남이 쥐었다
+    traffic._send(m, leg)
+    assert m.goal is None and not traffic.zones.waited_cells("b")
+
+
+def test_a_new_route_starts_with_no_turn_given(monkeypatch):
+    traffic, advance = pair_clock()
+    m, leg = traffic._missions["b"], traffic._legs["b"]
+    timetable(traffic, monkeypatch, a_at=3.0, b_at=3.8, shared=(leg.route.at(0.6),))
+    while traffic._extend(m, leg):
+        pass
+    assert leg.behind == ("a",) and leg.yields == ("a",)
+    leg.no_yield = ("a",)
+    advance(traffic.params.floor_replan_s)
+    traffic._plan(m, leg)
+    assert (leg.behind, leg.yields, leg.yield_since) == ((), (), None)
+    assert leg.no_yield == ("a",)  # 이 다리에서 더 비켜 주지 않기로 한 것은 남는다

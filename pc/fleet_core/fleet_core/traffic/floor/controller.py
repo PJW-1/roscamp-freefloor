@@ -491,6 +491,7 @@ class FloorController(TrafficController):
 
     def _plan(self, m: _Mission, leg: _Leg) -> None:
         leg.done = False
+        leg.behind, leg.yields, leg.yield_since = (), (), None  # 새 길: 차례를 처음부터 정한다
         if self._plan_budget <= 0:
             leg.route = None  # planned on the next tick
             leg.planned_at = self._clock() - self.params.floor_replan_s
@@ -979,33 +980,43 @@ class FloorController(TrafficController):
         return table
 
     def _wait_for(self, robot: str):
-        """계획기 wait: 남이 쓰는 시각에 그 칸에 닿으면 (빌 때까지 서 있는 값 m, 0).
-        마주 오는 로봇의 칸은 기다려도 비지 않는다: (0, RESERVE_PENALTY_M)."""
+        """계획기 wait: 남이 쓰는 시각에 그 칸에 닿으면 (빌 때까지 서 있는 값 m, 벌점 m).
+        여럿이 연달아 쓰면 마지막 로봇이 비울 때까지 기다린다. 마주 오는 로봇의 칸은 기다려도
+        비지 않는다: 기다림 대신 벌점 RESERVE_PENALTY_M."""
         others = [spans for spans in (self._spans(n) for n in self._legs if n != robot) if spans]
         v = self.params.detour_speed_mps
         lag = max(0.0, self.params.release_distance_m - self._body) / v  # 지나간 칸을 놓기까지
 
         def wait(cell, s: float, heading) -> tuple[float, float]:
-            t, held = s / v, 0.0
-            for spans in others:
-                span = spans.get(cell)
-                if span is None or not span[0] <= t <= span[1] + lag:
-                    continue
-                if (heading[0] * span[2] + heading[1] * span[3]) < -0.5 * math.hypot(*heading):
-                    return 0.0, RESERVE_PENALTY_M
-                held = max(held, (span[1] + lag - t) * v)
-            return held, 0.0
+            t = free = s / v
+            flat, turn = 0.0, -0.5 * math.hypot(*heading)
+            found = [span for span in (spans.get(cell) for spans in others) if span is not None]
+            again = bool(found)
+            while again:  # 기다린 뒤 시각에 또 걸리는 로봇이 있으면 이어서 기다린다
+                again = False
+                for span in found:
+                    if not span[0] <= free <= span[1] + lag:
+                        continue
+                    if heading[0] * span[2] + heading[1] * span[3] < turn:
+                        flat = RESERVE_PENALTY_M
+                    elif span[1] + lag > free:
+                        free, again = span[1] + lag, True
+            return (free - t) * v, flat
 
         return wait if others else None
 
     # ---- crossings ------------------------------------------------------------------------
 
     def _moving(self, name: str) -> bool:
-        """곧 지나갈 로봇: 길을 가는 중이고 잠금이 막히지 않았고 남에게 비켜 주느라 서 있지 않다."""
+        """곧 지나갈 로봇: 길을 가는 중이고 잠금이 막히지 않았고 남에게 비켜 주느라 서 있지 않다.
+        물체에 막혔거나(BLOCKED) 접근선 앞 설 자리까지 잠근 로봇은 서 있는다."""
         m, leg = self._missions.get(name), self._legs.get(name)
-        return (m is not None and m.available and leg is not None and leg.route is not None
+        if not (m is not None and m.available and leg is not None and leg.route is not None
                 and not leg.done and leg.stuck_since is None and not leg.yields
-                and not self.zones.waited_cells(name))
+                and m.robot_state != BLOCKED and not self.zones.waited_cells(name)):
+            return False
+        cap = self._line_cap(m, leg)
+        return cap is None or leg.s_lock < cap - 1e-9
 
     def _crossing(self, a: str, b: str):
         """a와 b의 길이 엇갈리는 곳: (먼저 지날 로봇, a가 비켜 줄 칸). 같은 시각에 쓰는 칸이 없으면 None.
@@ -1196,6 +1207,7 @@ class FloorController(TrafficController):
         leg.route = new
         leg.s = leg.s_lock = leg.s_sent = 0.0
         leg.stuck_since = None
+        leg.behind, leg.yields, leg.yield_since = (), (), None  # 새 길: 차례를 처음부터 정한다
         self.metrics["replans"] += 1
 
     # ---- wait cycles ----------------------------------------------------------------------
@@ -1380,12 +1392,14 @@ class FloorController(TrafficController):
         if yields:
             # 비켜 주는 동안은 줄을 서지 않는다(상대의 칸을 기다리면 대기 순환으로 보인다)
             self.zones.cancel_all_requests(m.name)
+        if yields or (queued and leg.yield_since is not None):
+            # 비켜 주다 줄을 서다 해도 기다린 시간은 잠금이 늘 때까지 이어서 센다
             now = self._clock()
             if leg.yield_since is None:
                 leg.yield_since = now
             elif now - leg.yield_since >= (self.params.floor_pass_wait_s
                                            + self.params.floor_plan_window_s):
-                leg.no_yield += tuple(n for n in yields if n not in leg.no_yield)
+                leg.no_yield += tuple(n for n in bans if n not in leg.no_yield)
                 leg.yields, leg.yield_since = (), None
         else:
             leg.yield_since = None
@@ -1409,6 +1423,8 @@ class FloorController(TrafficController):
             return
         points = self._drive_path(m, leg, end)
         if not self.zones.acquire_all(m.name, self._drive_cells(m, leg, end, points)):
+            if leg.yields:
+                self.zones.cancel_all_requests(m.name)  # 비켜 주는 중: 줄을 서지 않는다
             return  # the first stretch from the reported pose is not free: wait
         poses = []
         for k, (x, y) in enumerate(points):
