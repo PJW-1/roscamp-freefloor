@@ -397,9 +397,22 @@ class PinkyFsmNode(Node):
                                               pose[:3] if pose else None, error_code))
 
     def _cancel_all_nav(self) -> None:
-        for handle in self._nav_handles.values():
-            handle.cancel_goal_async()
+        for seq, handle in self._nav_handles.items():
+            handle.cancel_goal_async().add_done_callback(partial(self._on_nav_cancel, seq))
         self._cancel_on_accept |= self._nav_pending
+
+    def _on_nav_cancel(self, seq: int, future) -> None:
+        """취소가 받아들여진 FollowPath만 core가 결과 없이도 잊을 수 있다(Codex 재검토 1)."""
+        try:
+            accepted = bool(future.result().goals_canceling)
+        except Exception as exc:  # noqa: BLE001 - 답이 없으면 계속 돌 수 있다고 본다
+            self.get_logger().warn(f"follow_path #{seq} cancel got no answer: {exc}")
+            return
+        if not accepted:
+            self.get_logger().warn(f"follow_path #{seq} cancel was refused")
+            return
+        with self._lock:
+            self._run(self._fsm.nav_cancel_accepted(seq, time.monotonic()))
 
     def _on_nav_response(self, seq: int, future) -> None:
         try:
@@ -418,7 +431,8 @@ class PinkyFsmNode(Node):
             self._nav_handles[seq] = handle
             if seq in self._cancel_on_accept:
                 self._cancel_on_accept.discard(seq)
-                handle.cancel_goal_async()  # 멈추는 동안 수락된 목표는 바로 취소한다
+                # 멈추는 동안 수락된 목표는 바로 취소한다
+                handle.cancel_goal_async().add_done_callback(partial(self._on_nav_cancel, seq))
         handle.get_result_async().add_done_callback(partial(self._on_nav_result, seq))
 
     def _on_nav_result(self, seq: int, future) -> None:

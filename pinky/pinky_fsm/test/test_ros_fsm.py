@@ -292,6 +292,55 @@ def test_a_follow_path_goal_whose_send_fails_counts_as_rejected():
     assert late == [(3, "rejected")] and node._nav_pending == set() and infos
 
 
+class _CancelFuture:
+    def __init__(self, response=None, error=None):
+        self.callbacks, self._response, self._error = [], response, error
+
+    def add_done_callback(self, cb):
+        self.callbacks.append(cb)
+
+    def result(self):
+        if self._error:
+            raise self._error
+        return self._response
+
+
+def test_only_an_accepted_cancel_lets_the_core_forget_a_follow_path():
+    """재검토 1: 취소 응답에 그 goal이 들어 있을 때만 core에 알린다(거절, 오류는 알리지 않는다)."""
+    from types import SimpleNamespace
+
+    from action_msgs.srv import CancelGoal
+    from pinky_fsm.node import PinkyFsmNode
+    told = []
+    node, infos = _fake_node([])
+    node._fsm = SimpleNamespace(nav_cancel_accepted=lambda seq, now: told.append(seq) or [])
+    node._run = lambda cmds: None
+    yes = CancelGoal.Response(goals_canceling=[_goal_info()])
+    PinkyFsmNode._on_nav_cancel(node, 3, _CancelFuture(yes))
+    PinkyFsmNode._on_nav_cancel(node, 4, _CancelFuture(CancelGoal.Response(
+        return_code=CancelGoal.Response.ERROR_REJECTED)))
+    PinkyFsmNode._on_nav_cancel(node, 5, _CancelFuture(error=RuntimeError("lost")))
+    assert told == [3] and infos
+
+
+def _goal_info():
+    from action_msgs.msg import GoalInfo
+    return GoalInfo()
+
+
+def test_every_follow_path_cancel_reports_its_answer():
+    from types import SimpleNamespace
+
+    from pinky_fsm.node import PinkyFsmNode
+    futures = {}
+    handles = {7: SimpleNamespace(cancel_goal_async=lambda: futures.setdefault(7,
+                                                                             _CancelFuture()))}
+    node = SimpleNamespace(_nav_handles=handles, _nav_pending={8}, _cancel_on_accept=set())
+    node._on_nav_cancel = lambda seq, fut: None
+    PinkyFsmNode._cancel_all_nav(node)
+    assert len(futures[7].callbacks) == 1 and node._cancel_on_accept == {8}
+
+
 def test_a_lost_follow_path_result_counts_as_aborted():
     from types import SimpleNamespace
 
