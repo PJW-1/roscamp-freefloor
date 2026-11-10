@@ -381,7 +381,7 @@ def test_a_robot_on_the_shortcut_waits_at_the_end_of_the_stretch_while_the_dock_
     the dock closer than two bodies and a report's noise, so a lock rolled on there and the docked
     robot's place wait for each other's cells (a deadlock nobody can step out of). The robot stops
     at the end of the stretch, where it is in nobody's way, until the cells before the dock are
-    free, and then goes on."""
+    free, and then takes the rest of the way at once."""
     traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 30.0})
     at_work(traffic, "a")
     leg = heads_in(traffic, "b")
@@ -398,13 +398,14 @@ def test_a_robot_on_the_shortcut_waits_at_the_end_of_the_stretch_while_the_dock_
     docked = (FLOOR.docks["OUTBOUND"][0] + 0.03, FLOOR.docks["OUTBOUND"][1] + 0.04)  # noisy report
     assert held.isdisjoint(traffic._body_cells(*docked))
     assert traffic._legs["b"].in_line == "outbound_short" and traffic._legs["b"].route is not None
-    # the docked robot has left: the lock rolls on to the dock
+    # the docked robot has left: the rest of the way to the dock is taken whole, never a part
+    # (a lock rolled on would wait beside the dock again if another robot got there first)
     a = traffic._missions["a"]
     for cell_id in list(traffic.zones.held_set("a")):
         traffic.zones.release("a", cell_id)
     a.x, a.y = 0.97, 0.80
     traffic._drive(b)
-    assert traffic._legs["b"].s_lock > end + 0.01
+    assert traffic._legs["b"].s_lock == pytest.approx(traffic._legs["b"].route.length)
 
 
 def test_a_robot_on_the_shortcut_rolls_on_past_the_stretch_when_the_dock_is_free():
@@ -415,7 +416,23 @@ def test_a_robot_on_the_shortcut_rolls_on_past_the_stretch_when_the_dock_is_free
     x, y = leg.route.at(end - 0.10)
     b = moved(traffic, "b", x, y, math.atan2(0.12, -0.44))
     traffic._drive(b)
-    assert traffic._legs["b"].s_lock > end + 0.01
+    assert traffic._legs["b"].s_lock == pytest.approx(traffic._legs["b"].route.length)
+
+
+def test_a_robot_running_through_the_stretch_to_a_taken_dock_counts_as_moving():
+    """Others give way to a robot that will pass soon (_moving). One on the shortcut that will
+    stop at the end of the stretch is still passing while it runs there."""
+    traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 30.0})
+    at_work(traffic, "a")
+    leg = heads_in(traffic, "b")
+    assert leg.in_line == "outbound_short"
+    assert traffic._moving("b")
+    x, y = leg.route.at(leg.s_lock)
+    b = moved(traffic, "b", x, y, math.atan2(0.12, -0.44))
+    b.goal = None
+    traffic._active["b"].clear()
+    traffic._drive(b)
+    assert not traffic._moving("b")  # stands at the end of the stretch
 
 
 @pytest.mark.parametrize("report", [(1.04, 0.085), (1.04, 0.125), (1.049, 0.155)])

@@ -192,7 +192,6 @@ class FloorController(TrafficController):
         self._shortcut = {base: short for short, base in self.floor.shortcuts.items()}
         self._short_route = {short: Route(list(self.floor.fixed_lines[short].points))
                              for short in self.floor.shortcuts}
-        self._short_tail: dict[str, set[str]] = {}  # 지름길 -> 합류점 뒤 꼬리(도크 앞)가 쓰는 칸
         self._short_geo = {short: self._shortcut_geometry(short) for short in self.floor.shortcuts}
         self._deadlock_seen = 0.0
         self._unresolved_robot = ""
@@ -907,18 +906,16 @@ class FloorController(TrafficController):
         return self._stop_before_line(leg)
 
     def _short_cap(self, m: _Mission, leg: _Leg) -> float | None:
-        """지름길 다리의 설 자리: 합류점 뒤 꼬리(도크 앞) 칸을 남이 쥐고 있으면 겹치는 구간 끝.
+        """지름길 다리의 설 자리: 겹치는 구간 끝. 거기서 도크까지는 한꺼번에만 잡는다(_extend).
         그 끝에서 도크까지는 도크에 선 로봇을 두 몸과 보고 잡음보다 가깝게 지나가서, 잠금을 굴려
         다가가면 도크에 선 로봇의 자리와 서로 칸을 기다린다(비켜 설 곳 없는 교착). 구간 끝에서는
-        다른 선을 막지 않는다. 꼬리가 비면 선 끝까지 한 번에 잡는다(_extend). 이미 지났으면 None."""
+        다른 선을 막지 않는다. 이미 지났으면(끝까지 잡았다) None."""
         short = leg.in_line
         end = next((b for _, b, line in leg.route.fixed if line == short), None)
         if end is None:
             return None
         cap = end - self._short_geo[short][1]
         if leg.s_lock > cap + 1e-9 or cap <= 0.0:
-            return None
-        if all(self.zones.holder(c) in (None, m.name) for c in self._short_tail[short]):
             return None
         return cap
 
@@ -1019,7 +1016,7 @@ class FloorController(TrafficController):
         clear = min(merge, clear)
         # 그 뒤 합류점까지는 합류점 뒤 꼬리(원래 선도 가는 도크 앞)가 닿는 칸에만 닿아도 된다.
         # 다른 데서 다시 닿으면 잡지 않은 채 남의 선에 선다: 지도 잘못
-        tail_cells = self._short_tail[short] = self._swept(route.between(merge, route.length))
+        tail_cells = self._swept(route.between(merge, route.length))
         while s < merge + 1e-9:
             if (self._body_cells(*route.at(s)) & others) - tail_cells:
                 x, y = route.at(s)
@@ -1399,6 +1396,8 @@ class FloorController(TrafficController):
                 and m.robot_state != BLOCKED and not self.zones.waited_cells(name)):
             return False
         cap = self._line_cap(m, leg)
+        if cap is not None and leg.in_line in self._short_route:
+            return not self._at_stop(m, leg, cap)  # 구간 끝으로 달리는 동안은 지나가는 중이다
         return cap is None or leg.s_lock < cap - 1e-9
 
     def _crossing(self, a: str, b: str):
@@ -1749,7 +1748,8 @@ class FloorController(TrafficController):
     def _extend(self, m: _Mission, leg: _Leg) -> bool:
         cap = self._line_cap(m, leg)
         if cap is not None and leg.s_lock >= cap - 1e-9:
-            if not self._at_stop(m, leg, cap):
+            short = leg.in_line in self._short_route
+            if not short and not self._at_stop(m, leg, cap):
                 # 아직 달리는 중: 줄을 서지 않는다(지나온 칸을 아직 쥘 수 있어 떠나는 로봇과
                 # 잠깐씩 순환이 생긴다). 서면 무엇을 쥐었든 줄을 선다(순환이 보이게)
                 self.zones.cancel_all_requests(m.name)
@@ -1759,6 +1759,10 @@ class FloorController(TrafficController):
             if self.zones.acquire_all(m.name, cells):  # 섰다: 선 전체에 줄을 선다
                 leg.s_lock = end
                 return True
+            if short and not self._at_stop(m, leg, cap):
+                # 지름길: 달리면서도 도크까지 한꺼번에 잡아 본다. 못 잡으면 달리는 동안은
+                # 줄을 서지 않는다
+                self.zones.cancel_all_requests(m.name)
             return False
         bans = self._give_way(m, leg)
         yields, queued = [], False
