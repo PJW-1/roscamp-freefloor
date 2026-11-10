@@ -2,11 +2,12 @@
 
 아무도 RetreatCmd를 내지 않으면 어느 모드도 전과 같다. 물러나기 판단은 교통 층의 일이다.
 """
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import pytest
+import yaml
 from fleet_core.common.commands import EventOut, RetreatCmd
-from fleet_core.common.params import load_params
+from fleet_core.common.params import DEFAULT_PARAMS, FleetParams, load_params
 from fleet_core.manager import FleetManager
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.lane_map import load_lane_map
@@ -109,3 +110,23 @@ def test_the_stall_watch_rests_while_a_robot_retreats(mode):
     traffic._watch_stall(m, 0.0)
     assert m.stall_from is None
     assert m.goal == _Goal(RETREAT, 900)
+
+
+RETREAT_PARAMS = {"floor_block_retreat": False, "floor_corridor_clear": False,
+                  "floor_retreat_after_s": 10.0, "floor_retreat_speed_mps": 0.05,
+                  "floor_retreat_max_m": 1.0}
+
+
+@pytest.mark.parametrize("name", ["fleet_params.yaml", "fleet_params_real_arena.yaml"])
+def test_the_shipped_params_keep_retreat_off(name):
+    """제안값. 둘 다 꺼져 있어 아무것도 바뀌지 않는다(arena_v4도 fleet_params_real_arena를 쓴다)."""
+    shipped = yaml.safe_load((DEFAULT_PARAMS.parent / name).read_text(encoding="utf-8"))
+    assert {k: shipped.get(k) for k in RETREAT_PARAMS} == RETREAT_PARAMS
+    params = load_params(DEFAULT_PARAMS.parent / name)
+    assert {k: getattr(params, k) for k in RETREAT_PARAMS} == RETREAT_PARAMS
+
+
+def test_a_record_without_the_retreat_params_replays_with_them_off():
+    fields = {k: v for k, v in asdict(load_params()).items() if k not in RETREAT_PARAMS}
+    params = FleetParams(**fields)
+    assert {k: getattr(params, k) for k in RETREAT_PARAMS} == RETREAT_PARAMS
