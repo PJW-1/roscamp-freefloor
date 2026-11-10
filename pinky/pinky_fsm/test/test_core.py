@@ -1181,16 +1181,18 @@ def test_a_path_retreat_that_is_not_from_the_robot_fails_at_once(path):
 
 
 @pytest.mark.parametrize("path", [False, True])
-def test_a_canceled_follow_path_whose_result_never_comes_holds_a_retreat_only_for_a_grace(path):
-    """Codex 리뷰 2: FollowPath 결과를 잃어도 다음 Retreat가 모두 TIMEOUT으로 끝나지 않는다.
-    물러나기가 취소한 FollowPath는 nav_result_grace_s 동안만 기다리고, 바퀴가 서 있으면 간다."""
+def test_a_follow_path_with_an_accepted_cancel_but_no_result_holds_a_retreat_for_a_grace(path):
+    """Codex 리뷰 2, 재검토 1: FollowPath 결과를 잃어도 다음 Retreat가 모두 TIMEOUT으로 끝나지
+    않는다. 취소가 받아들여진 FollowPath만 그때부터 nav_result_grace_s 기다리고, 바퀴가 서
+    있으면 간다."""
     fsm = ready()
-    move(fsm, "g1", 0.0)  # 이 FollowPath의 결과는 끝내 오지 않는다
+    (send,) = sends(move(fsm, "g1", 0.0))  # 이 FollowPath의 결과는 끝내 오지 않는다
     grace = FsmParams().nav_result_grace_s
     assert grace < FsmParams().retreat_stop_wait_s
     kw = {"path": [(*P3,), P4], "pose": (*P3, NORTH)} if path else {}
     distance = 0.4 if path else 0.3
     fsm.retreat("r1", 1.0, distance, 0.1, **kw)
+    assert fsm.nav_cancel_accepted(send.seq, 1.0) == []
     fsm.heartbeat(1.0 + grace - 0.1)
     held = fsm.tick(1.0 + grace - 0.1, (*P3, NORTH), STILL, no_obstacle)
     assert not backups(held) and not reverse_sends(held), "결과를 아직 기다린다"
@@ -1199,18 +1201,72 @@ def test_a_canceled_follow_path_whose_result_never_comes_holds_a_retreat_only_fo
     assert (reverse_sends(cmds) if path else backups(cmds)) and fsm.is_running("r1")
 
 
-def test_a_running_reverse_path_is_waited_for_from_when_it_is_canceled():
-    """잊는 것은 취소한 FollowPath뿐이고, 여유는 취소한 때부터 잰다."""
+def test_a_follow_path_whose_cancel_is_not_answered_keeps_holding_and_the_retreat_times_out():
+    """재검토 1: 서 있는 것은 goal이 끝났다는 증거가 아니다. 취소가 받아들여지지 않은(거절,
+    무응답) FollowPath는 계속 기다리고 Retreat는 retreat_stop_wait_s 뒤 TIMEOUT이다."""
+    fsm = ready()
+    move(fsm, "g1", 0.0)
+    fsm.retreat("r1", 1.0, 0.3, 0.1)
+    cmds = []
+    for k in range(1, 40):
+        t = 1.0 + 0.1 * k
+        fsm.heartbeat(t)
+        cmds += fsm.tick(t, (*P3, NORTH), STILL, no_obstacle)
+    assert not backups(cmds)
+    assert Finish("r1", False, TIMEOUT) in cmds
+
+
+def test_a_running_reverse_path_is_waited_for_from_when_its_cancel_is_accepted():
     fsm = ready(pose=AT_P4)
-    fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)  # 이 후진 경로의 결과는 안 온다
+    (send,) = reverse_sends(fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4))
     t = 1.0 + FsmParams().nav_result_grace_s + 1.0
     fsm.heartbeat(t)
     assert not backups(fsm.retreat("r2", t, 0.1, 0.1))
+    fsm.nav_cancel_accepted(send.seq, t + 0.5)
     grace = FsmParams().nav_result_grace_s
-    fsm.heartbeat(t + grace - 0.1)
-    assert not backups(fsm.tick(t + grace - 0.1, AT_P4, STILL, no_obstacle))
-    fsm.heartbeat(t + grace + 0.1)
-    assert backups(fsm.tick(t + grace + 0.1, AT_P4, STILL, no_obstacle))
+    fsm.heartbeat(t + 0.5 + grace - 0.1)
+    assert not backups(fsm.tick(t + 0.5 + grace - 0.1, AT_P4, STILL, no_obstacle))
+    fsm.heartbeat(t + 0.5 + grace + 0.1)
+    assert backups(fsm.tick(t + 0.5 + grace + 0.1, AT_P4, STILL, no_obstacle))
+
+
+@pytest.mark.parametrize("accept_lost", [False, True])
+def test_a_lost_follow_path_result_ends_the_move_but_still_holds_a_retreat(accept_lost):
+    """재검토 2: 결과 future 오류는 goal이 끝났다는 뜻이 아니다. 이동은 aborted처럼 다루되,
+    그 FollowPath는 취소가 받아들여질 때까지 다음 Retreat를 붙든다."""
+    twin, fsm = ready(), ready()
+    (send,) = sends(move(fsm, "g1", 0.0))
+    move(twin, "g1", 0.0)
+    cmds = fsm.nav_lost(send.seq, 0.5, (*P3, NORTH), no_obstacle)
+    assert cmds == twin.nav_result(send.seq, "aborted", 0.5, (*P3, NORTH), no_obstacle)
+    fsm.retreat("r1", 1.0, 0.3, 0.1)
+    for resent in sends(cmds):  # aborted 뒤 다시 보낸 FollowPath의 취소는 받아들여졌다
+        fsm.nav_cancel_accepted(resent.seq, 1.0)
+    if accept_lost:
+        fsm.nav_cancel_accepted(send.seq, 1.0)
+    out = []
+    for k in range(1, 40):
+        t = 1.0 + 0.1 * k
+        fsm.heartbeat(t)
+        out += fsm.tick(t, (*P3, NORTH), STILL, no_obstacle)
+    assert bool(backups(out)) == accept_lost
+    assert (Finish("r1", False, TIMEOUT) in out) != accept_lost
+
+
+def test_a_lost_result_of_a_forgotten_follow_path_does_not_bring_it_back():
+    fsm = ready()
+    (send,) = sends(move(fsm, "g1", 0.0))
+    fsm.nav_result(send.seq, "canceled", 0.5, (*P3, NORTH), no_obstacle)
+    fsm.nav_lost(send.seq, 0.6, (*P3, NORTH), no_obstacle)
+    assert not fsm._nav_live  # noqa: SLF001
+
+
+def test_an_accepted_cancel_of_a_finished_follow_path_changes_nothing():
+    fsm = ready()
+    (send,) = sends(move(fsm, "g1", 0.0))
+    fsm.nav_result(send.seq, "canceled", 0.5, (*P3, NORTH), no_obstacle)
+    assert fsm.nav_cancel_accepted(send.seq, 0.6) == []
+    assert not fsm._nav_live  # noqa: SLF001 - 끝난 goal을 다시 살리지 않는다
 
 
 def test_a_path_retreat_with_the_robot_already_at_its_end_fails_at_once():

@@ -292,16 +292,90 @@ def test_a_follow_path_goal_whose_send_fails_counts_as_rejected():
     assert late == [(3, "rejected")] and node._nav_pending == set() and infos
 
 
-def test_a_lost_follow_path_result_counts_as_aborted():
+class _CancelFuture:
+    def __init__(self, response=None, error=None):
+        self.callbacks, self._response, self._error = [], response, error
+
+    def add_done_callback(self, cb):
+        self.callbacks.append(cb)
+
+    def result(self):
+        if self._error:
+            raise self._error
+        return self._response
+
+
+def test_only_an_accepted_cancel_lets_the_core_forget_a_follow_path():
+    """재검토 1: 취소 응답에 그 goal이 들어 있을 때만 core에 알린다(거절, 오류는 알리지 않는다)."""
+    from types import SimpleNamespace
+
+    from action_msgs.srv import CancelGoal
+    from pinky_fsm.node import PinkyFsmNode
+    told = []
+    node, infos = _fake_node([])
+    node._fsm = SimpleNamespace(nav_cancel_accepted=lambda seq, now: told.append(seq) or [])
+    node._run = lambda cmds: None
+    yes = CancelGoal.Response(goals_canceling=[_goal_info()])
+    PinkyFsmNode._on_nav_cancel(node, 3, _CancelFuture(yes))
+    PinkyFsmNode._on_nav_cancel(node, 4, _CancelFuture(CancelGoal.Response(
+        return_code=CancelGoal.Response.ERROR_REJECTED)))
+    PinkyFsmNode._on_nav_cancel(node, 5, _CancelFuture(error=RuntimeError("lost")))
+    assert told == [3] and infos
+
+
+def test_a_cancel_answered_goal_terminated_or_unknown_also_lets_the_core_forget():
+    """재검토 2: 이미 끝났거나 서버가 모르는 goal은 돌지 않는다. 결과를 잃은 goal이 끝나 있으면
+    취소는 이렇게 답하고, 그때 잊지 않으면 그 뒤 모든 Retreat가 TIMEOUT이다."""
+    from types import SimpleNamespace
+
+    from action_msgs.srv import CancelGoal
+    from pinky_fsm.node import PinkyFsmNode
+    told = []
+    node, _ = _fake_node([])
+    node._nav_handles = {3: object(), 4: object()}
+    node._fsm = SimpleNamespace(nav_cancel_accepted=lambda seq, now: told.append(seq) or [])
+    node._run = lambda cmds: None
+    for seq, code in ((3, CancelGoal.Response.ERROR_GOAL_TERMINATED),
+                      (4, CancelGoal.Response.ERROR_UNKNOWN_GOAL_ID)):
+        PinkyFsmNode._on_nav_cancel(node, seq, _CancelFuture(CancelGoal.Response(return_code=code)))
+    assert told == [3, 4] and not node._nav_handles
+
+
+def _goal_info():
+    from action_msgs.msg import GoalInfo
+    return GoalInfo()
+
+
+def test_every_follow_path_cancel_reports_its_answer():
     from types import SimpleNamespace
 
     from pinky_fsm.node import PinkyFsmNode
-    ran = []
+    futures = {}
+    handles = {7: SimpleNamespace(cancel_goal_async=lambda: futures.setdefault(7,
+                                                                             _CancelFuture()))}
+    node = SimpleNamespace(_nav_handles=handles, _nav_pending={8}, _cancel_on_accept=set())
+    node._on_nav_cancel = lambda seq, fut: None
+    PinkyFsmNode._cancel_all_nav(node)
+    assert len(futures[7].callbacks) == 1 and node._cancel_on_accept == {8}
+
+
+def test_a_lost_follow_path_result_keeps_the_goal_and_cancels_it():
+    """재검토 2: 결과를 잃어도 goal은 돌 수 있다. 핸들을 두고 취소를 보내며, core에는
+    nav_lost로 알린다(이동은 aborted처럼 끝나지만 취소가 받아들여질 때까지 잊지 않는다)."""
+    from types import SimpleNamespace
+
+    from pinky_fsm.node import PinkyFsmNode
+    ran, futures = [], []
     node, infos = _fake_node([])
-    node._fsm = SimpleNamespace(nav_result=lambda *a: ran.append(a[:2]) or [])
+    handle = SimpleNamespace(cancel_goal_async=lambda: futures.append(_CancelFuture())
+                             or futures[-1])
+    node._nav_handles = {3: handle}
+    node._fsm = SimpleNamespace(nav_lost=lambda *a: ran.append(a[0]) or [])
     node._run = lambda cmds: None
+    node._on_nav_cancel = lambda seq, fut: None
     PinkyFsmNode._on_nav_result(node, 3, SimpleNamespace(result=_broken))
-    assert ran == [(3, "aborted")] and 3 not in node._nav_handles and infos
+    assert ran == [3] and node._nav_handles == {3: handle} and infos
+    assert len(futures) == 1 and len(futures[0].callbacks) == 1
 
 
 def test_a_goal_at_a_lock_boundary_publishes_a_speed_limit_and_lifts_it_at_the_end(harness):

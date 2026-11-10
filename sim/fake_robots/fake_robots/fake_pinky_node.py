@@ -56,6 +56,21 @@ RETREAT_REASONS = (Retreat.Result.REASON_OBSTACLE_BEHIND, Retreat.Result.REASON_
                    Retreat.Result.REASON_CANCELED, Retreat.Result.REASON_FAILED)
 
 
+def _project(px: float, py: float, path) -> tuple[int, float]:
+    """(px, py)에 가장 가까운 선분의 번호와 그 투영점부터 path 끝까지의 길이. 실물 pinky_fsm의
+    Polyline.project처럼 거리가 같으면 앞 선분이다."""
+    best, i, s_at, s = math.inf, 0, 0.0, 0.0
+    for k, ((ax, ay), (bx, by)) in enumerate(zip(path, path[1:], strict=False)):
+        seg = math.dist((ax, ay), (bx, by))
+        f = 0.0 if seg == 0.0 else min(max(
+            ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / (seg * seg), 0.0), 1.0)
+        d = math.dist((px, py), (ax + f * (bx - ax), ay + f * (by - ay)))
+        if d < best - 1e-12:
+            best, i, s_at = d, k, s + f * seg
+        s += seg
+    return i, s - s_at
+
+
 class _Goal:
     def __init__(self, kind: str, handle):
         self.kind = kind
@@ -248,22 +263,21 @@ class FakePinkyNode(Node):
 
         path가 없으면 뒤로 곧게 distance_m을 시킨 속도로. 있으면 실물 pinky_fsm처럼 제 자리에서
         가장 가까운 선분부터 끝 점까지 차례로, 0.05 m/s를 넘지 않게 간다. 로봇 자리에서 시작하지
-        않는 path(이동의 path와 같은 연결 허용 거리)나 남은 길이 0.02 m보다 짧은 path는 따르지
-        않는다.
+        않는 path(이동의 path와 같은 연결 허용 거리)나 제 자리를 투영한 점부터 끝까지가 0.02 m보다
+        짧은 path는 따르지 않는다. 투영은 실물(Polyline.project)과 같이 같으면 앞 선분이다.
         """
         distance, speed = float(request.distance_m), float(request.speed_mps)
         path = [(p.position.x, p.position.y) for p in request.path]
         m = self._motion
+        rest = math.inf
         if path:
-            gaps = [path_gap(m.x, m.y, path[k:k + 2]) for k in range(max(1, len(path) - 1))]
-            nearest = min(gaps)
-            i = max(k for k, gap in enumerate(gaps) if gap <= nearest + 1e-9)  # 같으면 뒤 선분
+            i, rest = _project(m.x, m.y, path)
             ahead = path[i + 1:]
             speed = min(speed, REVERSE_SPEED_MPS)
         else:
             ahead = [(m.x - math.cos(m.yaw) * distance, m.y - math.sin(m.yaw) * distance)]
         length = sum(math.dist(a, b) for a, b in zip([(m.x, m.y), *ahead], ahead, strict=False))
-        if (distance <= 0.0 or speed <= 0.0 or length <= (REVERSE_MIN_M if path else 1e-9)
+        if (distance <= 0.0 or speed <= 0.0 or length <= 1e-9 or rest < REVERSE_MIN_M
                 or (path and self._path_misses_me(t, path))):
             self._end(goal, False, Retreat.Result.REASON_FAILED)
             return
