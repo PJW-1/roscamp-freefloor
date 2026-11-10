@@ -1,0 +1,45 @@
+# Free-floor map for the measured arena (2026-11-10): 2.00 x 1.00 m inside the walls, as the
+# lidar of a real Pinky measured it, with the two temporary objects that stood in it that day
+# (docs/실측_2026-11-10.md); three Pinkys. arena_1110_fine.pgm is the same file as
+# sim/fleet_gz_sim/maps/arena_1110_fine.pgm (a test compares them; rebuild both with
+# python3 -m fleet_gz_sim.arena --site arena_1110). Coordinates are those of the lane map
+# sim/fake_robots/maps/arena_1110.yaml, which names this file in its floor_map key.
+image: arena_1110_fine.pgm
+resolution: 0.01
+origin: [-0.15, -0.15, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+# Same robot, cells and margins as floor_map_real_arena.yaml (see there). The 0.20 m gap between
+# the two objects has no clear cell, so the floor is one ring round both: 0.35-0.45 m corridors
+# north and south, 0.65-0.70 m at the west and east ends.
+cell_m: 0.03
+robot_radius_m: 0.08
+cell_margin_m: 0.03
+robot_half_width_m: 0.06
+side_margin_m: 0.02
+wall_margin_m: 0.01
+# Station dock poses: the dock waypoints of the lane map (a test compares them). Where the
+# stations stand in the real arena is not settled; these are assumed.
+docks:
+  WORK: [0.45, 0.50]
+  OUTBOUND: [1.55, 0.50]
+# Parking spots in driving order (lane map parking): between the end walls and the station
+# lines, 0.40 m apart and 0.19 m from the wall, off every line and off the ring. Two spots
+# 0.25 m apart beside an object, or spots 0.13 m from the wall, drove over cells they did not
+# hold from the start with 3 cm report noise.
+parking:
+  - {id: P-3, x: 1.81, y: 0.50}
+  - {id: P-1, x: 0.19, y: 0.30}
+  - {id: P-2, x: 0.19, y: 0.70}
+# The robots go round the ring one way: south at the west end (WORK: in from the north, out to
+# the south), east along the south corridor, north at the east end (OUTBOUND: in from the
+# south, out to the north), west along the north corridor. The station lines run 0.45 m inside
+# the end walls. Every line is one way and the way in and the way out share only the dock end,
+# so the lines roll like the floor.
+fixed_lines:
+  work_in: [[0.45, 0.85], [0.45, 0.50]]
+  work_out: [[0.45, 0.50], [0.45, 0.15]]
+  outbound_in: [[1.55, 0.15], [1.55, 0.50]]
+  outbound_out: [[1.55, 0.50], [1.55, 0.85]]
+rolling_lines: [work_in, work_out, outbound_in, outbound_out]

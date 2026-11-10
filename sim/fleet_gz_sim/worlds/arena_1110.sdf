@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<!-- 생성 파일: python3 -m fleet_gz_sim.arena (arena_1110.yaml) 로 다시 만든다. 손으로 고치지 않는다.
+     월드 좌표 = 지도 좌표 = lane_map.yaml 좌표. 레인은 바닥 그림이고 벽·상자는 레인에서
+     0.12 m 넘게 떨어져 있다. -->
+<sdf version="1.9">
+  <world name="lane_arena">
+    <physics name="4ms" type="ignored">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <scene>
+      <ambient>0.7 0.7 0.7 1</ambient>
+      <background>0.85 0.85 0.85 1</background>
+      <grid>false</grid>
+    </scene>
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.3 0.2 -0.9</direction>
+    </light>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+          <material>
+            <ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="arena">
+      <static>true</static>
+      <link name="link">
+      <collision name="wall_south"><pose>1 -0.025 0.15 0 0 0</pose><geometry><box><size>2.1 0.05 0.3</size></box></geometry></collision>
+      <visual name="wall_south_visual"><pose>1 -0.025 0.15 0 0 0</pose><geometry><box><size>2.1 0.05 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="wall_north"><pose>1 1.025 0.15 0 0 0</pose><geometry><box><size>2.1 0.05 0.3</size></box></geometry></collision>
+      <visual name="wall_north_visual"><pose>1 1.025 0.15 0 0 0</pose><geometry><box><size>2.1 0.05 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="wall_west"><pose>-0.025 0.5 0.15 0 0 0</pose><geometry><box><size>0.05 1 0.3</size></box></geometry></collision>
+      <visual name="wall_west_visual"><pose>-0.025 0.5 0.15 0 0 0</pose><geometry><box><size>0.05 1 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="wall_east"><pose>2.025 0.5 0.15 0 0 0</pose><geometry><box><size>0.05 1 0.3</size></box></geometry></collision>
+      <visual name="wall_east_visual"><pose>2.025 0.5 0.15 0 0 0</pose><geometry><box><size>0.05 1 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="object_west"><pose>0.75 0.55 0.15 0 0 0</pose><geometry><box><size>0.2 0.2 0.3</size></box></geometry></collision>
+      <visual name="object_west_visual"><pose>0.75 0.55 0.15 0 0 0</pose><geometry><box><size>0.2 0.2 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <collision name="object_east"><pose>1.175 0.5 0.15 0 0 0</pose><geometry><box><size>0.25 0.2 0.3</size></box></geometry></collision>
+      <visual name="object_east_visual"><pose>1.175 0.5 0.15 0 0 0</pose><geometry><box><size>0.25 0.2 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      <visual name="lane_QW-W"><pose>0.45 0.675 0.0005 0 0 -1.5708</pose><geometry><box><size>0.35 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_W-WS"><pose>0.45 0.325 0.0005 0 0 -1.5708</pose><geometry><box><size>0.35 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_WS-QO"><pose>1 0.15 0.0005 0 0 0</pose><geometry><box><size>1.1 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_QO-O"><pose>1.55 0.325 0.0005 0 0 1.5708</pose><geometry><box><size>0.35 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_O-ON"><pose>1.55 0.675 0.0005 0 0 1.5708</pose><geometry><box><size>0.35 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_ON-QW"><pose>1 0.85 0.0005 0 0 3.1416</pose><geometry><box><size>1.1 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_WS-P-1"><pose>0.32 0.225 0.0005 0 0 2.6183</pose><geometry><box><size>0.3002 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_QW-P-2"><pose>0.32 0.775 0.0005 0 0 -2.6183</pose><geometry><box><size>0.3002 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_ON-P-3"><pose>1.68 0.675 0.0005 0 0 -0.9319</pose><geometry><box><size>0.436 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      </link>
+    </model>
+  </world>
+</sdf>
