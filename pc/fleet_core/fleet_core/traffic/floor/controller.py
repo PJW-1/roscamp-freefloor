@@ -113,6 +113,7 @@ class _Leg:
     s: float = 0.0  # progress along the route
     s_lock: float = 0.0  # the route is locked up to here (the centre may go this far)
     s_sent: float = 0.0  # end of the last MoveTo
+    followed: tuple = ()  # (report, route, progress when it came): one report's step
     done: bool = False  # the MoveTo to the route end succeeded
     slowed: bool = False  # the locked part ahead is short (counted once per episode)
     planned_at: float = 0.0
@@ -151,6 +152,9 @@ class FloorController(TrafficController):
     def __init__(self, site, params, robots, clock, next_goal_id=None, floor=None):
         super().__init__(site, params, robots, clock, next_goal_id)
         self.floor = floor or floor_map_for(site)
+        if not params.floor_shortcut:
+            # 지름길을 끄면 지름길이 없는 바닥으로 돈다: 그 선도, 그 선 밑의 좁은 칸도 없다
+            self.floor = self.floor.without_shortcuts()
         if self.floor.robot_radius_m < params.robot_radius_m:
             raise ValueError(f"the floor map radius {self.floor.robot_radius_m} m is smaller "
                              f"than the fleet radius {params.robot_radius_m} m")
@@ -610,8 +614,13 @@ class FloorController(TrafficController):
         if leg is None or leg.route is None:
             return
         # no further ahead than FOLLOW_AHEAD_M a report: where a route folds back, a thrown
-        # report lies nearer the stretch after the corner than the one the robot is on
-        ahead = min(max(leg.s, leg.s_sent), leg.s + FOLLOW_AHEAD_M)
+        # report lies nearer the stretch after the corner than the one the robot is on. The
+        # ticks between two reports see the same one, so the step starts where the progress
+        # was when the report came
+        seen = leg.followed
+        if not (seen and seen[0] == (m.last_seen, m.x, m.y) and seen[1] is leg.route):
+            seen = leg.followed = ((m.last_seen, m.x, m.y), leg.route, leg.s)
+        ahead = min(max(leg.s, leg.s_sent), max(leg.s, seen[2] + FOLLOW_AHEAD_M))
         s, _ = leg.route.project(m.x, m.y, leg.s, ahead)
         leg.s = max(leg.s, s)
         short = (leg.s_lock < leg.route.length - AT_END_M

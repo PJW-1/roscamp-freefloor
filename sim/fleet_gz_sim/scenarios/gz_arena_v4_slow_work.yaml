@@ -1,0 +1,37 @@
+# arena_v4에서 작업 속도가 비대칭인 리허설: 핑키 3대, 주문 8건이 20초마다. WORK 팔은 느리고(물건마다
+# 8 s) 출고 교체는 빠르다(4 s). 로봇이 WORK에서 한 대씩 늦게 풀려 출고 도크가 자주 빈다.
+# 관제가 남은 작업 시간을 어림하는 값(eta_fill_s_per_item, eta_fill_base_s, eta_swap_s)은 파라미터
+# 파일에서 읽는다. 이 팔 시간에 맞추려면 fleet_params_real_arena.yaml을 복사해 세 값을 8.0, 8.0, 4.0으로
+# 바꾼 파일의 경로를 fleet_params_file로 준다. 맞추지 않아도 칸 잠금으로 안전하게 돈다.
+#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_arena_v4_slow_work traffic_mode:=freefloor #       sim_dock_stub:=true fleet_params_file:=<바꾼 파일 경로> nav_max_speed:=0.15 #       nav_collision_check:=false
+# 지름길(outbound_short)은 기본이 꺼짐이다. 같은 파일에 floor_shortcut: true를 더하면 출고로 가는 로봇이
+# 가운데 지름길로 거의 매번 꺾는다. 머리 없는 실행(2026-11-11, 씨앗 4개, 주문 주기 10 s와 30 s, 세 값을
+# 맞춤): 한 판에 지름길 7번, 지름길 없는 길보다 끝나는 시각이 0.7~0.9% 이르다. Gazebo에서는 지름길이
+# 물체 3 모서리에 걸린다(gz_arena_v4_two.yaml 머리말, docs/worklog_freefloor_2026-11-11.md).
+map: arena_v4
+seed: 64
+speed_factor: 5.0
+timeout_s: 1200
+stock: {arm1: {A: 20, B: 20}, arm2: {C: 20, D: 20}}
+orders:
+  - {at_s: 0, id: R-001, items: {A: 1, C: 1}}
+  - {at_s: 20, id: R-002, items: {B: 1}}
+  - {at_s: 40, id: R-003, items: {D: 1, A: 1}}
+  - {at_s: 60, id: R-004, items: {C: 1}}
+  - {at_s: 80, id: R-005, items: {B: 1, D: 1}}
+  - {at_s: 100, id: R-006, items: {A: 1}}
+  - {at_s: 120, id: R-007, items: {C: 1, B: 1}}
+  - {at_s: 140, id: R-008, items: {D: 1}}
+robots:
+  pinky1: {start: P-3}
+  pinky2: {start: P-2}
+  pinky3: {start: P-1}
+arm: {seconds_per_item: 8.0, swap_seconds: 4.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 8
+  orders_partial: 0
+  orders_held: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED]
