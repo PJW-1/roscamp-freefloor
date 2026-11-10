@@ -13,6 +13,10 @@
     release_confirm_samples번이 칸에서 release_distance_m보다 멀 때 놓는다.
   - 고정 선(도킹 접근, 도크에서 나감)은 들어가기 전에 선 끝까지 한꺼번에 잡는다. 지도의 rolling_lines
     (한 방향 선)는 바닥처럼 굴려 잠그고 접근선 한 대 규칙도 쓰지 않는다.
+  - 교차 상자(_junction_boxes): 한 방향 선이 꺾이는 점을 다른 한 방향 선이 다른 쪽에서 들어와
+    지나가면 그 점의 몸 원이 상자다. 한 방향 선을 가는 경로는 몸이 상자에 닿는 구간을 고정 선처럼
+    한꺼번에 잡거나, 몸이 상자에 닿지 않는 그 앞에 선다(_box_spans, _candidates). 두 로봇이
+    양쪽에서 굴려 와 상자의 칸을 나눠 쥐고 서로 기다리지 않게 한다(arena v4 가운데 통로 합류점).
 m.path는 [출발할 때 가까운 지점, 목적지 지점] 두 개다. 선택과 단계 처리가 그대로 쓴다.
 
 여러 대(P3). 안전은 칸 잠금, 효율은 계획:
@@ -102,6 +106,10 @@ TURN_LEAD_M = 0.25  # RPP max_lookahead_dist: 꺾이기 이만큼 앞에서부�
 TURN_START_M = 0.05  # 다리 출발 뒤 이만큼은 출발 자리에서 돌 수 있다
 # 지름길: 다른 로봇이 겹치는 구간에 닿기 이만큼 전에 지나갈 수 있어야 탄다(ETA 오차 몫)
 SHORTCUT_MARGIN_S = 1.0
+# 교차 상자 앞에 서는 로봇의 몸과 상자 사이 여유: 평균 낸 자리의 잡음으로 서 있는 로봇도, 지나가는
+# 로봇도 상자 밖으로 한 칸씩 더 잡는다(여유 없이, 또 0.03 m로는 헤드리스 실행에서 상자 가장자리 칸을
+# 두고 잠깐씩 서로 기다렸다. 0.06 m에서 세 재현 실행 모두 대기 순환 0)
+BOX_SLACK_M = 0.06
 
 
 @dataclass
@@ -191,6 +199,8 @@ class FloorController(TrafficController):
         self._line_ids = {name: self._swept(line.points)
                           for name, line in self.floor.fixed_lines.items()}
         self._all_line_ids = set().union(*self._line_ids.values()) if self._line_ids else set()
+        self._boxes = self._junction_boxes()
+        self._box_cells = frozenset().union(*self._boxes)
         # 지름길: 접근선 -> 지름길, 지름길 -> (갈림목에서 접근선 끝까지 m, 겹치는 구간 끝에서
         # 지름길 끝까지 m, 합류점에서 지름길 끝까지 m)
         self._shortcut = {base: short for short, base in self.floor.shortcuts.items()}
@@ -252,6 +262,66 @@ class FloorController(TrafficController):
             if sum(a for _, a in window) > limit:
                 spans.append((max(0.0, s - TURN_LEAD_M), window[-1][0]))
         route.turn_spans = spans
+        return spans
+
+    def _junction_boxes(self) -> list[frozenset[str]]:
+        """교차 상자: 한 방향 선 A가 eta_turn_min_rad보다 꺾이는 점의 몸 원(제자리에서 도는 칸) 중,
+        다른 한 방향 선 B의 가운데 선이 그 점을 반폭 띠(_side) 안으로 지나가고(합류·교차) 두 선이
+        서로 다른 쪽에서 들어오는 것(처음 몸이 원에 닿는 자리가 몸 반지름보다 멀다). 같은 쪽에서
+        들어와 갈라지는 곳은 한 줄로 오므로 상자가 아니다. 지름길은 겹치는 구간을 이미 통째로
+        잡으므로(_take_shortcut) 상자를 만들지 않는다."""
+        lines = sorted(set(self.floor.rolling_lines) - set(self.floor.shortcuts))
+        routes = {name: Route(list(self.floor.fixed_lines[name].points)) for name in lines}
+        boxes: list[frozenset[str]] = []
+        for a in lines:
+            pts = routes[a].points
+            for k in range(1, len(pts) - 1):
+                p, q, r = pts[k - 1], pts[k], pts[k + 1]
+                turn = math.remainder(math.atan2(r[1] - q[1], r[0] - q[0])
+                                      - math.atan2(q[1] - p[1], q[0] - p[0]), math.tau)
+                if abs(turn) <= self.params.eta_turn_min_rad:
+                    continue
+                box = frozenset(self._body_cells(*q))
+                for b in lines:
+                    if (b == a or box in boxes or routes[b].project(*q)[1] > self._side
+                            or math.dist(self._entry(routes[a], box),
+                                         self._entry(routes[b], box)) <= self._body):
+                        continue
+                    boxes.append(box)
+        return boxes
+
+    def _entry(self, route, cells) -> tuple[float, float]:
+        """경로에서 몸이 cells에 처음 닿는 자리(닿지 않으면 끝점)."""
+        s, step = 0.0, self.floor.cell_m / 2
+        while s < route.length and self._body_cells(*route.at(s)).isdisjoint(cells):
+            s += step
+        return route.at(s)
+
+    def _box_spans(self, route) -> list:
+        """한 방향 선을 가는 경로에서 몸(BOX_SLACK_M 더)이 교차 상자 칸에 닿는 구간 [(s0, s1)].
+        s0은 그 앞에서 닿지 않는 마지막 자리, s1은 지나서 처음 닿지 않는 자리(경로 끝이면 끝)."""
+        spans = getattr(route, "box_spans", None)
+        if spans is not None:
+            return spans
+        spans = []
+        rolling = self.floor.rolling_lines
+        if self._box_cells and any(line in rolling for _, _, line in route.fixed):
+            n = max(1, math.ceil(route.length / (self.floor.cell_m / 2)))
+            clear, start = 0.0, None
+            reach = self._body + BOX_SLACK_M
+            for k in range(n + 1):
+                s = route.length * k / n
+                near = self._ids(disk_cells(self.floor, *route.at(s), reach))
+                if not near.isdisjoint(self._box_cells):
+                    start = clear if start is None else start
+                    continue
+                if start is not None:
+                    spans.append((start, s))
+                    start = None
+                clear = s
+            if start is not None:
+                spans.append((start, route.length))
+        route.box_spans = spans
         return spans
 
     def _turning_at(self, route, s: float) -> bool:
@@ -1734,7 +1804,9 @@ class FloorController(TrafficController):
 
     def _candidates(self, leg: _Leg, cap: float | None = None) -> list[float]:
         """Lock ends to try, best first. Inside a fixed line: its end, else stop before it.
-        A rolling (one-way) line rolls like the floor."""
+        A rolling (one-way) line rolls like the floor, but inside a junction box span
+        (_box_spans) it is the same: the span's end, else stop before it (no further than cap:
+        where the span ends past cap, only the stop before it, or as before if that is behind)."""
         route = leg.route
         want = min(route.length, leg.s + self.params.floor_lock_ahead_m)
         if cap is not None:
@@ -1754,6 +1826,12 @@ class FloorController(TrafficController):
                     break
             else:
                 picks = [e]
+                for s0, s1 in self._box_spans(route):
+                    if s0 + 1e-9 < e < s1 - 1e-9 and leg.s_lock < s1 - 1e-9:
+                        picks = ([s1] if cap is None or s1 <= cap + 1e-9 else []) + (
+                            [s0] if s0 > leg.s_lock + 1e-9 else [])
+                        picks = picks or [e]
+                        break
             out.extend(p for p in picks if p not in out)
         return out
 
