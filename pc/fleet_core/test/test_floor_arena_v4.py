@@ -579,19 +579,25 @@ def test_a_robot_on_its_way_out_keeps_the_line_after_a_leg_that_was_not_planned(
 
 
 def test_a_robot_off_its_way_out_does_not_take_it_up_again_after_a_leg_with_no_route():
-    """The line is kept only while the robot is on it: past its end the next leg is a free one."""
+    """The line is kept only while the robot is on it. A leg begun past its end is a free one and
+    forgets the line, so that it is not taken up again where the robot comes near it later."""
     spots = dict(FLOOR.parking)
     traffic = fleet({"a": DOCK})
     a = traffic._missions["a"]
     traffic._start_leg(a, "TO_PARK", None, "P-1")
     traffic._drive(a)
-    moved(traffic, "a", 1.45, 0.87, EAST, reports=200)  # past the mouth of the north corridor
+    moved(traffic, "a", 0.23, 0.27, -math.pi / 4)
     traffic._plan_budget = 0
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    assert traffic._legs["a"].route is None and traffic._legs["a"].out_line == "outbound_out"
+    moved(traffic, "a", 1.45, 0.87, EAST)  # past the mouth of the north corridor, the line's end
     traffic._start_leg(a, "TO_PARK", None, "P-2")
+    assert traffic._legs["a"].route is None and traffic._legs["a"].out_line is None
+    moved(traffic, "a", 1.20, 0.875, EAST)  # on the line again, in the north corridor
     traffic._plan_budget = 99
     traffic._start_leg(a, "TO_PARK", None, "P-2")
     leg = traffic._legs["a"]
-    assert leg.route is not None and not leg.route.fixed
+    assert leg.out_line is None and leg.route is not None and not leg.route.fixed
     assert points(leg.route)[-1] == pytest.approx(spots["P-2"])
 
 
