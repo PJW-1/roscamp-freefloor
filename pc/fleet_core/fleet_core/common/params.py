@@ -63,6 +63,11 @@ class FleetParams:
     deadlock_unresolved_s: float = 30.0
     # 조용히 서 있는 로봇 감시(1.1 지시서 H2). 0이면 끈다. 이 값이 없던 기록은 감시 없이 재생한다
     idle_watch_s: float = 0.0
+    # 제안(2026-11-10): 보고한 배터리(0-100)가 battery_low_pct 이하면 새 일을 받지 않고 대기
+    # 지점(충전 자리)으로 가고, battery_charged_pct 이상이 되면 다시 받는다. 0이면 끈다(기본).
+    # 0 이하로 보고한 배터리는 모르는 값으로 본다
+    battery_low_pct: float = 0.0
+    battery_charged_pct: float = 80.0
     # Proposal (work order 1.1, H3): a failed outbound dispatch is sent again after the wait,
     # and failing more than the limit is an ERROR. Records without these values replay with them
     dispatch_retry_wait_s: float = 2.0

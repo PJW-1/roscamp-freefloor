@@ -820,3 +820,22 @@ def test_without_attempts_a_nav_abort_ends_the_goal_at_once(harness, tmp_path):
     assert time.monotonic() - sent < 0.6
     time.sleep(0.3)
     assert RECOVERING not in states_since(p, sent)
+
+
+def test_the_battery_is_90_without_a_low_battery_fault(harness, tmp_path):
+    p = start(harness, tmp_path)
+    assert wait_until(lambda: len(p.states) >= 3, 5.0)
+    assert {s.battery for _, s in p.states} == {90.0}
+
+
+def test_a_low_battery_drops_and_charges_back_at_the_parking_spot(harness, tmp_path):
+    """P-6은 주차(충전) 자리다. 서 있으면 duration_s 동안 10에서 90으로 다시 찬다."""
+    p = start(harness, tmp_path, faults=[
+        {"type": "low_battery", "robot": "pinky1", "at_s": 1.0, "duration_s": 2.0}])
+    assert wait_until(lambda: any(s.battery < 20.0 for _, s in p.states), 5.0)
+    assert wait_until(lambda: p.states[-1][1].battery == 90.0, 5.0)
+    levels = [s.battery for _, s in p.states]
+    low = levels.index(min(levels))
+    assert levels[0] == 90.0 and min(levels) < 20.0
+    assert levels[low:] == sorted(levels[low:])  # 서 있는 동안 계속 찬다
+    assert any(20.0 < v < 80.0 for v in levels[low:])

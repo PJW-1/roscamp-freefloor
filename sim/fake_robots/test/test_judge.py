@@ -1157,6 +1157,15 @@ def test_robot_idle_is_counted_and_none_is_expected_by_default():
     assert check(j, "robot_idle")["ok"] is True
 
 
+def test_parked_while_backlog_null_is_not_checked():
+    """충전하러 가는 로봇은 주문이 밀려도 WAIT로 갈 수 있다. null이면 안 본다(robot_idle처럼)."""
+    j = judge(parked_while_backlog=None)
+    j.on_board(["O-1", "O-2"])
+    lap(j, "pinky1", [OUT, LANE, WAITING[0]])
+    result = check(j, "parked_while_backlog")
+    assert (result["value"], result["expected"], result["ok"]) == (1, None, True)
+
+
 def test_a_scenario_can_expect_path_not_connected_failures():
     j = judge(path_not_connected=1)
     j.on_event(2.0, "WARN", "pinky1", "GOAL_RETRY", "attempt 1 failed: PATH_NOT_CONNECTED")

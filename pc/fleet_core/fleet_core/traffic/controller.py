@@ -128,11 +128,13 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         if state == LOCALIZING:
             # 자세를 믿지 않는다. 보고 시각도 두어 오래 가면 COMM_LOST가 된다.
             m.robot_state, m.battery = state, battery
+            self._note_battery(m)
             return
         if m.comm == RECOVERING and m.robot_state == LOCALIZING:
             # 위치를 다시 잡았다. 복구 확인을 이 보고부터 다시 잰다
             m.recover_at = self._clock() + self.params.recover_check_s
         m.x, m.y, m.yaw, m.robot_state, m.battery = x, y, yaw, state, battery
+        self._note_battery(m)
         m.last_seen = self._clock()
         if m.arrival_by is not None:
             m.heard_since_success = True
@@ -144,6 +146,25 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             self._count_reports_outside(m)
             self._watch_lane_error(m)
             self._note_block_report(m)
+
+    def _note_battery(self, m: _Mission) -> None:
+        """배터리가 battery_low_pct 이하면 충전하러 보내고(m.charge), battery_charged_pct 이상이면
+        다시 일을 받는다. 0 이하나 숫자가 아닌 값은 모르는 값이라 아무것도 바꾸지 않는다."""
+        low = self.params.battery_low_pct
+        if low <= 0 or not m.battery > 0:
+            return
+        if not m.charge and m.battery <= low:
+            m.charge = True
+            self._event("INFO", "ROBOT_BATTERY_LOW",
+                        f"battery {m.battery:.0f}%: takes no new work and goes to charge", m.name)
+        elif m.charge and m.battery >= self.params.battery_charged_pct:
+            m.charge = False
+            self._event("INFO", "ROBOT_CHARGED", f"battery {m.battery:.0f}%: takes work again",
+                        m.name)
+
+    def _charger_blocks_queue(self) -> bool:
+        """충전 중인 로봇을 대기 줄의 뒤 로봇이 지나갈 수 없다(레인의 대기 줄은 한 줄이다)."""
+        return True
 
     def _note_self_recovery(self, m: _Mission, state: str) -> None:
         """로봇의 자가 복구(RECOVERING, 제안)가 시작하고 끝날 때 한 번씩 알린다."""
@@ -422,6 +443,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             "fault": m.fault,
             "comm": m.comm,
             "called": m.called,
+            "charging": m.charge,
             "held": self.zones.held_by(robot),
             "path": list(m.path[m.idx:]),
             "waypoint": m.path[m.idx] if m.path else None,
@@ -710,10 +732,14 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             parked=waypoint in self.site.parking,
             # 막힘으로 선 로봇은 새 호출을 받지 않고, 대기 줄에서는 뒤 로봇이 앞지르지 않는다.
             # 재투입 때문에 세운 로봇은 available(robot)이 거짓이라 호출도 앞지르기도 없다
+            # 배터리가 낮은 로봇(m.charge)도 새 호출을 받지 않는다. 이미 불려 commit 구역을 지난
+            # 로봇은 방향을 못 바꾸니 그 호출은 그대로 한다
             eligible=(self.available(m.name) and not m.hold and m.dispatch is None
+                      and (not m.charge or (m.called and self._committed(m)))
                       and not stopped and (m.called or not self._held_for_block(m))),
             # A robot standing still in a wait cycle is not overtaken in the queue either (H1).
-            available=self.available(m.name) and not self._held_for_block(m) and not stopped,
+            available=(self.available(m.name) and not self._held_for_block(m) and not stopped
+                       and not (m.charge and self._charger_blocks_queue())),
         )
 
     def _committed(self, m: _Mission) -> bool:

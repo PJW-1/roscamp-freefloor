@@ -11,7 +11,11 @@
 - 모든 로봇이 IDLE이 되면(wait_ready) 관제, 가짜 작업셀·비전·출고 팔·central, 시나리오 모니터를
   띄운다. 모니터가 기대값을 판정해 result_dir에 summary.json을 쓰고 launch를 끝낸다.
 - 시계는 Gazebo /clock 하나를 모두 쓴다. sim_clock을 띄우지 않으므로 시나리오의 speed_factor는
-  쓰지 않는다. 주문 시각(at_s)은 Gazebo 시계 0부터 센다.
+  쓰지 않는다. 주문 시각(at_s)은 Gazebo 시계 0부터 센다. low_battery의 at_s도 같다.
+- 시나리오의 random 블록(주문 시각, 배터리 부족)은 scenario_seed로 푼다. 시나리오를 읽는 노드에
+  모두 같은 값을 넘겨 같은 시간표를 보게 한다.
+- low_battery가 있으면 sim_stand_in이 실제 위치로 배터리를 계산해 /{pinky}/sim/battery
+  (BatteryState)로 내고, pinky_fsm의 battery_topic을 거기에 잇는다. 없으면 예전처럼 잇지 않는다.
 - 도크: 기본은 진짜 pinky_fsm이 도킹을 DOCK_UNAVAILABLE로 실패시킨다(pinky_dock이 아직 없다).
   임무가 도크에서 멈추고 관제가 재시도한 뒤 격리한다. sim_dock_stub:=true면 시뮬 전용 대역
   (sim_stand_in)이 /{pinky}/dock을 맡고 pinky_fsm의 dock 서버는 /{pinky}/dock_fsm으로 비켜 둔다.
@@ -71,6 +75,9 @@ ARGS = {
                                    " 라이다 잡음이 벽을 발자국 안에 찍어 멈추는 것을 막는다"),
     "nav_pass_through": ("true", "잠금 경계에서 끝나는 이동(final_goal 거짓)을 접근 감속 없는 둘째"
                                 " RPP(FollowPathThrough)로. false면 모두 FollowPath(둘 다 뜬다)"),
+    "scenario_seed": ("", "시나리오 random 블록을 풀 seed(정수). 비면 파일의 seed"),
+    "battery_low_pct": ("", "관제 battery_low_pct(0~100). 주면 그 값을 넣은 파라미터 사본"
+                            "(result_dir/fleet_params.yaml)으로 돈다. 비우면 파일 그대로"),
 }
 ARMS = "arm1 arm2 arm3"
 
@@ -115,14 +122,43 @@ def speed_of(text: str) -> float | None:
     return value
 
 
-def params_for(params_file: str, traffic_mode: str, result_dir: str) -> str:
-    """The params file every fleet node reads. With a traffic_mode, a copy set to that mode."""
+def seed_of(text: str) -> int | None:
+    """scenario_seed: "" means the file's seed. A typo must not quietly mean the file's seed."""
+    if not text.strip():
+        return None
+    try:
+        seed = int(text)
+    except ValueError:
+        raise ValueError(f"scenario_seed must be an integer, got {text!r}") from None
+    if seed < 0:  # 노드에서는 음수가 '파일의 seed'라는 뜻이다
+        raise ValueError(f"scenario_seed must be 0 or more, got {text!r}")
+    return seed
+
+
+def battery_low_of(text: str) -> float | None:
+    """battery_low_pct: "" leaves the params file alone."""
+    if not text.strip():
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        raise ValueError(f"battery_low_pct must be a number from 0 to 100, got {text!r}") from None
+    if not (math.isfinite(value) and 0.0 <= value <= 100.0):
+        raise ValueError(f"battery_low_pct must be a number from 0 to 100, got {text!r}")
+    return value
+
+
+def params_for(params_file: str, traffic_mode: str, result_dir: str,
+               battery_low_pct: str = "") -> str:
+    """The params file every fleet node reads. With a traffic_mode or battery_low_pct, a copy
+    with those values."""
     import yaml
     from fleet_core.common.params import DEFAULT_PARAMS
     from fleet_core.traffic.modes import MODES
-    if not traffic_mode:
+    battery = battery_low_of(battery_low_pct)
+    if not traffic_mode and battery is None:
         return params_file
-    if traffic_mode not in MODES:
+    if traffic_mode and traffic_mode not in MODES:
         raise ValueError(f"traffic_mode must be one of {', '.join(MODES)} or empty, "
                          f"got {traffic_mode!r}")
     source = Path(params_file) if params_file else DEFAULT_PARAMS
@@ -132,11 +168,15 @@ def params_for(params_file: str, traffic_mode: str, result_dir: str) -> str:
         values.setdefault("mark_final_goal", True)
     copy = Path(result_dir) / "fleet_params.yaml"
     if copy.resolve() == source.resolve() or (copy.exists() and copy.samefile(source)):
-        raise ValueError(f"fleet_params_file {source} is where the {traffic_mode} copy goes;"
+        raise ValueError(f"fleet_params_file {source} is where the params copy goes;"
                          " give another result_dir")
+    if traffic_mode:
+        values["traffic_mode"] = traffic_mode
+    if battery is not None:
+        values["battery_low_pct"] = battery  # 키 검사는 fleet_core가 한다
     copy.parent.mkdir(parents=True, exist_ok=True)
-    copy.write_text(yaml.safe_dump({**values, "traffic_mode": traffic_mode}, sort_keys=False,
-                                   allow_unicode=True), encoding="utf-8")
+    copy.write_text(yaml.safe_dump(values, sort_keys=False, allow_unicode=True),
+                    encoding="utf-8")
     return str(copy)
 
 
@@ -151,14 +191,16 @@ def traffic_mode_of(traffic_mode: str, params_file: str) -> str:
 
 def fleet(scenario_file: str, robots: list[str], result_dir: str, monitor: bool,
           params_file: str = "", obstacles_file: str = "", check: bool = True,
-          lane_map: str = "") -> list:
+          lane_map: str = "", scenario_seed: int | None = None) -> list:
     """진짜 관제와 가짜 작업셀·비전·출고 팔·central·모니터, 장애물(있으면). 모두 Gazebo 시계.
-    lane_map: 관제 레인 지도 파일. 비면 기본 지도(노드에 넘기지 않는다)."""
+    lane_map: 관제 레인 지도 파일. 비면 기본 지도(노드에 넘기지 않는다).
+    scenario_seed: 시나리오를 읽는 노드에 넘길 seed. None이면 넘기지 않는다(파일의 seed)."""
     from fake_robots.common import split_fake_arms
     from fleet_core.traffic.lane_map import load_lane_map
     map_file = {"map_file": lane_map} if lane_map else {}
     lane = {"lane_map": lane_map} if lane_map else {}
-    common = {"use_sim_time": True, "scenario_file": scenario_file, **map_file}
+    seed = {} if scenario_seed is None else {"scenario_seed": scenario_seed}
+    common = {"use_sim_time": True, "scenario_file": scenario_file, **map_file, **seed}
 
     def fake(executable, name, **extra):
         return Node(package="fake_robots", executable=executable, name=name, output="screen",
@@ -230,7 +272,8 @@ def _start(context):
     gz_share, fake_share = launch_parts.share("fleet_gz_sim"), launch_parts.share("fake_robots")
     scenario_file = str(scenario_path(value("scenario"), gz_share, fake_share))
     arena = arena_for(scenario_file, gz_share, fake_share)  # 시나리오의 map이 경기장을 고른다
-    site, scenario = load(scenario_file, arena.lane_map)
+    scenario_seed = seed_of(value("scenario_seed"))
+    site, scenario = load(scenario_file, arena.lane_map, seed=scenario_seed)
     obstacles_file = obstacles_path(value("obstacles"), gz_share)
     if obstacles_file:
         load_schedule(obstacles_file, site)  # 틀린 일정이면 Gazebo를 띄우기 전에 멈춘다
@@ -240,12 +283,15 @@ def _start(context):
     stub = flag(value("sim_dock_stub"), "sim_dock_stub")
     check = flag(value("fleet_check"), "fleet_check")
     through = flag(value("nav_pass_through"), "nav_pass_through")
-    params_file = params_for(params_file_of(value("fleet_params_file")), value("traffic_mode"),
-                             value("result_dir"))
+    source_params = params_file_of(value("fleet_params_file"))
+    params_file = params_for(source_params, value("traffic_mode"), value("result_dir"),
+                             value("battery_low_pct"))
     max_speed = speed_of(value("nav_max_speed"))
     collision_check = flag(value("nav_collision_check"), "nav_collision_check")
-    # robots leave the lanes on the free floor: no lanes painted
-    floor = traffic_mode_of(value("traffic_mode"), params_file) == "freefloor"
+    # robots leave the lanes on the free floor: no lanes painted. 사본과 방식이 같은 원본으로 본다
+    floor = traffic_mode_of(value("traffic_mode"), source_params) == "freefloor"
+    # low_battery가 있을 때만 pinky_fsm이 sim_stand_in의 배터리를 본다
+    battery = any(f.type == "low_battery" for f in scenario.faults)
     actions = [*launch_parts.world(flag(value("gui"), "gui"), arena.world, lane_paint=not floor),
                launch_parts.bridge(robots)]
     for robot, (x, y, yaw) in poses.items():
@@ -258,7 +304,9 @@ def _start(context):
                                       through_controller_id=(launch_parts.THROUGH_CONTROLLER
                                                              if through else ""),
                                       nav_max_speed=max_speed,
-                                      nav_collision_check=collision_check)
+                                      nav_collision_check=collision_check,
+                                      battery_topic=(launch_parts.BATTERY_TOPIC.format(robot=robot)
+                                                     if battery else ""))
     if value("rviz") == "fleet":
         actions += fleet_rviz(robots, arena.lane_map, params_file=params_file)
     map_file = {"map_file": arena.lane_map} if arena.lane_map else {}
@@ -266,7 +314,8 @@ def _start(context):
                         output="screen",
                         parameters=[{"use_sim_time": True, "robots": robots,
                                      "scenario_file": scenario_file, "dock_stub": stub,
-                                     **map_file}]))
+                                     **map_file, **({} if scenario_seed is None
+                                                    else {"scenario_seed": scenario_seed})}]))
     wait = Node(package="fleet_gz_sim", executable="wait_ready", name="wait_ready",
                 output="screen", parameters=[{"robots": robots}])
     monitor = flag(value("monitor"), "monitor")
@@ -275,7 +324,7 @@ def _start(context):
         if event.returncode != 0:
             return [LogInfo(msg="fleet_gz_sim: 로봇이 IDLE이 되지 않아 끝낸다"), Shutdown()]
         return fleet(scenario_file, robots, value("result_dir"), monitor,
-                     params_file, obstacles_file, check, arena.lane_map)
+                     params_file, obstacles_file, check, arena.lane_map, scenario_seed)
 
     actions += [wait, RegisterEventHandler(OnProcessExit(target_action=wait, on_exit=after_wait))]
     return actions

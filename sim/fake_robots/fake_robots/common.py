@@ -40,11 +40,16 @@ def load_lane_map_param(node):
 
 
 def load_scenario_param(node, lane_map):
-    node.declare_parameter("scenario_file", "")
+    """scenario_seed: random 블록을 풀 seed. -1(기본)이면 파일의 seed. 같은 파일을 읽는 노드는
+    모두 같은 값을 받아야 같은 시간표를 본다."""
+    for name, default in (("scenario_file", ""), ("scenario_seed", -1)):
+        if not node.has_parameter(name):
+            node.declare_parameter(name, default)
     path = node.get_parameter("scenario_file").value
     if not path:
         raise ValueError("parameter scenario_file is required")
-    return load_scenario(path, lane_map)
+    seed = int(node.get_parameter("scenario_seed").value)
+    return load_scenario(path, lane_map, None if seed < 0 else seed)
 
 
 def load_fleet_params(path=None) -> dict:

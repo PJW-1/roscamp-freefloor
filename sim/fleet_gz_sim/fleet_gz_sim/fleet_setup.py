@@ -3,7 +3,7 @@
 - 핑키를 놓는 자리: 시나리오의 시작 지점. 방향은 그 지점으로 들어오는 레인 방향
   (대기 줄을 따라 들어와 섰다).
 - 돌릴 수 없는 시나리오: 로봇 고장이 있는 것(가짜 핑키가 일으키는 고장이라 진짜 pinky_fsm에는
-  일으킬 곳이 없다).
+  일으킬 곳이 없다). low_battery는 된다: sim_stand_in이 배터리 토픽으로 낸다.
 - 경기장: 시나리오의 `map`이 없으면 lane_arena(기본 레인 지도), 있으면 그 이름의 월드·지도·레인
   지도(arena_for).
 """
@@ -89,13 +89,18 @@ def arena_for(scenario_file, gz_share: str | Path, fake_share: str | Path) -> Ar
     return found
 
 
-def load(path, lane_map_file: str = ""):
+ARENA_FAULTS = ("low_battery",)  # 경기장에서도 일으킬 수 있는 로봇 고장(sim_stand_in)
+
+
+def load(path, lane_map_file: str = "", seed: int | None = None):
     """(레인 지도, 시나리오). 레인 지도는 lane_map_file, 비면 시나리오의 map(fake_robots의
-    지도), 그것도 없으면 기본 지도. 경기장에서 돌릴 수 없으면 ScenarioUnfit."""
+    지도), 그것도 없으면 기본 지도. seed: random 블록을 풀 seed(None이면 파일의 seed).
+    경기장에서 돌릴 수 없으면 ScenarioUnfit."""
     name = Path(path).name
     site = load_lane_map(lane_map_file or scenario_map_file(path) or None)
-    scenario = load_scenario(path, site)
-    faults = sorted({f.type for f in scenario.faults if f.type in ROBOT_FAULTS})
+    scenario = load_scenario(path, site, seed)
+    faults = sorted({f.type for f in scenario.faults
+                     if f.type in ROBOT_FAULTS and f.type not in ARENA_FAULTS})
     if faults:
         raise ScenarioUnfit(f"{name} has robot faults {faults}; only fake pinkys can make them")
     return site, scenario

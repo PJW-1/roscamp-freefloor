@@ -36,7 +36,7 @@ class TrafficReinstate:
         # 마지막 보고 값만 남긴다. 자리 잡기는 새 보고로 한다.
         self._missions[robot] = _Mission(
             robot, x=old.x, y=old.y, yaw=old.yaw, robot_state=old.robot_state,
-            battery=old.battery, last_seen=old.last_seen)
+            battery=old.battery, charge=old.charge, last_seen=old.last_seen)
         self.zones.cancel_all_requests(robot)
         self._joining.add(robot)
         self._blocking.pop(robot, None)

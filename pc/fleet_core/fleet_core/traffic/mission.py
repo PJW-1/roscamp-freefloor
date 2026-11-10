@@ -79,6 +79,7 @@ class _Mission:
     yaw: float = 0.0
     robot_state: str = ""
     battery: float = 0.0
+    charge: bool = False  # 배터리가 낮다: 새 일을 받지 않고 충전 자리(대기 지점)에 있는다
     last_seen: float = 0.0
     phase: str = IDLE
     fault: str = ""  # ERROR 또는 OUT_OF_SERVICE, 둘 다 운영자가 처리

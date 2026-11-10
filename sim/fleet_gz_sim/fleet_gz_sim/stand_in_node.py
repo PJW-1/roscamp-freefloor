@@ -3,6 +3,10 @@
 sim_stand_in: 로봇마다
   - 실제 위치 중계: /{pinky}/sim/truth(Odometry, map 좌표) → /sim/truth/{pinky}(RobotState).
     시나리오 모니터(fake_robots)가 구역 판정에 쓰는 잡음 없는 자세다. 늘 켜져 있다.
+  - 시뮬 배터리: scenario_file이 있으면 /{pinky}/sim/battery(BatteryState, percentage 0~1).
+    시나리오의 low_battery와 실제 위치로 계산한다(fake_robots.battery, 충전 자리는 주차 지점).
+    시각은 Gazebo 시계(use_sim_time)라 주문 at_s와 같은 0부터 센다. gz.launch.py는 low_battery가
+    있을 때만 pinky_fsm의 battery_topic을 여기에 잇는다.
   - dock_stub:=true일 때만 /{pinky}/dock(Dock) 대역(dock_stand_in). 기본은 꺼짐이고 진짜
     pinky_fsm이 도킹을 DOCK_UNAVAILABLE로 실패시킨다. 켜면 gz.launch.py가 pinky_fsm의 dock
     서버를 /{pinky}/dock_fsm으로 비켜 둔다. The node refuses to start the stub unless
@@ -20,6 +24,7 @@ import time
 from pathlib import Path
 
 import rclpy
+from fake_robots.battery import Battery
 from fake_robots.common import (
     TRUTH_TOPIC,
     load_contract_param,
@@ -35,6 +40,8 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import BatteryState
 
 from fleet_gz_sim.dock_stand_in import (
     ClockWatch,
@@ -44,11 +51,14 @@ from fleet_gz_sim.dock_stand_in import (
     require_dock_stub_allowed,
     stub_may_answer,
 )
+from fleet_gz_sim.launch_parts import BATTERY_TOPIC
 from fleet_gz_sim.ready import everyone_idle
 
 READY_HOLD_S = 1.0
 REPORT_FRESH_S = 0.5  # pinky_fsm은 state를 10 Hz로 낸다
 CLOCK_STALL_S = 5.0  # wall seconds without Gazebo time moving: the dock fails
+BATTERY_PERIOD_S = 0.5  # 배터리를 내는 간격(Gazebo 시간)
+STAND_STILL_M = 0.01  # 한 간격 동안 이보다 덜 움직였으면 서 있다
 
 
 def _yaw(q) -> float:
@@ -67,9 +77,14 @@ class SimStandIn(Node):
             self.add_on_set_parameters_callback(self._keep_sim_time)
         contract = load_contract_param(self)
         self._site = load_lane_map_param(self)
-        self._duration = load_scenario_param(self, self._site).dock.duration_s if stub else 0.0
+        self.declare_parameter("scenario_file", "")
+        scenario = (load_scenario_param(self, self._site)
+                    if stub or self.get_parameter("scenario_file").value else None)
+        self._duration = scenario.dock.duration_s if stub else 0.0
         self._lock = threading.Lock()
         self._pose: dict[str, tuple[float, float, float]] = {}
+        self._batteries: dict[str, tuple[Battery, object]] = {}  # 로봇: (모형, 발행자)
+        self._battery_at: dict[str, tuple[float, float]] = {}  # 지난 배터리 계산 때 자리
         self._turn: dict[str, int] = {}  # 로봇마다 마지막으로 받은 도크 목표 번호
         qos = to_ros_qos(contract.qos("robot_state"))
         group = ReentrantCallbackGroup()
@@ -78,6 +93,11 @@ class SimStandIn(Node):
             pub = self.create_publisher(RobotState, TRUTH_TOPIC.format(robot=robot), qos)
             self.create_subscription(Odometry, f"/{robot}/sim/truth",
                                      lambda msg, r=robot, p=pub: self._on_truth(r, p, msg), 10)
+            if scenario is not None:
+                spots = [self._site.waypoint_pose(w) for w in self._site.parking]
+                mine = [f for f in scenario.faults if f.robot == robot]
+                self._batteries[robot] = (Battery(mine, spots), self.create_publisher(
+                    BatteryState, BATTERY_TOPIC.format(robot=robot), qos_profile_sensor_data))
             if not stub:
                 continue
             self.dock_servers.append(ActionServer(
@@ -86,6 +106,8 @@ class SimStandIn(Node):
                 goal_callback=lambda _goal: GoalResponse.ACCEPT,
                 cancel_callback=lambda _handle: CancelResponse.ACCEPT,
                 callback_group=group))
+        if self._batteries:
+            self.create_timer(BATTERY_PERIOD_S, self._publish_batteries)
         robots = self.get_parameter("robots").value
         what = "SIM DOCK STUB and truth" if stub else "truth (dock left to pinky_fsm)"
         self.get_logger().info(f"sim stand-in: {what} for {robots}")
@@ -109,6 +131,24 @@ class SimStandIn(Node):
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
+
+    def _publish_batteries(self) -> None:
+        now = self._now()
+        if now <= 0.0:
+            return  # /clock를 아직 못 받았다
+        for robot, (battery, pub) in self._batteries.items():
+            with self._lock:
+                pose = self._pose.get(robot)
+            if pose is None:
+                continue  # 실제 위치를 아직 모른다
+            x, y = pose[0], pose[1]
+            before = self._battery_at.get(robot)
+            self._battery_at[robot] = (x, y)
+            standing = before is not None and math.dist(before, (x, y)) < STAND_STILL_M
+            level = battery.percent(now, x, y, standing)
+            msg = BatteryState(percentage=level / 100.0, present=True)
+            msg.header.stamp = self.get_clock().now().to_msg()
+            pub.publish(msg)
 
     def _dock(self, robot: str, handle):
         with self._lock:

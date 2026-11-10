@@ -1,6 +1,8 @@
 """가짜 로봇용 시나리오 파일: 읽기, 기본값, 검증. ROS를 쓰지 않는다."""
 from __future__ import annotations
 
+import copy
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -8,7 +10,7 @@ import yaml
 
 ORDER_RESULTS = ("SHIPPED", "PARTIAL", "HELD")
 ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "blocked", "drift",
-                "operator_reinstate", "obstacle_behind")
+                "operator_reinstate", "obstacle_behind", "low_battery")
 ARM_FAULTS = ("arm_fail", "swap_partial")
 FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
 # 이 고장이 난 로봇은 돌아오지 않으므로 주차를 기다리지 않는다.
@@ -26,7 +28,7 @@ EXPECT_DEFAULTS = {
     "released_without_position_check": 0,
     "unheld_zone_pose": 0,
     "direct_returns_min": 0,
-    "parked_while_backlog": 0,
+    "parked_while_backlog": 0,  # null이면 안 봄(충전하러 가는 로봇은 주문이 밀려도 WAIT로 간다)
     "timed_out": False,  # 시간 초과가 목적인 시나리오에서만 true
     "unexpected_errors": 0,  # 코드가 events_include나 event_counts에 없는 ERROR 이벤트
     "bound_after_reinstate_min": 0,  # 다시 투입한 로봇이 그 뒤에 묶은 주문 수
@@ -41,7 +43,9 @@ EXPECT_DEFAULTS = {
     "robot_idle": 0,  # ROBOT_IDLE 이벤트 수(1.1 지시서 H2). 정상이면 0, null이면 안 봄
 }
 TOP_LEVEL_KEYS = {"seed", "speed_factor", "timeout_s", "stock", "inventory", "orders", "robots",
-                  "arm", "dock", "faults", "expect", "map"}
+                  "arm", "dock", "faults", "expect", "map", "random"}
+RANDOM_KEYS = {"order_gap_s", "low_battery"}
+LOW_BATTERY_KEYS = {"from_s", "to_s", "charge_s"}
 
 
 def scenario_map_file(scenario_path) -> str:
@@ -120,7 +124,7 @@ class Expect:
     released_without_position_check: int = 0
     unheld_zone_pose: int = 0
     direct_returns_min: int = 0
-    parked_while_backlog: int = 0
+    parked_while_backlog: int | None = 0
     timed_out: bool = False
     unexpected_errors: int = 0
     bound_after_reinstate_min: int = 0
@@ -258,6 +262,8 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
         raise ScenarioError(f"fault has no at_s: {raw}")
     if kind == "blocked":
         _positive(raw, "duration_s")  # 물체가 있는 시간
+    if kind == "low_battery":
+        _positive(raw, "duration_s")  # 충전에 걸리는 시간
     if kind == "obstacle_behind":
         _positive(raw, "duration_s")
         _positive(raw, "distance_m")
@@ -312,7 +318,60 @@ def _parse_expect(data: dict, faults: list) -> Expect:
     return expect
 
 
-def parse_scenario(data: dict, lane_map) -> Scenario:
+def _span(lo, hi, what: str) -> tuple[float, float]:
+    for value in (lo, hi):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            raise ScenarioError(f"{what} needs non-negative numbers, got {lo!r}, {hi!r}")
+    if lo > hi:
+        raise ScenarioError(f"{what}: {lo} is above {hi}")
+    return float(lo), float(hi)
+
+
+def expand_random(data: dict, seed: int | None = None) -> dict:
+    """`random` 블록을 정해진 시각으로 푼 새 dict. 입력은 바꾸지 않는다.
+
+    seed가 None이면 파일의 seed. 주문을 파일 순서로 먼저 뽑고 로봇은 이름 순서로 뽑는다.
+    random이 없으면 내용이 같은 사본을 돌려준다.
+    """
+    out = copy.deepcopy(data)
+    spec = out.pop("random", None)
+    if spec is None:
+        return out
+    if not isinstance(spec, dict):
+        raise ScenarioError(f"random must be a mapping, got {spec!r}")
+    unknown = set(spec) - RANDOM_KEYS
+    if unknown:
+        raise ScenarioError(f"unknown random keys: {sorted(unknown)}")
+    gap = spec.get("order_gap_s")
+    if gap is not None and not (isinstance(gap, (list, tuple)) and len(gap) == 2):
+        raise ScenarioError(f"random.order_gap_s must be [low, high], got {gap!r}")
+    gap = _span(*gap, "random.order_gap_s") if gap is not None else None
+    battery = spec.get("low_battery")
+    if battery is not None:
+        if not isinstance(battery, dict) or set(battery) != LOW_BATTERY_KEYS:
+            raise ScenarioError(f"random.low_battery needs exactly {sorted(LOW_BATTERY_KEYS)}, "
+                                f"got {battery!r}")
+        span = _span(battery["from_s"], battery["to_s"], "random.low_battery from_s/to_s")
+        charge_s = _positive(battery, "charge_s")
+    seed = int(out.get("seed", 0) if seed is None else seed)
+    rng = random.Random(seed)
+    out["seed"] = seed
+    if gap is not None:
+        t = 0.0
+        for order in out.get("orders") or []:
+            t += rng.uniform(*gap)
+            order["at_s"] = round(t, 1)
+    if battery is not None:
+        added = [{"type": "low_battery", "robot": robot, "at_s": round(rng.uniform(*span), 1),
+                  "duration_s": charge_s}
+                 for robot in sorted(out.get("robots") or {})]
+        out["faults"] = list(out.get("faults") or []) + added
+    return out
+
+
+def parse_scenario(data: dict, lane_map, seed: int | None = None) -> Scenario:
+    """seed: random 블록을 풀 seed. None이면 파일의 seed."""
+    data = expand_random(data, seed)
     unknown = set(data) - TOP_LEVEL_KEYS
     if unknown:
         raise ScenarioError(f"unknown scenario keys: {sorted(unknown)}")
@@ -353,8 +412,9 @@ def parse_scenario(data: dict, lane_map) -> Scenario:
     )
 
 
-def load_scenario(path, lane_map=None) -> Scenario:
+def load_scenario(path, lane_map=None, seed: int | None = None) -> Scenario:
     if lane_map is None:
         from fleet_core.traffic.lane_map import load_lane_map
         lane_map = load_lane_map(scenario_map_file(path) or None)
-    return parse_scenario(yaml.safe_load(Path(path).read_text(encoding="utf-8")), lane_map)
+    return parse_scenario(yaml.safe_load(Path(path).read_text(encoding="utf-8")), lane_map,
+                          seed)
