@@ -2018,15 +2018,17 @@ class FloorController(TrafficController):
                 and now - max(since, back.since) >= self.params.blocked_mark_s)
 
     def _hold_back(self, back: _Back, now: float) -> None:
+        # back.cells는 그대로: 결과 없이 놓친 Retreat면 로봇이 아직 물러나는 중일 수 있다.
+        # 결과가 오거나(on_retreat_result) 다음 Retreat나 에피소드 끝에서 바뀐다
         back.state, back.until, back.tries = HOLD, now + self.params.floor_retreat_after_s, None
-        back.cells, back.leg, back.keep = frozenset(), None, frozenset()
+        back.leg, back.keep = None, frozenset()
 
     def _back_keep(self, m: _Mission, leg: _Leg | None) -> set[str]:
         """물러나는 동안 쥘 칸, 그리고 새 길이 거슬러 지나갈 한 방향 선의 칸(지날 때까지)."""
         back = self._back.get(m.name)
         if back is None:
             return set()
-        keep = set(back.cells) if back.state == BACKING else set()
+        keep = set(back.cells)
         if back.keep and leg is back.leg and leg.s < back.keep_until:
             keep |= back.keep
         return keep
@@ -2128,7 +2130,7 @@ class FloorController(TrafficController):
         found = self._foot(m)
         if back.tries is None:
             self._trim_mark(m)
-            reach =min(found[1], self.params.floor_retreat_max_m - found[3]) if found else 0.0
+            reach = min(found[1], self.params.floor_retreat_max_m - found[3]) if found else 0.0
             back.tries = [0.0] + [k * FORK_STEP_M
                                   for k in range(1, int(reach / FORK_STEP_M + 1e-9) + 1)]
             back.reach = reach
@@ -2401,12 +2403,13 @@ class FloorController(TrafficController):
     def _corridor_step(self, m: _Mission, back: _Back, now: float) -> None:
         """제 차례면 다음 Retreat(floor_retreat_max_m 이하)를 낸다. 물러날 칸을 다 잡을 수 없으면
         다음 tick에 다시 본다(맨 뒤 로봇이 먼저 가게 된다)."""
-        if m.goal is not None:
-            return
+        if m.goal is not None or self._active[m.name] or self._rear_busy(m.name, back):
+            return  # 취소한 이동이 아직 끝나지 않았거나 뒤 멤버가 아직 나오지 않았다
         self._trim_mark(m)
         found = self._foot(m)
         if found is None or back.target is None:
             self._back_fail(m, back, "no record of the way it came to back along")
+            back.state, back.out_at = OUT, now  # 다시 해도 같다: 그 자리를 끝으로 친다
             return
         record, s, here, off = found
         left = s - back.target
@@ -2416,6 +2419,7 @@ class FloorController(TrafficController):
         d = min(left, self.params.floor_retreat_max_m - off)
         if d <= BACK_DONE_M:
             self._back_fail(m, back, f"{off:.2f} m off the way it came")
+            back.state, back.out_at = OUT, now
             return
         way = self._way_back(record, s, here, d)
         if self._retreat(m, back, way, f"out of {back.line}"):
@@ -2432,12 +2436,20 @@ class FloorController(TrafficController):
                         f" s: stays {left:.2f} m short of where it was to stand", m.name)
             back.state, back.out_at, back.wait_since = OUT, now, None
 
+    def _rear_busy(self, name: str, back: _Back) -> bool:
+        """선 위 name보다 뒤(덜 깊이)에 있는 같은 무리 멤버 중 아직 나오지 않은 로봇이 있다."""
+        pts = self.floor.fixed_lines[back.line].points
+        mine = _along(pts, self._here(self._missions[name]))[0]
+        return any(_along(pts, self._here(self._missions[n]))[0] < mine - 1e-6
+                   for n, b in self._back.items()
+                   if n != name and b.owner == back.owner and b.state != OUT)
+
     def _corridor_done(self, back: _Back, now: float) -> None:
         """막힌 로봇이 다 나오고 floor_retreat_after_s가 지나면 표시를 지우고 모두 다시 계획한다."""
         owner = back.owner
         group = [n for n, b in self._back.items() if b.owner == owner]
         if (now - back.out_at < self.params.floor_retreat_after_s
-                or any(self._back[n].state == BACKING for n in group)):
+                or any(self._back[n].state != OUT for n in group)):
             return
         self._clear_mark(owner, f"kept {self.params.floor_retreat_after_s:.0f} s after "
                                 f"{back.line} was cleared, planning again")

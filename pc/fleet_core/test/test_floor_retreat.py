@@ -13,6 +13,8 @@ import compare_floor
 import pytest
 from fleet_core.common.commands import MoveCmd, RetreatCmd
 from fleet_core.common.params import load_params
+from fleet_core.traffic.floor.controller import _along
+from fleet_core.traffic.floor.planner import Route
 from floor_world import FloorWorld
 from test_floor_arena_v4 import LOCKS, THREE, scenario
 from test_sim_world_object import ONE, ORDER
@@ -289,6 +291,56 @@ def test_two_robots_in_the_corridor_back_out_rear_first():
     assert shipped(world) == 2 and world.min_gap > 0.2 and world.min_object_gap > 0.0
 
 
+@pytest.mark.parametrize("at_s", [20.0, 40.0])
+def test_corridor_members_back_one_at_a_time_from_the_rear_and_end_together(monkeypatch, at_s):
+    """물러나기를 낼 때: 취소한 이동 goal이 끝났고, 뒤(선 위 덜 깊이)의 멤버는 다 나왔다.
+    표시를 지울 때: 멤버가 모두 나왔다."""
+    world = arena([obj(*MIDDLE, at_s, 60.0)], robots=2, count=2, **CORRIDOR)
+    tr = world.core.traffic
+    starts, ends = [], []
+    real_retreat, real_clear = tr._retreat, tr._clear_mark
+
+    def depth(name, line):
+        return _along(tr.floor.fixed_lines[line].points, tr._here(tr._missions[name]))[0]
+
+    def retreat(m, back, way, why):
+        group = {n: b for n, b in tr._back.items() if b.owner == back.owner}
+        behind = [n for n, b in group.items() if n != m.name and b.state != "OUT"
+                  and depth(n, back.line) < depth(m.name, back.line)]
+        ok = real_retreat(m, back, way, why)
+        if ok:
+            starts.append((m.name, bool(tr._active[m.name]), behind))
+        return ok
+
+    def clear_mark(owner, why):
+        ends.append({n: b.state for n, b in tr._back.items() if b.owner == owner})
+        return real_clear(owner, why)
+
+    monkeypatch.setattr(tr, "_retreat", retreat)
+    monkeypatch.setattr(tr, "_clear_mark", clear_mark)
+    run(world, 400.0)
+    assert starts and ends
+    assert all(not active and not behind for _, active, behind in starts), starts
+    assert all(set(states.values()) == {"OUT"} for states in ends), ends
+
+
+def test_a_dropped_retreat_goal_keeps_its_cells(monkeypatch):
+    """Retreat goal을 결과 없이 놓쳐도(취소 등) 로봇이 아직 움직일 수 있다: 물러날 칸을 쥔다."""
+    world = arena([obj(*MIDDLE, 0.0, 300.0)], **SOLO)
+    tr = world.core.traffic
+    while not retreats(world) and world.t < 120.0:
+        world.step()
+    m = tr._missions["pinky1"]
+    way = set(tr._back["pinky1"].cells)
+    assert way and m.goal is not None
+    monkeypatch.setattr(world, "_cancel", lambda cmd: None)  # 취소 결과가 오지 않는다
+    tr._cancel_goal(m)
+    for _ in range(5):
+        world.step()
+    assert events(world, "FLOOR_RETREAT_FAILED")
+    assert way <= tr.zones.held_set("pinky1")
+
+
 def test_with_both_switches_on_the_corridor_rule_decides_on_a_line():
     both = run(arena([obj(*MIDDLE, 20.0, 60.0)], robots=2, count=2, **CORRIDOR, **SOLO), 400.0)
     alone = run(arena([obj(*MIDDLE, 20.0, 60.0)], robots=2, count=2, **CORRIDOR), 400.0)
@@ -308,6 +360,25 @@ def test_switches_off_run_exactly_as_before(faults):
     assert digest(off) == digest(plain)
     assert not events(off, *RETREAT_CODES)
     assert "retreats" not in off.core.traffic.metrics
+
+
+BASE_DIGESTS = {  # 4a46878(이 기능 전)에서 같은 도우미로 잰 값
+    "none": "0ddd4c4cfbc66ee5", "middle": "989bb439a631ebc3", "no_fork": "39b8fe2815672dc7",
+}
+
+
+@pytest.mark.parametrize("name,faults", [("none", []), ("middle", [obj(*MIDDLE, 0.0, 65.0)]),
+                                         ("no_fork", [obj(*NO_FORK, 0.0, 300.0)])])
+def test_switches_off_match_the_commit_before_the_feature(name, faults):
+    assert digest(run(arena(faults, robots=2, count=2), 200.0))[:16] == BASE_DIGESTS[name]
+
+
+def test_against_finds_a_free_way_backwards_along_a_one_way_line():
+    tr = arena([]).core.traffic
+    pts = tr.floor.fixed_lines["outbound_out"].points
+    a, b = max(zip(pts, pts[1:], strict=False), key=lambda ab: math.dist(*ab))  # 가장 긴 구간
+    assert "outbound_out" in tr._against(Route([b, a]))[0]
+    assert "outbound_out" not in tr._against(Route([a, b]))[0]
 
 
 def test_switches_off_the_lane_map_runs_as_before():
