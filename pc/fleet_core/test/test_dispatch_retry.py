@@ -9,8 +9,8 @@ from core_helpers import cmds, codes
 from fleet_core.common.commands import DispatchCmd, DispatchResult, OrderRecord, RobotFaultCmd
 from fleet_core.common.params import load_params
 from fleet_core.manager import FleetManager
-from fleet_core.orders.orchestrator import OrderOrchestrator
 from grid_map import grid_site
+from orders_and_arm import OrdersAndArm
 from test_auto_isolation import drive, report
 
 O1 = OrderRecord("O-001", {"A": 1, "C": 1})
@@ -19,7 +19,7 @@ PARAMS = replace(load_params(), dispatch_retry_wait_s=2.0, dispatch_retry_limit=
 
 def make(orders=(O1,)):
     now = [0.0]
-    core = OrderOrchestrator(grid_site().stations, PARAMS, ["r1", "r2"], lambda: now[0])
+    core = OrdersAndArm(grid_site().stations, PARAMS, ["r1", "r2"], lambda: now[0])
     core.on_order_board("RUN", list(orders))
     core.take_output()
     return core, now

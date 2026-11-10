@@ -517,7 +517,7 @@ def test_a_stop_answered_with_the_status_alone_is_no_failed_attempt(graph):
     assert wait_for(lambda: graph.canceled_fills), "the cancel never reached the server"
     orchestrator = graph.fms.core.orchestrator
     assert wait_for(lambda: orchestrator.robot_view("pinky1")["placed"]), "no result came in"
-    assert orchestrator.robot_view("pinky1")["attempts"] == 0
+    assert graph.fms.core.arm.attempts("pinky1") == 0
 
 
 def events_of(world, code):

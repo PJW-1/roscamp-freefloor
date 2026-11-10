@@ -178,7 +178,8 @@ def test_an_exit_line_of_no_length_counts_the_whole_leave_time(monkeypatch):
 def test_the_station_work_left_reads_the_tick_time_not_the_live_clock(monkeypatch):
     """교통과 같은 굳힌 시각: 기록을 다시 돌려도 같은 값."""
     core, now, at = _floor_at({"a": (1.05, 1.55)})
-    monkeypatch.setattr(core.orchestrator, "station_job", lambda robot: (FILL, 2, 10.0))
+    monkeypatch.setattr(core.orchestrator, "station_job", lambda robot: (FILL, 2))
+    monkeypatch.setattr(core.arm, "sent_at", lambda robot: 10.0)
     at(12.0)
     p = core.params
     want = p.eta_fill_base_s + 2 * p.eta_fill_s_per_item - 2.0

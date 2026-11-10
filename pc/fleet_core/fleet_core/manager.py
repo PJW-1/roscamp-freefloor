@@ -1,4 +1,6 @@
-"""교통과 주문 코어를 직접 호출로 잇는다. 둘 사이 명령은 밖에 안 나가고 나머지는 tick()으로 나간다.
+"""주문, 교통, 팔 작업 코어를 직접 호출로 잇는다. 셋 사이 명령은 밖에 안 나가고 나머지는 tick()으로 나간다.
+
+주문이 위에서 정하고 교통(로봇 이동)과 팔 작업(fill, swap)에 요청한다. 교통과 팔은 서로 모른다.
 
 배차 API 밖으로 넘기는 것은 둘: run mode(STOP은 주문 없이 달리는 로봇도 세움)와 운영자의 로봇 제거.
 외부 호출은 모두 _input을 거친다. 호출 동안 시각을 하나로 고정하고, 기록 중이면 남겨
@@ -13,7 +15,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, is_dataclass
 
+from fleet_core.arm.jobs import ArmJobs
 from fleet_core.common.commands import (
+    ARM_COMMANDS,
+    ARM_REPORTS,
+    FILL,
+    SWAP,
     AssignmentView,
     CancelDispatchCmd,
     DispatchCmd,
@@ -36,7 +43,7 @@ from fleet_core.common.validate import (
     run_mode_problem,
     text,
 )
-from fleet_core.orders.orchestrator import FILL, FILLING, SWAP, SWAPPING, OrderOrchestrator
+from fleet_core.orders.orchestrator import FILLING, SWAPPING, OrderOrchestrator
 from fleet_core.orders.validate import orders_problem, reinstate_problem
 from fleet_core.traffic.mission import (
     AT_STATION,
@@ -77,8 +84,8 @@ class FleetManager:
         self._goal_seq = 0
         self.traffic = build_traffic(site, params, robots, self._frozen, self._next_goal_id,
                                      floor)
-        self.orchestrator = OrderOrchestrator(site.stations, params, robots, self._frozen,
-                                             self._next_goal_id)
+        self.orchestrator = OrderOrchestrator(site.stations, params, robots, self._frozen)
+        self.arm = ArmJobs(site.stations, params, robots, self._frozen, self._next_goal_id)
         self._work = next(s.id for s in site.stations.values() if s.action == FILL)
         if hasattr(self.traffic, "station_left"):
             self.traffic.station_left = self.station_left_s  # 자유바닥 ETA
@@ -95,7 +102,8 @@ class FleetManager:
         job = self.orchestrator.station_job(robot)
         if job is None:
             return None
-        kind, items, sent = job
+        kind, items = job
+        sent = self.arm.sent_at(robot)
         p = self.params
         total = (p.eta_fill_base_s + items * p.eta_fill_s_per_item if kind == FILL
                  else p.eta_swap_s)
@@ -166,6 +174,7 @@ class FleetManager:
                                     f"run_mode {text(run_mode)} taken, orders kept as they were"):
             self._board = list(orders)
         self.traffic.on_run_mode(run_mode)
+        self.arm.on_run_mode(run_mode)
         self.orchestrator.on_order_board(run_mode, self._board)
         self._pump()
 
@@ -205,12 +214,12 @@ class FleetManager:
 
     def on_fill_result(self, goal_id, success, placed, missing, reason="") -> None:
         self._input("on_fill_result", goal_id, success, placed, missing, reason)
-        self.orchestrator.on_fill_result(goal_id, success, placed, missing, reason)
+        self.arm.on_fill_result(goal_id, success, placed, missing, reason)
         self._pump()
 
     def on_swap_result(self, goal_id, success, took_full, put_empty_done, reason="") -> None:
         self._input("on_swap_result", goal_id, success, took_full, put_empty_done, reason)
-        self.orchestrator.on_swap_result(goal_id, success, took_full, put_empty_done, reason)
+        self.arm.on_swap_result(goal_id, success, took_full, put_empty_done, reason)
         self._pump()
 
     def confirm_clear(self, robot, zone_ids, note="") -> list[str] | None:
@@ -254,11 +263,11 @@ class FleetManager:
 
     def tick(self) -> list:
         self._input("tick")
-        traffic, orchestrator = self.traffic, self.orchestrator
+        traffic = self.traffic
         now = self._time
         everyone_here = traffic.tick_begin(now)
         self._pump()
-        orchestrator.check_arm_timeouts(now)
+        self.arm.check_timeouts(now)
         self._pump()
         stopped = traffic.tick_progress(now)  # robots of a wait cycle stand still (H1)
         self._pump()
@@ -330,7 +339,7 @@ class FleetManager:
             "waypoint": t["waypoint"],
             "destination": t["destination"],
             "goal_id": t["goal_id"],
-            "attempts": t["attempts"] + o["attempts"],
+            "attempts": t["attempts"] + self.arm.attempts(robot),
             "blocked_lane": t["blocked_lane"],
         }
 
@@ -400,16 +409,29 @@ class FleetManager:
         self._pump()
 
     def _pump(self) -> None:
-        """두 코어 모두 보낼 명령이 없을 때까지 내부 명령을 넘긴다."""
+        """세 코어 모두 보낼 명령이 없을 때까지 내부 명령을 넘긴다."""
         while True:
-            items = self.orchestrator.take_output() + self.traffic.take_output()
+            items = (self.arm.take_output() + self.orchestrator.take_output()
+                     + self.traffic.take_output())
             if not items:
                 return
             for item in items:
                 self._route(item)
 
     def _route(self, item) -> None:
-        if isinstance(item, DispatchCmd):
+        if isinstance(item, ARM_COMMANDS):
+            # Orders and arm answer each other in place, before the next item: what comes out
+            # keeps the order it had when one core did both.
+            self._note("inside", item)
+            self.arm.on_command(item)
+            for answer in self.arm.take_output():
+                self._route(answer)
+        elif isinstance(item, ARM_REPORTS):
+            self._note("inside", item)
+            self.orchestrator.on_arm_report(item)
+            for answer in self.orchestrator.take_output():
+                self._route(answer)
+        elif isinstance(item, DispatchCmd):
             self._note("inside", item)
             self.traffic.on_dispatch(item.goal_id, item.station_id, item.robot_id)
         elif isinstance(item, CancelDispatchCmd):

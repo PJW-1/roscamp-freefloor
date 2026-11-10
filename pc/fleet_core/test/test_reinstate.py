@@ -100,7 +100,7 @@ def test_the_orders_side_takes_the_basket_given_with_no_order_and_no_attempts():
     core.reinstate("pinky2", "NONE", "tray empty")
     view = core.orchestrator.robot_view("pinky2")
     assert view["basket"] == "NONE" and view["order"] is None
-    assert view["attempts"] == 0 and view["stage"] == ""
+    assert core.arm.attempts("pinky2") == 0 and view["stage"] == ""
 
 
 def test_the_others_keep_working_before_the_robot_reports():
@@ -303,7 +303,7 @@ def test_a_late_arm_result_of_the_cleared_job_does_not_count_for_the_same_order_
     core, _ = make({"pinky1": "P-6"})
     core.on_order_board("RUN", [O1])
     out = drive(core, ["pinky1"], lambda: core.orchestrator.robot_view("pinky1")["stage"]
-                == "FILLING" and core.orchestrator._robots["pinky1"].arm is not None)
+                == "FILLING" and core.arm.sent_at("pinky1") is not None)
     old_fill = cmds(out, "FillCmd")[-1]
     core.confirm_clear("pinky1", core.zones.held_by("pinky1"), "lifted")
     core.tick()
@@ -321,7 +321,7 @@ def test_a_late_result_of_a_job_given_up_before_the_clear_does_not_count_again()
     """ARM_NO_RESULT로 포기한 작업은 해제 전부터 잃은 작업이다(리뷰 2번)."""
     core, now = make({"pinky1": "P-6"})
     core.on_order_board("RUN", [O1])
-    out = drive(core, ["pinky1"], lambda: core.orchestrator._robots["pinky1"].arm is not None)
+    out = drive(core, ["pinky1"], lambda: core.arm.sent_at("pinky1") is not None)
     old_fill = cmds(out + core.tick(), "FillCmd")[-1]
     now[0] += core.params.fill_timeout_s + 1.0
     core.tick()

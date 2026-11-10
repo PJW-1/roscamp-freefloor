@@ -6,10 +6,10 @@ from core_helpers import cmds, codes
 from fleet_core.common.commands import DispatchCmd, OrderRecord, RobotIsolated
 from fleet_core.common.params import load_params
 from fleet_core.manager import FleetManager
-from fleet_core.orders.orchestrator import OrderOrchestrator
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.lane_map import load_lane_map
 from grid_map import grid_site
+from orders_and_arm import OrdersAndArm
 from sim_world import SimWorld
 
 O1 = OrderRecord("O-001", {"A": 1, "C": 1})
@@ -94,7 +94,7 @@ def test_a_recovery_conflict_isolates_and_fails_the_named_dispatch():
 
 def orchestrator(orders=(O1, O2)):
     now = [0.0]
-    core = OrderOrchestrator(grid_site().stations, load_params(), ["r1", "r2"], lambda: now[0])
+    core = OrdersAndArm(grid_site().stations, load_params(), ["r1", "r2"], lambda: now[0])
     core.on_order_board("RUN", list(orders))
     core.take_output()
     return core, now

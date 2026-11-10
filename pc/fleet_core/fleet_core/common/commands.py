@@ -142,6 +142,119 @@ class RobotFaultCmd:
     reason: str
 
 
+# ---- inside the FMS: orders -> arm -------------------------------------------------------------
+
+# The station action written in the map, and the kind of an arm job
+FILL = "fill"
+SWAP = "swap"
+
+
+@dataclass(frozen=True)
+class ArmFillCmd:
+    """One attempt to fill this robot's basket. The arm side sends a goal or answers ArmDeclined."""
+
+    robot: str
+    station_id: str
+    order_id: str
+    items: dict[str, int]  # only what is not in the basket yet
+
+
+@dataclass(frozen=True)
+class ArmSwapCmd:
+    robot: str
+    station_id: str
+    order_id: str
+    take_full: bool
+    put_empty: bool
+
+
+@dataclass(frozen=True)
+class ArmStopCmd:
+    """Cancel the running goal and wait for its result."""
+
+    robot: str
+
+
+@dataclass(frozen=True)
+class ArmDropCmd:
+    """Cancel the running goal and forget it. order_id and bound come back in ArmLost."""
+
+    robot: str
+    isolated: bool = False
+    order_id: str = ""
+    bound: int = 0
+
+
+@dataclass(frozen=True)
+class ArmFailedCmd:
+    """The result just given was a failed attempt: count it; past the limit, fault the robot."""
+
+    robot: str
+
+
+@dataclass(frozen=True)
+class ArmResetCmd:
+    """This robot's arm work is done: attempts back to 0. With forget, its job record goes too."""
+
+    robot: str
+    forget: bool = False
+
+
+ARM_COMMANDS = (ArmFillCmd, ArmSwapCmd, ArmStopCmd, ArmDropCmd, ArmFailedCmd, ArmResetCmd)
+
+
+# ---- inside the FMS: arm -> orders -------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ArmDeclined:
+    """No goal was sent now (wait after a failure, server still stopping). Ask again."""
+
+    robot: str
+
+
+@dataclass(frozen=True)
+class ArmFillResult:
+    robot: str
+    success: bool
+    placed: dict[str, int]
+
+
+@dataclass(frozen=True)
+class ArmSwapResult:
+    robot: str
+    took_full: bool
+    put_empty_done: bool
+
+
+@dataclass(frozen=True)
+class ArmLost:
+    """A goal with no result: never answered (cleared false) or dropped. A late one may come."""
+
+    robot: str
+    goal_id: int
+    server: str
+    kind: str  # FILL or SWAP
+    cleared: bool = False
+    isolated: bool = False
+    order_id: str | None = None  # as ArmDropCmd gave it; None: the orders take what is bound now
+    bound: int = 0
+
+
+@dataclass(frozen=True)
+class ArmLate:
+    """The result of a goal no robot waits for."""
+
+    goal_id: int
+    kind: str  # FILL or SWAP
+    placed: dict[str, int] | None = None
+    took_full: bool = False
+    put_empty_done: bool = False
+
+
+ARM_REPORTS = (ArmDeclined, ArmFillResult, ArmSwapResult, ArmLost, ArmLate)
+
+
 # ---- inside the FMS: traffic -> orders --------------------------------------------------------
 
 NO_ROBOT = "NO_ROBOT"  # 지금 읽는 피드백 단계는 이것뿐

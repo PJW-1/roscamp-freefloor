@@ -22,6 +22,8 @@ def _package(name, root=PACKAGE):
 
 TRAFFIC = _package("traffic")
 ORDERS = _package("orders")
+ARM = _package("arm")
+ARM_GOAL_NAMES = {"FillCmd", "SwapCmd", "CancelCmd"}  # what only the arm side sends
 ORDER_SIDE_NAMES = {
     "OrderRecord", "FillCmd", "SwapCmd", "ReportOrderCmd", "SHIPPED", "PARTIAL", "HELD",
     "OrderOrchestrator", "FleetManager",
@@ -53,6 +55,10 @@ def _order_side(module):
 
 def _traffic_side(module):
     return module == "traffic" or module.startswith("traffic.")
+
+
+def _arm_side(module):
+    return module == "arm" or module.startswith("arm.")
 
 
 def _tree(module):
@@ -205,3 +211,26 @@ def test_modules_in_a_subpackage_are_found(tmp_path):
         (tmp_path / rel).write_text("", encoding="utf-8")
     assert _package("traffic", tmp_path) == ["traffic", "traffic.sub", "traffic.sub.deep",
                                              "traffic.zones"]
+
+
+# ---- the arm side: asked by the orders through FleetManager, like traffic ---------------------
+
+
+def test_the_arm_package_is_found():
+    assert {"arm", "arm.jobs"} <= set(ARM)
+
+
+def test_the_arm_reaches_neither_the_orders_nor_traffic():
+    reached = _closure(*ARM)
+    assert not {m for m in reached if _order_side(m) or _traffic_side(m)}
+
+
+def test_orders_and_traffic_do_not_import_the_arm():
+    assert not {m for m in _closure(*ORDERS, *TRAFFIC) if _arm_side(m)}
+
+
+def test_orders_send_no_arm_goal_themselves():
+    """The orders ask with ArmFillCmd and ArmSwapCmd; goals and cancels are the arm side's."""
+    for module in ORDERS:
+        assert not _package_imports(module)[1] & ARM_GOAL_NAMES, module
+    assert _package_imports("arm.jobs")[1] >= ARM_GOAL_NAMES

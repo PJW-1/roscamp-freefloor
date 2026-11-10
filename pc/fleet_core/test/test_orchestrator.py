@@ -1,4 +1,4 @@
-"""OrderOrchestrator 단독: 로봇과 팔을 요청할 뿐 레인이나 자세는 모른다."""
+"""OrderOrchestrator와 ArmJobs를 이은 것: 로봇을 요청하고 팔 goal을 낼 뿐 레인이나 자세는 모른다."""
 from core_helpers import cmds, codes
 from fleet_core.common.commands import (
     CancelDispatchCmd,
@@ -8,8 +8,8 @@ from fleet_core.common.commands import (
     RobotFaultCmd,
 )
 from fleet_core.common.params import load_params
-from fleet_core.orders.orchestrator import OrderOrchestrator
 from grid_map import grid_site
+from orders_and_arm import OrdersAndArm
 
 WORK = "WORK"
 OUTBOUND = "OUTBOUND"
@@ -20,7 +20,7 @@ O3 = OrderRecord("O-003", {"D": 2})
 
 def make(orders=(), robots=("r1", "r2"), params=None):
     now = [0.0]
-    core = OrderOrchestrator(grid_site().stations, params or load_params(), list(robots),
+    core = OrdersAndArm(grid_site().stations, params or load_params(), list(robots),
                             lambda: now[0])
     core.on_order_board("RUN", list(orders))
     return core, now

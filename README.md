@@ -23,6 +23,9 @@ flowchart LR
       orch["orchestrator<br/>OrderOrchestrator"]
       ovalid["validate"]
     end
+    subgraph arm["arm"]
+      armjobs["jobs<br/>ArmJobs"]
+    end
     subgraph traffic["traffic"]
       ctrl["controller<br/>TrafficController"]
       blocking["blocking<br/>막힘"]
@@ -55,9 +58,10 @@ flowchart LR
   end
   fmnode --> adapters & tracker & manager & lanemap & contract & params & commands
   adapters --> commands
-  manager --> orch & ctrl & mission & commands & cvalid & ovalid
+  manager --> orch & armjobs & ctrl & mission & commands & cvalid & ovalid
   ovalid --> cvalid
   orch --> commands
+  armjobs --> commands
   ctrl --> mission & recovery & zones & selector & commands & blocking & detour & isolation & offlane & lanepath & relfloor
   offlane --> mission
   lanepath --> mission
@@ -71,7 +75,7 @@ flowchart LR
   simcommon --> scenario & contract & lanemap
 ```
 
-`orders`와 `traffic`은 서로 import하지 않고, `manager`가 `common/commands.py`의 명령으로 둘 사이를 잇습니다. `pc/fleet_core/test/test_fms_boundary.py`가 이 경계를 검사합니다. `traffic`은 주문과 바구니를 모릅니다.
+`orders`, `arm`, `traffic`은 서로 import하지 않고, `manager`가 `common/commands.py`의 명령으로 셋 사이를 잇습니다. `orders`가 위에서 정해 `traffic`(로봇 이동)과 `arm`(fill, swap goal)에 요청합니다. `pc/fleet_core/test/test_fms_boundary.py`가 이 경계를 검사합니다. `traffic`과 `arm`은 주문과 바구니를 모릅니다.
 
 ### ROS 노드 지도 (컴퓨터별)
 
@@ -121,7 +125,7 @@ flowchart TB
 | 폴더 | 내용 | 상태 |
 |---|---|---|
 | `interfaces/fleet_interfaces` | 메시지, 액션, 서비스, `contract.yaml`(이름, 타입, QoS의 단일 원본) | 초안 |
-| `pc/fleet_core` | 관제 판단 로직. ROS를 쓰지 않는 순수 Python과 pytest. `manager.py`(`FleetManager`), `orders/`(주문), `traffic/`(교통), `common/`(명령, 파라미터, 계약), `data/`(기본 지도와 파라미터) | 동작 |
+| `pc/fleet_core` | 관제 판단 로직. ROS를 쓰지 않는 순수 Python과 pytest. `manager.py`(`FleetManager`), `orders/`(주문), `arm/`(팔 작업), `traffic/`(교통), `common/`(명령, 파라미터, 계약), `data/`(기본 지도와 파라미터) | 동작 |
 | `pc/fleet_manager` | `fleet_core`를 ROS에 연결하는 노드. 실행 파일 `fleet_manager_node`, 노드 이름 `fleet_manager` | 동작 |
 | `sim/fake_robots`, `sim/fake_robots/scenarios` | 가짜 핑키, 작업공간 서버, 출고 팔, 비전, 중앙, 시계, 심판 노드와 시나리오 | 동작 |
 | `sim/fake_robots/maps` | 비교용 지도: 일방통행 2개(`oneway_loop`, `oneway_shortcut`), 우회 시험용 특징 지도(`feature_map`), 11-06 변형 2개(`two_lane_avenue`, `two_lane_segments`). 시나리오는 `map:`으로 고른다. 기본 지도는 `pc/fleet_core/fleet_core/data/lane_map.yaml` | 동작 |

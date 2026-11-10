@@ -49,9 +49,10 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | 화면(고객, 관리자) | 없음. central과 HTTP로 잇는 것은 제안(v17) | 관제 PC(제안) | 없음 | 주문과 조작 입력, 상태 표시 | central |
 | central | `pc/central`은 빈 패키지. 시험: `fake_central_node` | 관제 PC | 주문, 재고 기록, 이력. DB는 제안이고 central만 쓴다 | `/central/submit_order`, `/central/set_run_mode`, `/central/report_order` 서비스. `/central/orders`, `/central/events` 발행 | 계획: `/fleet/confirm_clear` 호출, `/fleet/robots`, `/fleet/assignments`, `/fleet/zones` 구독. `fake_central_node`는 이 중 아무것도 하지 않는다(11절) |
 | FMS (`fleet_manager`) | `pc/fleet_manager`의 노드 1개와 `pc/fleet_core` | 관제 PC | 노드 자체가 가진 것은 진행 중인 목표 핸들, 결과를 기다리는 취소, 답을 받지 못한 보고, 액션 서버를 찾은 로봇 목록, 마지막으로 낸 `/fleet/zones`와 `/fleet/assignments`, 시작 침묵 기한이다. 나머지는 아래 두 모듈. 프로세스가 죽으면 전부 사라진다(7절) | `/fleet/robots`, `/fleet/assignments`, `/fleet/zones`, `/fleet/heartbeat`, `/central/events` 발행. `/fleet/confirm_clear`, `/fleet/reinstate`(제안) 서비스 | `/{pinky}/move_to`, `/{pinky}/dock`, `/workcell/fill_basket`, `/arm3/swap_basket` 액션. `/central/report_order` 서비스. `/central/orders`, `/{pinky}/state` 구독 |
-| `orders` | 모듈 `fleet_core/orders/orchestrator.py`(`OrderOrchestrator`) | FMS 안 | 대기 주문, 로봇별 묶인 주문과 담은 것·결품, `basket[robot]`, 팔 작업과 재시도 횟수, `ARM_NO_RESULT`를 낸 뒤 늦은 결과를 기다리는 팔 작업 | `on_order_board`, `on_fill_result`, `on_swap_result`, `on_dispatch_feedback`, `on_dispatch_result`, `on_robot_removed` | 명령을 내놓는다: `DispatchCmd`, `CancelDispatchCmd`, `ReleaseCmd`, `RobotFaultCmd`, `FillCmd`, `SwapCmd`, `ReportOrderCmd` |
+| `orders` | 모듈 `fleet_core/orders/orchestrator.py`(`OrderOrchestrator`) | FMS 안 | 대기 주문, 로봇별 묶인 주문과 담은 것·결품, `basket[robot]`, 팔 일을 요청해 두었는지, 결과 없이 끝나 늦은 결과를 기다리는 팔 작업 | `on_order_board`, `on_arm_report`, `on_dispatch_feedback`, `on_dispatch_result`, `on_robot_removed` | 명령을 내놓는다: `DispatchCmd`, `CancelDispatchCmd`, `ReleaseCmd`, `RobotFaultCmd`, `ReportOrderCmd`, 팔 쪽으로 `ArmFillCmd`, `ArmSwapCmd`, `ArmStopCmd`, `ArmDropCmd`, `ArmFailedCmd`, `ArmResetCmd` |
+| `arm` (2026-11-10 `orders`에서 분리) | 모듈 `fleet_core/arm/jobs.py`(`ArmJobs`) | FMS 안 | 로봇별 돌고 있는 팔 goal, 시도 수, 실패 뒤 대기 기한, 버린 작업을 서버가 멈추는 기한. 주문과 바구니는 모른다 | `on_command`(주문 쪽 요청), `on_fill_result`, `on_swap_result`, `on_run_mode`, `check_timeouts` | 명령을 내놓는다: `FillCmd`, `SwapCmd`, `CancelCmd`, `RobotFaultCmd`, 주문 쪽으로 `ArmDeclined`, `ArmFillResult`, `ArmSwapResult`, `ArmLost`, `ArmLate` |
 | `traffic` | 모듈 `fleet_core/traffic/`: `controller.py`(`TrafficController`), `mission.py`(로봇별 기록), `recovery.py`(통신 두절, 복구, 교착 후퇴, confirm_clear), `blocking.py`(막힘), `detour.py`(우회), `isolation.py`(자동 격리), `off_lane.py`(레인 이탈), `lane_path.py`(이동 목표 묶음과 레인 폴리라인), `release_floor.py`(해제 보강), `zones.py`(`ZoneLocks`), `selector.py`(`RobotSelector`), `deadlock.py`, `lane_map.py`(`LaneMap`) | FMS 안 | 로봇별 임무 단계, 경로, 진행 중 목표, 고장. 구역 잠금과 대기열. 열린 호출. 주문과 바구니는 모른다 | `on_robot_state`, `on_move_result`, `on_goal_rejected`, `on_dock_result`, `on_dispatch`, `on_dispatch_cancel`, `on_release`, `on_run_mode`, `on_robot_fault`, `confirm_clear` | 명령을 내놓는다: `MoveCmd`, `DockCmd`, `CancelCmd`, `DispatchFeedback`, `DispatchResult` |
-| `FleetManager` | 클래스 `fleet_core/manager.py` | FMS 안 | 목표 번호, 호출 하나 동안 고정된 시각, 기록 대상 | 노드가 부르는 입구. `tick()`, 뷰, `record_to` | 두 모듈 |
+| `FleetManager` | 클래스 `fleet_core/manager.py` | FMS 안 | 목표 번호, 호출 하나 동안 고정된 시각, 기록 대상 | 노드가 부르는 입구. `tick()`, 뷰, `record_to` | 세 모듈 |
 | 핑키 FSM | `pinky/pinky_fsm`은 빈 패키지. 시험: `fake_pinky_node` | 핑키 Pi 4B | 진행 중인 목표, FSM 상태, 위치 | `/{pinky}/move_to`, `/{pinky}/dock` 액션. `/{pinky}/state` 발행 | `/{pinky}/navigate_to_pose`(Nav2), pinky_dock. `/fleet/heartbeat` 구독 |
 | 핑키 내부 | `pinky_dock`은 빈 패키지, `pinky_nav_config`는 자리표시 launch뿐이다. Nav2 + AMCL, `pinky_bringup`은 제조사 패키지 | 핑키 Pi 4B | 지도 위 위치 | `/{pinky}/navigate_to_pose`, `/odom`, `/scan` | `/cmd_vel` |
 | workcell | 없음. 시험: `fake_workcell_node`. 구조는 팔 담당이 정한다. v17은 FMS의 arm 모듈과 `arm_planner`(임시 이름, 제안)로 그렸다 | 팔 PC 중 한 곳 | 두 팔의 작업과 재고 영역 | `/workcell/fill_basket` 액션 | arm_control |
@@ -137,9 +138,9 @@ FMS는 컴포넌트 1개 = 프로세스 1개 = 노드 1개(`fleet_manager`, 실�
 | `ROBOT_NOT_REPORTING` | ERROR | traffic | `startup_wait_s`가 지나도 위치를 보고하고 멈춰 서지 않은 로봇이 있다(`PLACEMENT_CONFLICT`로 거부된 로봇은 빼고 센다). 전원이 기다린다 |
 | `ORDER_BOUND` | INFO | orchestrator | 주문을 로봇에 묶었다. detail은 주문 ID |
 | `ORDER_REQUEUED` | INFO | orchestrator | 격리된 로봇(사람 없이 바로), 또는 격리 없이 치운 로봇의 주문을 대기 맨 앞으로 되돌렸다. detail은 주문 ID로 시작하고 바구니에 담겨 있던 품목을 적는다. 격리 때는 `robot isolated: <이유>`가 붙는다 |
-| `FILL_RETRY`, `SWAP_RETRY` | WARN | orchestrator | 팔 작업이 실패해 다시 보낸다 |
-| `FILL_FAILED`, `SWAP_FAILED` | ERROR | orchestrator | 재시도를 다 썼거나 담은 일부를 내보낼 수 없다 |
-| `ARM_NO_RESULT` | ERROR | orchestrator | 취소한 팔 작업의 결과가 끝내 안 왔다. 바구니 내용을 알 수 없다 |
+| `FILL_RETRY`, `SWAP_RETRY` | WARN | arm | 팔 작업이 실패해 다시 보낸다 |
+| `FILL_FAILED`, `SWAP_FAILED` | ERROR | arm, orchestrator | 재시도를 다 썼거나(arm) 담은 일부를 내보낼 수 없다(orchestrator) |
+| `ARM_NO_RESULT` | ERROR | arm | 취소한 팔 작업의 결과가 끝내 안 왔다. 바구니 내용을 알 수 없다 |
 | `ARM_LATE_RESULT` | WARN | orchestrator | `ARM_NO_RESULT`를 낸 작업, 또는 로봇을 치울 때 취소한 작업(무엇을 했다고 할 때만)의 결과가 늦게 왔다. detail에 보고 내용을 적는다. 로봇을 치운 뒤라면 주문이 두 번 담기거나 출고될 수 있다(5-1절) |
 | `CANCEL_UNCONFIRMED` | WARN | `fleet_manager` 노드 | 취소를 요청하고 `cancel_warn_after` × `cancel_retry_s`가 지나도 목표의 결과가 없다. 서버가 목표를 아직 수락하지 않아 취소를 보내지 못한 경우도 포함한다. source는 로봇이나 서버, detail에 목표 ID. 목표당 한 번 낸다. 취소는 결과가 올 때까지 계속 보내되, 결과를 잃은 이동·도킹 취소(결과 future 오류)는 이 경고 다음 재시도에서 그만둔다 |
 | `ORDER_REPORT_REFUSED` | ERROR | `fleet_manager` 노드 | central이 주문 보고에 `accepted=false`로 답했다. detail은 주문 ID로 시작한다. 다시 보내지 않는다 |
@@ -240,11 +241,13 @@ FMS 내부 호출 (파이썬, `fleet_core` 패키지):
 - `on_release(robot)`: orchestrator → traffic. 스테이션에서 할 일이 끝난 로봇을 놓아준다.
 - `DispatchFeedback(goal_id, robot_id, phase)`, `DispatchResult(goal_id, success, robot_id, reason, error_x_cm, error_y_cm, error_yaw_deg)`: traffic → orchestrator. 반대 방향 보고. `phase`는 `NO_ROBOT` 하나뿐이다. 합치기 전 판의 CALLED, EN_ROUTE, QUEUED, DOCKING은 읽는 곳이 없어 만들지 않았다. 결과가 success면 그 로봇은 도크에 서서(AT_STATION) `on_dispatch(robot_id 지정)`나 `on_release`를 기다린다. 실패 이유 `reason`: `NOT_AVAILABLE`(쓸 수 없는 로봇), `BUSY`(이미 다른 요청이 있음), `CANCELED`, `ROBOT_REMOVED`, `REJECTED`(이동이나 도킹 목표 거절이 재시도 한도까지 이어짐), `DOCK_FAILED`(도킹 실패가 재시도 한도까지 이어짐). 그 밖에는 고정된 값이 아니다. 이동 실패가 재시도 한도에 닿으면 이동 결과의 `reason`을, `on_robot_fault`로 ERROR가 되면 그때 받은 이유를 그대로 넣는다.
 
-두 모듈 사이는 위가 전부이고, `traffic`은 `orders`를 import하지 않으며 주문과 바구니 타입을 쓰지 않는다(경계 시험 `test_fms_boundary.py`). 다만 다음 세 가지는 이 호출로 표현할 수 없어 둘을 묶는 `FleetManager`가 따로 전달한다. 지시서의 "네 호출"에 없는 항목이므로 팀에 알린다.
+`orders`와 `arm` 사이(2026-11-10 분리)도 같은 방식이다. `orders`가 시도 한 번씩 `ArmFillCmd`, `ArmSwapCmd`로 요청하면 `arm`이 goal을 보내거나 `ArmDeclined`로 답하고, 결과는 `ArmFillResult`, `ArmSwapResult`로 돌아온다. 그 시도가 실패였는지는 바구니를 아는 `orders`가 정해 `ArmFailedCmd`로 알리고, 시도 수와 한도, 실패 뒤 대기, 시간 초과와 취소는 `arm`이 맡는다. `FleetManager`는 이 둘의 명령을 받은 자리에서 바로 전달해, 나가는 명령의 순서가 분리 전과 같다.
+
+`orders`와 `traffic` 사이는 위가 전부이고, `traffic`은 `orders`를 import하지 않으며 주문과 바구니 타입을 쓰지 않는다(경계 시험 `test_fms_boundary.py`). 다만 다음 세 가지는 이 호출로 표현할 수 없어 둘을 묶는 `FleetManager`가 따로 전달한다. 지시서의 "네 호출"에 없는 항목이므로 팀에 알린다.
 - `on_run_mode(mode)`: central의 STOP/PAUSE/RUN을 두 모듈에 각각 넘긴다. 주문과 상관없이 달리던 로봇도 멈춰야 하므로 dispatch 취소로는 안 된다.
 - `on_robot_removed(robot)`: `confirm_clear`가 받아들여지면 orchestrator에 알린다. 담기나 교환 중이면 돌려줄 dispatch가 이미 끝나 있기 때문이다.
 - `reinstate(robot)`와 `on_robot_reinstated(robot, basket)`: `/fleet/reinstate`가 받아들여지면 traffic과 orchestrator에 각각 알린다(11-06 6번). 바구니는 orders만 안다.
-- `on_robot_fault(robot, reason)`: 팔 재시도가 소진되어 orchestrator가 ERROR로 판단하면 traffic에 알린다. 통신 두절 판단과 호출 후보, "남은 로봇 없음" 판단이 이 상태를 본다.
+- `on_robot_fault(robot, reason)`: 팔 재시도가 소진되거나 결과가 끝내 없으면 arm이, 담은 일부를 내보낼 수 없거나 출고 호출이 거듭 실패하면 orchestrator가 traffic에 알린다. 통신 두절 판단과 호출 후보, "남은 로봇 없음" 판단이 이 상태를 본다.
 
 바깥 인터페이스 (`contract.yaml` 0.3-draft와 같다. 11-05 구조 변경으로 기존 항목의 이름, 타입, QoS는 바뀌지 않았고, 더한 것은 11-05 지시서 4, 5번의 `/fleet/robots`와 heartbeat 둘이다. 11-06에 heartbeat 토픽만 `/fms/heartbeat`에서 `/fleet/heartbeat`로 이름이 바뀌었고 필드와 QoS는 같다):
 - `/central/submit_order` SubmitOrder 서비스: UI → central. 재고 기록에 없거나 용량 초과면 거절

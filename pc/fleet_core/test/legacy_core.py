@@ -5,7 +5,8 @@
 """
 from fleet_core.manager import FleetManager
 
-_ORCHESTRATOR_FIELDS = {"basket", "order", "arm", "arm_retry_at", "last_order_id"}
+_ORCHESTRATOR_FIELDS = {"basket", "order", "last_order_id"}
+_ARM_FIELDS = {"arm": "job", "arm_retry_at": "retry_at"}  # old name -> the arm core's name
 
 
 class _Mission:
@@ -21,9 +22,14 @@ class _Mission:
         return self._core.traffic._missions[self.name]
 
     def __getattr__(self, field):
+        if field in _ARM_FIELDS:
+            return getattr(self._core.arm._robots[self.name], _ARM_FIELDS[field])
         return getattr(self._home(field), field)
 
     def __setattr__(self, field, value):
+        if field in _ARM_FIELDS:
+            setattr(self._core.arm._robots[self.name], _ARM_FIELDS[field], value)
+            return
         setattr(self._home(field), field, value)
         if field == "basket" and value == "FULL":
             # 예전에는 바구니가 차면 스스로 나갔다. 지금은 누가 지시해야 한다.
@@ -42,7 +48,7 @@ class FleetCore(FleetManager):
 
     @property
     def _cleared_jobs(self):
-        return self.orchestrator._cleared_jobs
+        return self.arm._cleared_jobs
 
     def _pending(self):
         return self.orchestrator._pending()
@@ -51,5 +57,4 @@ class FleetCore(FleetManager):
         self.traffic._fail(self.traffic._missions[mission.name])
 
     def _arm_goal_allowed(self, mission, server):
-        return self.orchestrator._arm_goal_allowed(
-            self.orchestrator._robots[mission.name], server)
+        return self.arm._goal_allowed(self.arm._robots[mission.name], server)
