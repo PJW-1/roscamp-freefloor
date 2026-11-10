@@ -89,6 +89,9 @@ class FsmParams:
     # 이보다 느리게 시키면 speed_limit으로 줄인다(RPP는 제한을 속도로 쓰므로 빠르게는 안 준다)
     reverse_speed_mps: float = 0.05
     backup_result_grace_s: float = 2.0  # time allowance 뒤에도 결과가 없으면 멈추고 이어 간다
+    # 물러나기가 취소한 FollowPath의 결과를 이만큼만 기다린다. 결과를 잃어도 서 있으면 물러난다
+    # (Codex 리뷰 2, 추정)
+    nav_result_grace_s: float = 2.0
     recovery_pass_m: float = 0.05  # 막힌 곳을 이만큼 지나면 복구가 끝난다
     recovery_timeout_s: float = 10.0  # 다시 보낸 뒤 이만큼 못 지나면 다음 시도로 친다
     recovery_reset_m: float = 0.3  # 첫 시도 자리에서 이만큼 벗어나면 시도 수를 지운다
@@ -200,7 +203,9 @@ class PinkyFsm:
         self._nav_running = False
         # 마지막으로 낸 LimitSpeed. 처음에는 모른다: 재시작 전에 건 제한을 첫 tick에 푼다
         self._speed_limit: float | None = None
-        self._nav_live: set[int] = set()  # 결과가 아직 안 온 FollowPath(seq). 물러나기 전에 비운다
+        # 결과가 아직 안 온 FollowPath(seq → 이 시각 뒤에는 잊는다). 물러나기 전에 비운다. 도는
+        # 동안은 끝이 없고(inf), 물러나기가 취소하면 그때부터 nav_result_grace_s다
+        self._nav_live: dict[int, float] = {}
         self._alive = -math.inf  # 마지막 heartbeat나 목표 수락
         self._stopped_since: float | None = None
         self._blocked = False
@@ -297,7 +302,9 @@ class PinkyFsm:
         self._alive = max(self._alive, now)
         # 결과가 안 온 BackUp도 기다린다. 같은 behavior_server라 바로 보내면 앞 후진이 다 서기
         # 전에 새 후진이 이어진다(V2 교차 검수 1)
-        was_driving = self._nav_running or bool(self._nav_live) or self._backup_busy(now)
+        for seq, until in self._nav_live.items():  # 아래 _end_active가 모두 취소한다
+            self._nav_live[seq] = min(until, now + self.p.nav_result_grace_s)
+        was_driving = self._nav_running or self._nav_busy(now) or self._backup_busy(now)
         cmds = self._end_active(CANCELED, stop=True)
         route = None
         if path:
@@ -337,10 +344,17 @@ class PinkyFsm:
         allowance = Polyline(rest).length / speed * 2.0 + 2.0  # BackUp과 같은 여유
         g.seq, g.since, g.allowance_s = self._seq, now, allowance
         self._nav_running = True
-        self._nav_live.add(g.seq)
+        self._nav_live[g.seq] = math.inf
         poses = poses_backing(rest, self.p.path_step_m)
         # 남은 제한(잠금 경계 이동)을 먼저 바꾼다. RPP는 제한을 그대로 속도로 쓴다
         return self._limit_speed() + [SendPath(g.seq, poses, final_goal=True, reverse=True)]
+
+    def _nav_busy(self, now: float) -> bool:
+        """결과가 안 온 FollowPath가 아직 돌 수 있다. 취소한 뒤 여유가 지난 것은 잊는다."""
+        for seq, until in list(self._nav_live.items()):
+            if now >= until:
+                del self._nav_live[seq]
+        return bool(self._nav_live)
 
     def _backup_busy(self, now: float) -> bool:
         """결과가 안 온 BackUp이 아직 움직이고 있을 수 있다. time_allowance(+ 여유)가 지난 것은
@@ -359,7 +373,7 @@ class PinkyFsm:
                    obstacle: Obstacle, error_code: int = 0) -> list:
         """FollowPath 결과. outcome은 succeeded, aborted, canceled, rejected 중 하나.
         error_code는 FollowPath 결과의 것이다(후진 경로 물러나기의 reason에만 쓴다)."""
-        self._nav_live.discard(seq)
+        self._nav_live.pop(seq, None)
         g = self._active
         if isinstance(g, _Retreat):
             if g.route is None or g.seq == 0 or seq != g.seq:
@@ -435,7 +449,7 @@ class PinkyFsm:
         if isinstance(g, _Retreat) and g.seq == 0:
             lin, ang = speed
             stopped = abs(lin) < self.p.stopped_speed_mps and abs(ang) < self.p.stopped_turn_rps
-            if stopped and not self._nav_live and not self._backup_busy(now):
+            if stopped and not self._nav_busy(now) and not self._backup_busy(now):
                 cmds += self._start_retreat(g, now, pose)
             elif now - g.since >= g.allowance_s:
                 cmds += self._end_active(TIMEOUT, stop=True)  # 서지 않는다. 물러나지 않는다
@@ -623,7 +637,7 @@ class PinkyFsm:
         g.nav_running = True
         g.last_send = now
         self._nav_running = True
-        self._nav_live.add(g.seq)
+        self._nav_live[g.seq] = math.inf
         poses = poses_along(g.route.rest(g.s), g.target[2], self.p.path_step_m)
         return [SendPath(g.seq, poses, final_goal=g.final_goal)]
 
