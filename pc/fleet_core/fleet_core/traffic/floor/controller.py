@@ -185,6 +185,9 @@ class FloorController(TrafficController):
         self.station_left = None  # 매니저가 꽂는다: 로봇 -> 스테이션 작업 남은 초 또는 None
         self._phase_at: dict[str, tuple[str, float]] = {}  # 로봇 -> (단계, 들어간 시각)
         self._stand_ban: dict[str, set[str]] = {}  # 접근선 -> 미리 출발한 로봇이 못 서는 칸
+        # 스테이션 도크에 선 로봇의 몸 둘레 칸 (i, j): 지나가는 길이 벽으로 피한다(_route)
+        self._dock_keep = frozenset(c for dock in self.floor.docks.values()
+                                    for c in disk_cells(self.floor, *dock, self._body))
         self._stand: dict[str, deque] = {}  # 로봇 -> 서 있는 동안의 최근 보고 자리(STAND_REPORTS개)
         # 로봇 -> 첫 출발을 기다리기 시작한 시각(다 기다렸으면 None)
         self._unsettled: dict[str, float | None] = {}
@@ -954,14 +957,27 @@ class FloorController(TrafficController):
 
     def _route(self, m: _Mission, start, goal, out_line=None, in_line=None, extra=frozenset(),
                cautious=False):
+        """_route_past에 스테이션 도크의 몸 둘레 칸(_dock_keep)을 벽으로 더해 찾는다: 도크 옆을
+        지나는 길이 도킹한 로봇의 칸에서 몸 하나만큼 떨어진다(그 옆에 서도 돌 수 있고, 도크를 나오는
+        로봇과 서로 기다리지 않는다). 그렇게는 길이 없으면 예전처럼 찾는다."""
+        if self._dock_keep:
+            route = self._route_past(m, start, goal, out_line, in_line, extra, cautious,
+                                     self._dock_keep)
+            if route is not None:
+                return route
+        return self._route_past(m, start, goal, out_line, in_line, extra, cautious)
+
+    def _route_past(self, m: _Mission, start, goal, out_line, in_line, extra, cautious,
+                    keep=frozenset()):
         """서 있는 로봇이 쥔 칸을 피하고 남의 예약에 벌점을 준 경로. 없으면 피하지 않고 다시 찾는다.
+        keep: 늘 벽으로 볼 칸 (i, j). 있으면 마지막의 아무것도 피하지 않는 길은 찾지 않는다.
         지나가는 로봇(가로지르거나 같은 쪽으로 감)의 칸은 곧 빈다: 피하지 않고 예약 벌점만 받는다
         (안전은 칸 잠금이 맡는다). 마주 오는 로봇은 비키지 않으므로 벽으로 피한다.
         마주 오는 로봇을 피할 길이 없으면, 서 있는 로봇을 피하지 않은 길이 아무와도 마주치지 않을 때
         그 길을 쓴다(서 있는 로봇 앞에서 기다리는 편이 한 방향 통로에서 맞서는 것보다 낫다).
         cautious(대기 자리로 가는 길): 급하지 않으니 남이 쥔 칸을 모두 피한다."""
         penalty = self._wait_for(m.name)
-        walls = self._others_cells(m.name) if cautious else self._wall_cells(m.name)
+        walls = (self._others_cells(m.name) if cautious else self._wall_cells(m.name)) | keep
         # 지금 몸이 있는 내 칸만: 멀리 쥔 칸(앞 잠금)은 금지(extra)를 그대로 따른다
         mine = {self.floor.cell_at(c)
                 for c in self.zones.held_set(m.name) & set(self._body_cells(*start))}
@@ -974,12 +990,12 @@ class FloorController(TrafficController):
                                           penalty, mine)
                 if clear is None or self._oncoming(m.name, clear):
                     # 서 있는 로봇을 벽으로 보지 않은 길: 그 앞에서 칸을 기다리게 된다
-                    plain = self._plan_around(start, goal, out_line, in_line, set(), extra,
+                    plain = self._plan_around(start, goal, out_line, in_line, set(keep), extra,
                                               penalty, mine)
                     if plain is not None and not self._oncoming(m.name, plain):
                         clear = plain
                 route = clear or route
-        if route is None and not extra:
+        if route is None and not extra and not keep:
             route = self.planner.leg(start, goal, out_line, in_line)
         return route
 
