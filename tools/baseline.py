@@ -78,7 +78,7 @@ sys.path.insert(0, str(REPO / "pc" / "fleet_core"))
 sys.path.insert(0, str(REPO / "pc" / "fleet_core" / "test"))
 sys.path.insert(0, str(REPO / "sim" / "fake_robots"))
 
-from fake_robots.scenario import parse_scenario  # noqa: E402
+from fake_robots.scenario import expand_random, parse_scenario  # noqa: E402
 from fleet_core.common.commands import SHIPPED, ReportOrderCmd  # noqa: E402
 from fleet_core.common.params import load_params  # noqa: E402
 from fleet_core.traffic.lane_map import load_lane_map  # noqa: E402
@@ -94,7 +94,7 @@ DEFAULT_PLAN = {
 }
 MODES = ("path", "point")
 SEEDS = (1, 2, 3, 4, 5)
-WORLD_FAULTS = ("blocked",)
+WORLD_FAULTS = ("blocked", "low_battery")
 OPERATOR_FAULTS = ("operator_remove", "operator_reinstate")
 MOVED_M = 1e-9  # a step with more displacement than this is a moving step
 ARRIVED_M = 1e-6  # the fake robot snaps onto its goal, so arrival is exact
@@ -290,7 +290,7 @@ def run_one(map_, scenario, seed, mode, timeout_s=None) -> dict:
 
 
 def run_with_world(map_, scenario, seed, mode, timeout_s=None) -> tuple[dict, SimWorld | None]:
-    data = load_scenario(scenario)
+    data = expand_random(load_scenario(scenario), seed)  # random 블록은 이 실행의 seed로
     row = _blank_row(map_name(map_), scenario_name(scenario), mode, seed, data["robots"],
                      len(data["orders"]))
     try:

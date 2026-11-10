@@ -17,6 +17,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Header
 
+from fake_robots.battery import Battery
 from fake_robots.common import (
     TRUTH_TOPIC,
     ScenarioClock,
@@ -80,6 +81,9 @@ class FakePinkyNode(Node):
         self._cfg, self._dock_cfg = cfg, scenario.dock
         self._rng = random.Random(f"{scenario.seed}-{self.robot_id}")
         self._faults = FaultSchedule(scenario.faults, self.robot_id)
+        # 충전 자리는 주차 지점이다. low_battery가 없으면 늘 90
+        self._battery = Battery([f for f in scenario.faults if f.robot == self.robot_id],
+                                [site.waypoint_pose(w) for w in site.parking])
         x, y = site.waypoint_pose(cfg.start)
         self._motion = Motion(x, y)
         self._reports = DelayLine(cfg.report_delay_s)
@@ -346,18 +350,20 @@ class FakePinkyNode(Node):
                 return
             goal = self._active
             busy = goal is not None and not goal.done.is_set()
+            battery = self._battery.percent(t, self._motion.x, self._motion.y,
+                                            not self._motion.moving)
             if t < self._cfg.localizing_s:
                 # 위치를 아직 못 잡았다. 자세는 아무 값이다.
                 self._reports.push(t, RobotState(
-                    robot_id=self.robot_id, pose=Pose2D(), battery=90.0,
+                    robot_id=self.robot_id, pose=Pose2D(), battery=battery,
                     state=RobotState.STATE_LOCALIZING, stamp=self.get_clock().now().to_msg()))
             else:
-                self._push_report(t, goal, busy)
+                self._push_report(t, goal, busy, battery)
             due = self._reports.due(t)
         for msg in due:
             self._state_pub.publish(msg)
 
-    def _push_report(self, t: float, goal: _Goal | None, busy: bool) -> None:
+    def _push_report(self, t: float, goal: _Goal | None, busy: bool, battery: float) -> None:
         if busy and goal.kind == "move" and self._recovery.recovering:
             state = RobotState.STATE_RECOVERING  # 명세 8번: LOCALIZING 다음
         elif self._recovery.blocked:
@@ -370,7 +376,7 @@ class FakePinkyNode(Node):
         x, y = drifted(x, y, self._motion.yaw, self._faults.drift(t))  # 진실 토픽은 그대로
         self._reports.push(t, RobotState(
             robot_id=self.robot_id, pose=Pose2D(x=x, y=y, theta=self._motion.yaw),
-            battery=90.0, state=state,
+            battery=battery, state=state,
             current_goal=goal.target_id if busy else "",  # Pinky contract section 2
             stamp=self.get_clock().now().to_msg()))
 

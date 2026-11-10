@@ -65,3 +65,30 @@ def test_the_three_pinkys_start_on_the_three_parking_spots():
         assert poses[robot][:2] == pytest.approx(site.waypoint_pose(cfg.start))
     data = yaml.safe_load(SCENARIO.read_text(encoding="utf-8"))
     assert data["map"] == "arena_1110"
+
+
+RANDOM = PKG / "scenarios" / "gz_arena_1110_random.yaml"
+
+
+def test_the_random_scenario_is_the_rehearsal_plus_random_orders_and_low_batteries():
+    plain = yaml.safe_load(SCENARIO.read_text(encoding="utf-8"))
+    data = yaml.safe_load(RANDOM.read_text(encoding="utf-8"))
+    assert data.pop("random") == {"order_gap_s": [5, 40],
+                                  "low_battery": {"from_s": 20, "to_s": 150, "charge_s": 30}}
+    assert data["expect"].pop("parked_while_backlog", "missing") is None
+    assert data == plain and data["expect"]["orders_shipped"] == 8
+    text = RANDOM.read_text(encoding="utf-8")
+    assert "scenario:=gz_arena_1110_random" in text
+    assert "scenario_seed:=7" in text and "battery_low_pct:=20" in text
+
+
+def test_the_random_scenario_draws_one_charge_per_pinky_and_new_times_per_seed():
+    lane_map = arena_for(RANDOM, PKG, FAKE).lane_map
+    site, seven = load(RANDOM, lane_map, seed=7)
+    _, eight = load(RANDOM, lane_map, seed=8)
+    assert load(RANDOM, lane_map, seed=7)[1] == seven
+    assert [o.at_s for o in seven.orders] != [o.at_s for o in eight.orders]
+    lows = [f for f in seven.faults if f.type == "low_battery"]
+    assert sorted(f.robot for f in lows) == ["pinky1", "pinky2", "pinky3"]
+    assert all(20 <= f.at_s <= 150 and f.duration_s == 30 for f in lows)
+    assert seven.expect.parked_while_backlog is None and site.parking
