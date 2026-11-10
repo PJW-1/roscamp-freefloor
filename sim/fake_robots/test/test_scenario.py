@@ -692,6 +692,9 @@ def test_an_object_not_on_the_map_is_read(site):
     {"radius_m": 0}, {"radius_m": -0.1}, {"radius_m": "big"},
     {"robot": "pinky1"},
     {"x": 50.0}, {"y": -50.0},
+    {"duration_s": float("nan")}, {"duration_s": float("inf")},
+    {"radius_m": float("nan")}, {"radius_m": float("inf")},
+    {"at_s": float("nan")}, {"at_s": float("inf")}, {"at_s": -1}, {"at_s": "8"},
 ])
 def test_a_bad_object_is_refused(site, change):
     fault = {k: v for k, v in object_fault(**change).items() if v is not None}

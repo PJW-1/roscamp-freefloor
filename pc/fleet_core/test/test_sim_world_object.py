@@ -136,6 +136,16 @@ def test_objects_are_there_only_for_their_time():
     assert world.objects_now() == [(0.5, 0.5, RADIUS)]
 
 
+def test_a_fast_robot_looks_at_least_one_step_ahead():
+    """Codex: a robot that drives farther than OBJECT_LOOK_M in one step must not jump an object."""
+    fast = {"pinky1": {**ONE["pinky1"], "speed_mps": 3.0}}  # 0.3 m per step
+    r0 = SimWorld(robots=fast, orders=[]).virtual["pinky1"]
+    world = SimWorld(robots=fast, orders=[], faults=[an_object(r0.x + 0.4, r0.y, 0.0, 60.0, 0.02)])
+    r = world.virtual["pinky1"]
+    r.goal_id, r.goal_kind, r.target, r.via = 1, "move", (r.x + 1.0, r.y), []
+    assert world._object_ahead(r)
+
+
 def test_an_object_that_appears_on_a_robot_is_not_driven_into():
     """사람이 서 있는 로봇에 바짝 붙어 선다(몸이 겹친다). 로봇은 그쪽으로 더 가지 않는다."""
     r = lane_world([]).virtual["pinky1"]

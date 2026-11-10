@@ -309,13 +309,16 @@ def _object_place(raw: dict, lane_map) -> tuple[float, float, float]:
         raise ScenarioError(f"an object is not tied to a robot: {raw}")
     _positive(raw, "duration_s")  # 물체가 있는 시간
     radius = _positive(raw, "radius_m", OBJECT_RADIUS_M)
-    place = []
-    for key in ("x", "y"):
-        value = raw.get(key)
+    numbers = {}
+    for key in ("at_s", "duration_s", "radius_m", "x", "y"):
+        value = raw.get(key, OBJECT_RADIUS_M if key == "radius_m" else None)
         if (not isinstance(value, (int, float)) or isinstance(value, bool)
                 or not math.isfinite(value)):
-            raise ScenarioError(f"object needs a number {key}, got {value!r}: {raw}")
-        place.append(float(value))
+            raise ScenarioError(f"object needs a finite number {key}, got {value!r}: {raw}")
+        numbers[key] = float(value)
+    if numbers["at_s"] < 0:
+        raise ScenarioError(f"object at_s must not be negative: {raw}")
+    place = [numbers["x"], numbers["y"]]
     x0, y0, x1, y1 = lane_map.bounds()
     m = OBJECT_MAP_MARGIN_M
     if not (x0 - m <= place[0] <= x1 + m and y0 - m <= place[1] <= y1 + m):

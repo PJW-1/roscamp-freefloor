@@ -416,17 +416,19 @@ class SimWorld:
                     r.stopped_at = r.clear_at = None
 
     def _object_ahead(self, r) -> bool:
-        """갈 길 OBJECT_LOOK_M 안에서 몸이 지금 있는 물체에 닿고, 그 길이 물체에 가까워진다.
-        이동 목표가 없으면 보는 방향으로 같은 거리를 본다. 지나온 물체(뒤나 옆)는 막지 않는다."""
+        """갈 길 한 걸음 + OBJECT_LOOK_M 안에서 몸이 지금 있는 물체에 닿고,
+        그 길이 물체에 가까워진다. 이동 목표가 없으면 보는 방향으로 같은 거리를 본다. 지나온
+        물체(뒤나 옆)는 막지 않는다."""
         objects = self.objects_now()
         if not objects:
             return False
+        look = OBJECT_LOOK_M + r.speed * DT  # 다음 걸음이 물체를 건너뛰지 않는다
         if r.goal_kind == "move" and r.target is not None:
             line = [(r.x, r.y), *r.via, r.target]
         else:
-            line = [(r.x, r.y), (r.x + math.cos(r.heading) * OBJECT_LOOK_M,
-                                 r.y + math.sin(r.heading) * OBJECT_LOOK_M)]
-        ahead, left = [line[0]], OBJECT_LOOK_M
+            line = [(r.x, r.y), (r.x + math.cos(r.heading) * look,
+                                 r.y + math.sin(r.heading) * look)]
+        ahead, left = [line[0]], look
         for a, b in zip(line, line[1:], strict=False):
             span = math.dist(a, b)
             if span >= left:
@@ -782,7 +784,8 @@ class SimWorld:
 
     def _start_retreat(self, cmd):
         """달리던 goal을 세우고(CANCELED) 물러난다. path가 비면 보는 방향 반대로 곧게 distance_m,
-        있으면 그 꺾은선을 후진으로 따른다. path가 로봇에서 lane_error_warn_m보다 멀면 FAILED."""
+        있으면 그 꺾은선을 후진으로 따른다. path 첫 점이 로봇에서 lane_error_warn_m보다 멀면
+        FAILED."""
         assert cmd.speed_mps > 0.0, f"{cmd} speed"
         assert 0.0 < cmd.distance_m <= self.params.floor_retreat_max_m + 1e-9, f"{cmd} distance"
         points = [tuple(p[:2]) for p in cmd.path]
@@ -795,7 +798,7 @@ class SimWorld:
             return
         self._preempt(r)
         r.target, r.via = None, []
-        if points and path_gap(r.x, r.y, points) > self.params.lane_error_warn_m:
+        if points and math.dist((r.x, r.y), points[0]) > self.params.lane_error_warn_m:
             self._queued_results.append((r.name, self.core.on_retreat_result,
                                          (r.name, cmd.goal_id, False, "FAILED")))
             return

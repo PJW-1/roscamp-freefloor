@@ -202,6 +202,18 @@ def test_a_path_that_does_not_start_at_the_robot_fails():
     assert (r.x, r.y) == (x, y)
 
 
+def test_a_path_that_only_passes_near_the_robot_fails():
+    """Codex: the first point must be where the robot is, not just some point of the path."""
+    w = world_with(ONE)
+    seen = results(w)
+    r = w.virtual["r1"]
+    x, y = r.x, r.y
+    path = ((x + 0.3, y, 0.0), (x, y, 0.0))  # the robot stands at its end
+    w._apply(RetreatCmd("r1", 913, 0.3, 0.1, path))
+    w.run(1.0)
+    assert seen == [("r1", 913, False, "FAILED")]
+
+
 @pytest.mark.parametrize("cmd", [RetreatCmd("r1", 1, 0.0, 0.1),
                                  RetreatCmd("r1", 1, 0.1, 0.0),
                                  RetreatCmd("r1", 1, 5.0, 0.1)])
