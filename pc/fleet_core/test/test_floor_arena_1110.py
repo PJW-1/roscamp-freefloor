@@ -102,12 +102,36 @@ def test_every_corridor_lets_a_robot_through_with_room_to_spare():
     assert len([x for x in xs if x > OBJECTS[1]]) >= 4
 
 
+def test_no_clear_cell_lies_between_the_two_objects():
+    assert not [c for c in FLOOR.clear if 0.85 < FLOOR.centre(c)[0] < 1.05
+                and 0.45 <= FLOOR.centre(c)[1] <= 0.60]
+
+
+def reaches(start, goal, bodies) -> bool:
+    """A robot body gets from start to goal keeping off robots standing at bodies."""
+    taken = set().union(*(disk_cells(FLOOR, x, y, 2 * BODY) for x, y in bodies))
+    first, last = FLOOR.cell_of(*start), FLOOR.cell_of(*goal)
+    return any(first in p and last in p for p in parts((FLOOR.clear - taken) | {first}))
+
+
+def test_waiting_robots_reach_the_way_into_work_past_a_docked_robot():
+    """The spots lie between the west wall and the WORK line, so a robot docked there stands
+    0.33 m from P-1 and P-2. Each waiting robot still has a way to the start of the WORK line
+    with the other two parked."""
+    spots, dock = dict(FLOOR.parking), FLOOR.docks["WORK"]
+    way_in = FLOOR.fixed_lines["work_in"].start
+    assert reaches(spots["P-2"], way_in, [dock, spots["P-1"], spots["P-3"]])
+    assert reaches(spots["P-1"], way_in, [dock, spots["P-2"], spots["P-3"]])
+    assert reaches(spots["P-3"], way_in, [dock, spots["P-1"], spots["P-2"]])
+
+
 def leg(start, goal, out_line=None, in_line=None):
     return FloorPlanner(FLOOR).leg(start, goal, out_line=out_line, in_line=in_line)
 
 
-def test_the_robots_go_round_the_ring_one_way():
-    """WORK -> OUTBOUND passes south of the objects and OUTBOUND -> WORK north of them."""
+def test_the_planned_ways_between_the_docks_go_round_the_ring_one_way():
+    """With nobody else on the floor, WORK -> OUTBOUND passes south of the objects and
+    OUTBOUND -> WORK north of them. Other robots can send a robot the other way round."""
     to_out = leg(FLOOR.docks["WORK"], FLOOR.docks["OUTBOUND"], "work_out", "outbound_in")
     to_work = leg(FLOOR.docks["OUTBOUND"], FLOOR.docks["WORK"], "outbound_out", "work_in")
     assert to_out and to_work
@@ -146,7 +170,7 @@ def test_parked_robots_leave_the_ring_open():
         assert any(y < 0.40 for y in column), (x, "south")
 
 
-def test_the_rehearsal_runs_three_pinkys_at_fifteen_centimetres_a_second():
+def test_the_scenario_names_three_pinkys_on_the_parking_spots_and_its_run_command():
     assert [spot for spot, _ in FLOOR.parking] == ["P-3", "P-1", "P-2"]
     data = yaml.safe_load(SCENARIO.read_text(encoding="utf-8"))
     assert data["map"] == "arena_1110"

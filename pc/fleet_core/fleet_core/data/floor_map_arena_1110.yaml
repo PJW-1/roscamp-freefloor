@@ -24,7 +24,8 @@ wall_margin_m: 0.01
 docks:
   WORK: [0.45, 0.50]
   OUTBOUND: [1.55, 0.50]
-# Parking spots in driving order (lane map parking): between the end walls and the station
+# Parking spots as the line waiting for WORK (lane map parking; the last is next to the way in
+# and goes first): between the end walls and the station
 # lines, 0.40 m apart and 0.19 m from the wall, off every line and off the ring. Two spots
 # 0.25 m apart beside an object, or spots 0.13 m from the wall, drove over cells they did not
 # hold from the start with 3 cm report noise.

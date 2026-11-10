@@ -47,5 +47,7 @@ two_way:  # 주차 칸은 막다른 곳이라 같은 레인으로 들고 난다
 stations:
   WORK: {dock: W, queue: [[QW, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
   OUTBOUND: {dock: O, queue: [[QO, O]], commit: O, server: arm3, arms: [arm3], action: swap}
-# 주행 순서대로. 대기 로봇은 가장 깊은 빈 칸(P-2, QW 앞)으로 간다.
+# WORK를 기다리는 줄이다: 뒤 칸일수록 WORK 들어가는 곳(QW)에 가깝고 먼저 불린다. 바닥으로는
+# P-3(동쪽 끝) -> P-1 -> P-2(QW 바로 옆) 순이다. 레인 화살표로는 P-1이 WS 뒤에 달려 있어 레인
+# 주행 순서와는 다르다.
 parking: [P-3, P-1, P-2]
