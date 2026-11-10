@@ -12,6 +12,9 @@ narrow_lines에 적은 고정 선은 clear 칸이 없는 좁은 틈(두 팔 사�
 재고, 점마다 그 간격의 반만큼 더 요구한다). 그 선이 지나는 칸 중 clear가 아닌 칸이 line_floor다(틈 안).
 자유 경로는 틈에 들어가지 않는다: 틈에는 그 선으로만 들어가고, 틈 안의 로봇은 선을 따라 앞으로만 나온다.
 좁은 선은 rolling_lines에도 있어야 한다(통째 잠금과 접근선 한 대 규칙은 틈에서 따져 보지 않았다).
+shortcuts(있으면) {지름길: 선}: 같은 도크로 가는 선 대신 탈 수 있는 짧은 선. 시작과 끝이
+그 선과 같고 사이에서 갈라졌다 다시 합친다. 둘 다 rolling_lines다. 로봇은 그 선으로 출발해
+갈림목 앞에서 고른다(관제).
 robot_half_width_m(있으면): 차동구동 로봇은 옆으로 가지 않으니 곧게 달리는 동안은 반폭 + cell_margin_m만
 잠그고, 제자리에서 돌 수 있는 곳(출발점, 끝점, 크게 꺾이는 점 앞)만 반지름 + cell_margin_m 원으로 잠근다.
 """
@@ -45,6 +48,17 @@ class FixedLine:
 
     def length(self) -> float:
         return sum(math.dist(a, b) for a, b in zip(self.points, self.points[1:], strict=False))
+
+
+def _off_line(points, p) -> float:
+    """Distance from p to the polyline points."""
+    best = math.inf
+    for (ax, ay), (bx, by) in zip(points, points[1:], strict=False):
+        dx, dy = bx - ax, by - ay
+        u = ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy or 1.0)
+        u = min(1.0, max(0.0, u))
+        best = min(best, math.dist(p, (ax + u * dx, ay + u * dy)))
+    return best
 
 
 def _read_pgm(path: Path) -> tuple[int, int, bytes]:
@@ -99,6 +113,12 @@ class FloorMap:
                             for name, points in (data.get("fixed_lines") or {}).items()}
         self.rolling_lines = self._read_rolling(data.get("rolling_lines") or [])
         self.narrow_lines = self._read_narrow(data.get("narrow_lines") or [])
+        # shortcut -> the line into the same dock it may be taken instead of, and where along the
+        # shortcut it leaves that line and joins it again (m)
+        shortcuts = data.get("shortcuts")
+        self.shortcuts = self._read_shortcuts({} if shortcuts is None else shortcuts)
+        self.shortcut_parts = {name: self._shortcut_parts(name, base)
+                               for name, base in self.shortcuts.items()}
         self.robot_half_width_m = self._read_half_width(data.get("robot_half_width_m"))
         # beside a straight run only: robot_half_width_m + side_margin_m (default cell_margin_m)
         self.side_margin_m = self._read_side_margin(data.get("side_margin_m", self.cell_margin_m))
@@ -127,6 +147,48 @@ class FloorMap:
         if not set(names) <= self.rolling_lines:
             raise FloorMapError(f"narrow_lines {names!r} must be rolling lines too")
         return frozenset(names)
+
+    def _read_shortcuts(self, value) -> dict:
+        lines = self.fixed_lines
+        if (not isinstance(value, dict)
+                or any(not isinstance(k, str) or not isinstance(v, str) or k not in lines
+                       or v not in lines or k == v or v in value for k, v in value.items())
+                or len(set(value.values())) < len(value)):
+            raise FloorMapError(f"shortcuts {value!r} must map a fixed line to another fixed "
+                                f"line that is no shortcut itself, one shortcut a line")
+        if not set(value) | set(value.values()) <= self.rolling_lines:
+            # taken on the way without stopping: a line locked whole has a turn to wait for
+            raise FloorMapError(f"shortcuts {value!r} must be rolling lines, as their lines")
+        return dict(value)
+
+    def _shortcut_parts(self, name: str, base: str) -> tuple[float, float]:
+        """Along shortcut name: where it leaves line base (the end of the part it runs on base
+        from its start) and where it joins base again (the start of the part it runs on base to
+        its end). It starts and ends where base does and leaves it between."""
+        short, line = self.fixed_lines[name], self.fixed_lines[base]
+        if math.dist(short.start, line.start) > 1e-9 or math.dist(short.end, line.end) > 1e-9:
+            raise FloorMapError(f"shortcut {name} must start and end where {base} does")
+        pts = short.points
+
+        def on_base(k):  # part k of the shortcut runs on base
+            a, b = pts[k], pts[k + 1]
+            steps = max(1, math.ceil(math.dist(a, b) / 0.005))
+            return all(_off_line(line.points, (a[0] + (b[0] - a[0]) * i / steps,
+                                               a[1] + (b[1] - a[1]) * i / steps)) <= 1e-6
+                       for i in range(steps + 1))
+
+        cum = [0.0]
+        for a, b in zip(pts, pts[1:], strict=False):
+            cum.append(cum[-1] + math.dist(a, b))
+        fork = 0
+        while fork < len(pts) - 1 and on_base(fork):
+            fork += 1
+        merge = len(pts) - 1
+        while merge > 0 and on_base(merge - 1):
+            merge -= 1
+        if cum[fork] >= cum[merge] - 1e-9:
+            raise FloorMapError(f"shortcut {name} never leaves {base}")
+        return cum[fork], cum[merge]
 
     def _samples(self, line, step: float) -> list:
         """Points along a fixed line, at most step apart, the ends of every part included."""
