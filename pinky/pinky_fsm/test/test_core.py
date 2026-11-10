@@ -1065,6 +1065,163 @@ def test_a_new_move_during_a_retreat_stops_the_backup():
     assert Finish("r1", False, CANCELED) in cmds and CancelBackUp() in cmds
 
 
+# ---- 물러나기 경로(Retreat.path, 계약 0.9-draft 제안): 지나온 길을 후진으로 되짚는다 ---------
+
+AT_P4 = (*P4, NORTH)  # P3에서 P4로 올라와 북쪽을 본다
+BACK = [P4, P3]  # 지나온 길을 거꾸로 적은 경로
+
+
+def reverse_sends(cmds):
+    return [c for c in cmds if isinstance(c, SendPath) and c.reverse]
+
+
+def test_a_retreat_with_a_path_backs_along_it_instead_of_backing_up_straight():
+    fsm = ready(pose=AT_P4)
+    cmds = fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)
+    assert not backups(cmds)
+    (send,) = reverse_sends(cmds)
+    assert send.final_goal is True
+    assert send.poses[0][:2] == pytest.approx(P4) and send.poses[-1][:2] == pytest.approx(P3)
+    assert all(math.dist(a[:2], b[:2]) <= FsmParams().path_step_m + 1e-9
+               for a, b in pairwise(send.poses))
+    # 로봇은 돌지 않고 뒤로 간다: 모든 점의 방향은 진행 방향(남쪽)의 반대인 북쪽이다.
+    # 끝 점 방향이 진행 방향이면 Nav2 goal checker가 끝에서 돌기를 기다린다
+    assert all(yaw == pytest.approx(NORTH) for _, _, yaw in send.poses)
+    assert fsm.state() == MOVING and fsm.is_running("r1")
+
+
+def test_moves_never_go_to_the_reverse_controller():
+    fsm = ready()
+    assert not reverse_sends(move(fsm, "g1", 0.0))
+    assert all(c.reverse is False for c in sends(move(fsm, "g2", 0.1)))
+
+
+def test_a_path_retreat_follows_from_the_point_nearest_the_robot():
+    fsm = ready(pose=(0.35, 1.90, NORTH))
+    (send,) = reverse_sends(fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK,
+                                        pose=(0.35, 1.90, NORTH)))
+    assert send.poses[0][:2] == pytest.approx((0.35, 1.90))
+
+
+def test_a_path_retreat_stops_the_move_first_and_waits_for_it_to_end():
+    fsm = ready()
+    (send,) = sends(move(fsm, "g1", 0.0, path=(P3, P4, P5)))
+    fsm.heartbeat(1.0)
+    fsm.tick(1.0, AT_P4, DRIVING, no_obstacle)
+    cmds = fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)
+    assert kinds(cmds) == ["Finish", "CancelNav"]
+    fsm.heartbeat(1.2)
+    assert not reverse_sends(fsm.tick(1.2, AT_P4, STILL, no_obstacle)), "FollowPath가 아직 돈다"
+    fsm.nav_result(send.seq, "canceled", 1.25, AT_P4, no_obstacle)
+    fsm.heartbeat(1.3)
+    assert not reverse_sends(fsm.tick(1.3, AT_P4, DRIVING, no_obstacle)), "아직 굴러간다"
+    fsm.heartbeat(1.4)
+    cmds = fsm.tick(1.4, AT_P4, STILL, no_obstacle)
+    (back,) = reverse_sends(cmds)
+    assert back.seq != send.seq and not backups(cmds)
+    assert fsm.is_running("r1")
+
+
+@pytest.mark.parametrize(("outcome", "code", "success", "reason"), [
+    ("succeeded", 0, True, ""),
+    ("aborted", 106, False, "OBSTACLE_BEHIND"),  # FollowPath NO_VALID_CONTROL: RPP 충돌 검사
+    ("aborted", 105, False, "FAILED"),  # FAILED_TO_MAKE_PROGRESS
+    ("canceled", 0, False, "CANCELED"),
+    ("rejected", 0, False, "FAILED"),
+])
+def test_the_path_retreat_result_comes_from_the_follow_path_result(outcome, code, success,
+                                                                    reason):
+    fsm = ready(pose=AT_P4)
+    (send,) = reverse_sends(fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4))
+    cmds = fsm.nav_result(send.seq, outcome, 2.0, (*P3, NORTH), no_obstacle, error_code=code)
+    assert Finish("r1", success, reason) in cmds
+    assert fsm.state() == IDLE and not fsm.is_running("r1")
+
+
+def test_a_backup_result_with_the_number_of_the_path_is_not_its_result():
+    fsm = ready(pose=AT_P4)
+    (send,) = reverse_sends(fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4))
+    assert fsm.backup_result(send.seq, "succeeded", 2.0, AT_P4) == []
+    assert fsm.is_running("r1")
+
+
+def test_a_path_retreat_without_a_result_times_out_and_stops():
+    fsm = ready(pose=AT_P4)
+    fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)
+    allowance = 0.4 / 0.05 * 2.0 + 2.0
+    late = 1.0 + allowance + FsmParams().backup_result_grace_s
+    fsm.heartbeat(late - 0.1)
+    assert Finish("r1", False, TIMEOUT) not in fsm.tick(late - 0.1, AT_P4, STILL, no_obstacle)
+    fsm.heartbeat(late + 0.1)
+    cmds = fsm.tick(late + 0.1, AT_P4, STILL, no_obstacle)
+    assert Finish("r1", False, TIMEOUT) in cmds and CancelNav() in cmds
+
+
+def test_a_canceled_path_retreat_stops_the_follow_path():
+    fsm = ready(pose=AT_P4)
+    fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)
+    cmds = fsm.cancel("r1", 1.5)
+    assert Finish("r1", False, CANCELED) in cmds and CancelNav() in cmds
+
+
+def test_a_heartbeat_loss_ends_a_path_retreat_failed():
+    fsm = ready(pose=AT_P4)
+    fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)
+    t = 1.0 + FsmParams().heartbeat_timeout_s + 0.1
+    cmds = fsm.tick(t, AT_P4, STILL, no_obstacle)
+    assert Finish("r1", False, "FAILED") in cmds and CancelNav() in cmds
+
+
+@pytest.mark.parametrize("path", [[(1.0, 1.0), (1.0, 0.6)], [P4], [P4, P4]])
+def test_a_path_retreat_that_is_not_from_the_robot_fails_at_once(path):
+    """MoveTo의 연결 확인(안내 2.2)과 같은 0.15 m. 길이가 없는 경로도 실패다."""
+    fsm = ready(pose=AT_P4)
+    cmds = fsm.retreat("r1", 1.0, 0.4, 0.05, path=path, pose=AT_P4)
+    assert cmds[-1] == Finish("r1", False, "FAILED") and not sends(cmds) and not backups(cmds)
+
+
+def test_a_path_retreat_without_a_pose_fails_at_once():
+    fsm = ready(pose=AT_P4)
+    cmds = fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=None)
+    assert cmds[-1] == Finish("r1", False, "FAILED") and not sends(cmds)
+
+
+def test_a_slow_path_retreat_limits_the_reverse_controller_to_its_speed():
+    """speed_limit은 띄운 controller 모두에 가고 RPP는 그 값을 속도로 쓴다. 0.05 m/s보다
+    느리게 시키면 그 값으로 제한하고, 빠르게 시키면 FollowPathReverse의 0.05 m/s 그대로다."""
+    fsm = ready(pose=AT_P4)
+    cmds = fsm.retreat("r1", 1.0, 0.4, 0.03, path=BACK, pose=AT_P4)
+    assert kinds(cmds) == ["LimitSpeed", "SendPath"] and limits(cmds) == [0.03]
+    fsm = ready(pose=AT_P4)
+    assert limits(fsm.retreat("r1", 1.0, 0.4, 0.1, path=BACK, pose=AT_P4)) == []
+
+
+def test_a_lock_boundary_limit_is_lifted_before_backing_along_a_path():
+    """잠금 경계 이동의 제한(예 0.1 m/s)이 남으면 RPP가 그 속도로 후진한다."""
+    fsm = ready()
+    out = fsm.move("g1", 0.0, "P-4", (*P4, NORTH), [P3, P4], (*P3, NORTH), final_goal=False)
+    fsm.heartbeat(1.0)
+    near = (0.35, 1.90, NORTH)
+    out += fsm.tick(1.0, near, DRIVING, no_obstacle)  # 끝 근처 재전송(R13)도 낸다
+    assert [v for v in limits(out) if v > 0.0]
+    cmds = fsm.retreat("r1", 1.1, 0.35, 0.1, path=[near[:2], P3], pose=near)
+    for send in sends(out):
+        cmds += fsm.nav_result(send.seq, "canceled", 1.15, near, no_obstacle)
+    fsm.heartbeat(1.2)
+    cmds += fsm.tick(1.2, near, STILL, no_obstacle)
+    (back,) = reverse_sends(cmds)
+    assert limits(cmds[:cmds.index(back)])[-1] == 0.0
+
+
+def test_the_reverse_speed_is_the_reverse_controller_speed():
+    import yaml
+    from conftest import REPO
+    nav2 = yaml.safe_load((REPO / "pinky" / "pinky_nav_config" / "params" / "nav2_params.yaml")
+                          .read_text(encoding="utf-8"))
+    reverse = nav2["controller_server"]["ros__parameters"]["FollowPathReverse"]
+    assert FsmParams().reverse_speed_mps == reverse["desired_linear_vel"]
+
+
 # ---- 버전 2 4절 horizon 최소판(MoveTo.final_goal, 계약 0.8-draft 제안) ----------------------
 
 

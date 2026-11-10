@@ -8,6 +8,8 @@
   장애물을 비운 뒤 같은 선을 다시 따른다. 두 번까지 하고, 그동안 RECOVERING으로 보고한다.
 - 물러나기 = FMS 개선 계획 버전 2 1-A(계약 0.9-draft 제안): 관제의 Retreat goal. 이동을 먼저
   멈추고(둘 다 cmd_vel) 자가 복구와 같은 BackUp을 낸다. 결과는 backup.reason_of로 만든다.
+  path가 있으면(자유바닥, 계약 0.9-draft 제안) BackUp 대신 그 경로를 후진 controller로 보낸다
+  (SendPath reverse).
 
 시각은 모두 벽시계 초다(heartbeat는 벽시계로 재야 하고, 나머지도 같은 축을 쓴다).
 노드는 SendPath를 Nav2 FollowPath 목표로, CancelNav를 그 취소로, Finish를 액션 결과로 옮긴다.
@@ -27,7 +29,7 @@ from pinky_fsm.backup import (
     keep_lateral,
     reason_of,
 )
-from pinky_fsm.geometry import Point, Polyline, Pose, poses_along
+from pinky_fsm.geometry import Point, Polyline, Pose, poses_along, poses_backing
 
 # RobotState.STATE_* 와 같은 값
 IDLE = "IDLE"
@@ -83,6 +85,9 @@ class FsmParams:
     backup_speed_mps: float = 0.08
     backup_time_allowance_s: float = 5.0
     retreat_stop_wait_s: float = 3.0  # 물러나기 전 달리던 로봇이 서기를 기다리는 한계(1-A, 추정)
+    # 후진 controller(pinky_nav_config FollowPathReverse)의 desired_linear_vel. 경로 물러나기를
+    # 이보다 느리게 시키면 speed_limit으로 줄인다(RPP는 제한을 속도로 쓰므로 빠르게는 안 준다)
+    reverse_speed_mps: float = 0.05
     backup_result_grace_s: float = 2.0  # time allowance 뒤에도 결과가 없으면 멈추고 이어 간다
     recovery_pass_m: float = 0.05  # 막힌 곳을 이만큼 지나면 복구가 끝난다
     recovery_timeout_s: float = 10.0  # 다시 보낸 뒤 이만큼 못 지나면 다음 시도로 친다
@@ -107,6 +112,8 @@ class SendPath:
     # False when the path ends at a lock boundary, not at the mission end (MoveTo.final_goal).
     # The node may then use a controller without the approach slow-down
     final_goal: bool = True
+    # 참이면 뒤로 따른다(Retreat.path). 노드는 후진 controller(reverse_controller_id)를 쓴다
+    reverse: bool = False
 
 
 @dataclass(frozen=True)
@@ -165,7 +172,8 @@ class _Dock:
 
 @dataclass
 class _Retreat:
-    """관제가 시킨 물러나기(버전 2 1-A). BackUp 하나를 내고 그 결과로 끝난다.
+    """관제가 시킨 물러나기(버전 2 1-A). BackUp 하나를 내고 그 결과로 끝난다. route가 있으면
+    BackUp 대신 그 경로를 후진으로 따르는 FollowPath 하나다(seq는 FollowPath 순번).
 
     달리던 이동이나 결과가 안 온 BackUp이 있었으면 로봇이 설 때까지(stopped_speed) BackUp을
     미룬다(seq 0).
@@ -176,6 +184,7 @@ class _Retreat:
     allowance_s: float
     distance_m: float = 0.0
     speed_mps: float = 0.0
+    route: Polyline | None = None
 
 
 class PinkyFsm:
@@ -281,13 +290,22 @@ class PinkyFsm:
         return cmds + [Finish(goal_id, False, DOCK_UNAVAILABLE)]
 
     def retreat(self, goal_id: Hashable, now: float, distance_m: float,
-                speed_mps: float) -> list:
-        """뒤로 곧게 distance_m. 달리던 이동과 자가 복구 후진을 먼저 멈춘다."""
+                speed_mps: float, path: Sequence[Sequence[float]] = (),
+                pose: Sequence[float] | None = None) -> list:
+        """뒤로 곧게 distance_m. path(점 (x, y, ...))가 있으면 그 경로를 후진으로 따른다.
+        달리던 이동과 자가 복구 후진을 먼저 멈춘다."""
         self._alive = max(self._alive, now)
         # 결과가 안 온 BackUp도 기다린다. 같은 behavior_server라 바로 보내면 앞 후진이 다 서기
         # 전에 새 후진이 이어진다(V2 교차 검수 1)
         was_driving = self._nav_running or bool(self._nav_live) or self._backup_busy(now)
         cmds = self._end_active(CANCELED, stop=True)
+        route = None
+        if path:
+            route = Polyline([(float(q[0]), float(q[1])) for q in path])
+            # MoveTo의 연결 확인(안내 2.2)과 같다: 로봇에서 시작하지 않는 경로는 따르지 않는다
+            if (pose is None or route.length <= 0.0
+                    or route.project(pose[:2])[1] > self.p.connect_tolerance_m):
+                return cmds + [Finish(goal_id, False, FAILED)]
         if not (distance_m > 0.0 and speed_mps > 0.0):
             return cmds + [Finish(goal_id, False, FAILED)]
         self._stopped_since = None
@@ -295,18 +313,34 @@ class PinkyFsm:
             # FollowPath나 BackUp이 끝나고(결과) 바퀴가 설 때까지 기다린다
             # (둘 다 cmd_vel, 1-A Codex 1)
             self._active = _Retreat(goal_id, 0, now, self.p.retreat_stop_wait_s,
-                                    float(distance_m), float(speed_mps))
+                                    float(distance_m), float(speed_mps), route)
             return cmds
-        self._active = _Retreat(goal_id, 0, now, 0.0, float(distance_m), float(speed_mps))
-        return cmds + self._start_retreat(self._active, now)
+        self._active = _Retreat(goal_id, 0, now, 0.0, float(distance_m), float(speed_mps), route)
+        return cmds + self._start_retreat(self._active, now, pose)
 
-    def _start_retreat(self, g: _Retreat, now: float) -> list:
+    def _start_retreat(self, g: _Retreat, now: float, pose: Sequence[float] | None) -> list:
+        if g.route is not None:
+            return self._start_reverse_path(g, now, pose)
         self._bseq += 1
         allowance = g.distance_m / g.speed_mps * 2.0 + 2.0  # 가속·감속과 멈칫거림까지 넉넉히
         g.seq, g.since, g.allowance_s = self._bseq, now, allowance
         self._backup_running = True
         self._backup_unanswered[g.seq] = now + allowance + self.p.backup_result_grace_s
         return [BackUp(g.seq, g.distance_m, g.speed_mps, allowance)]
+
+    def _start_reverse_path(self, g: _Retreat, now: float, pose: Sequence[float] | None) -> list:
+        """로봇에서 가장 가까운 점부터 끝까지 후진 FollowPath 하나를 보낸다."""
+        s = g.route.project(pose[:2])[0] if pose is not None else 0.0
+        rest = g.route.rest(s)
+        self._seq += 1
+        speed = min(g.speed_mps, self.p.reverse_speed_mps)
+        allowance = Polyline(rest).length / speed * 2.0 + 2.0  # BackUp과 같은 여유
+        g.seq, g.since, g.allowance_s = self._seq, now, allowance
+        self._nav_running = True
+        self._nav_live.add(g.seq)
+        poses = poses_backing(rest, self.p.path_step_m)
+        # 남은 제한(잠금 경계 이동)을 먼저 바꾼다. RPP는 제한을 그대로 속도로 쓴다
+        return self._limit_speed() + [SendPath(g.seq, poses, final_goal=True, reverse=True)]
 
     def _backup_busy(self, now: float) -> bool:
         """결과가 안 온 BackUp이 아직 움직이고 있을 수 있다. time_allowance(+ 여유)가 지난 것은
@@ -322,10 +356,18 @@ class PinkyFsm:
         return self._end_active(CANCELED, stop=True)
 
     def nav_result(self, seq: int, outcome: str, now: float, pose: Sequence[float] | None,
-                   obstacle: Obstacle) -> list:
-        """FollowPath 결과. outcome은 succeeded, aborted, canceled, rejected 중 하나."""
+                   obstacle: Obstacle, error_code: int = 0) -> list:
+        """FollowPath 결과. outcome은 succeeded, aborted, canceled, rejected 중 하나.
+        error_code는 FollowPath 결과의 것이다(후진 경로 물러나기의 reason에만 쓴다)."""
         self._nav_live.discard(seq)
         g = self._active
+        if isinstance(g, _Retreat):
+            if g.route is None or g.seq == 0 or seq != g.seq:
+                return []  # 멈춘 이동의 결과
+            self._active = None
+            self._rest = IDLE
+            return ([Finish(g.goal_id, outcome == "succeeded", reason_of(outcome, error_code))]
+                    + self._end_active("", stop=True))
         if not isinstance(g, _Move) or seq != g.seq:
             return []  # 교체된 옛 목표의 결과(Nav2는 새 목표를 받으면 옛 것을 ABORTED로 끝낸다)
         g.nav_running = False
@@ -362,8 +404,8 @@ class PinkyFsm:
         self._backup_unanswered.pop(seq, None)
         r, g = self._recovery, self._active
         if isinstance(g, _Retreat):
-            if g.seq != seq:
-                return []
+            if g.route is not None or g.seq != seq:
+                return []  # 경로 물러나기의 seq는 FollowPath 순번이다
             self._backup_running = False
             self._active = None
             self._rest = IDLE
@@ -394,7 +436,7 @@ class PinkyFsm:
             lin, ang = speed
             stopped = abs(lin) < self.p.stopped_speed_mps and abs(ang) < self.p.stopped_turn_rps
             if stopped and not self._nav_live and not self._backup_busy(now):
-                cmds += self._start_retreat(g, now)
+                cmds += self._start_retreat(g, now, pose)
             elif now - g.since >= g.allowance_s:
                 cmds += self._end_active(TIMEOUT, stop=True)  # 서지 않는다. 물러나지 않는다
                 g = None
@@ -558,6 +600,9 @@ class PinkyFsm:
         """잠금 경계에서 끝나는 목표만 설 수 있는 속도로 제한한다. 바뀔 때만 낸다."""
         g = self._active
         limit = 0.0
+        if (isinstance(g, _Retreat) and g.route is not None
+                and g.speed_mps < self.p.reverse_speed_mps):
+            limit = g.speed_mps
         if isinstance(g, _Move) and not g.final_goal:
             left = max(0.0, g.route.length - g.s)
             # the robot may cover this much at full speed before the limit acts

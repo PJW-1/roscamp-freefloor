@@ -44,6 +44,18 @@ def poses_along(points: Sequence[Point], final_yaw: float, step: float = 0.05) -
     return poses
 
 
+def poses_backing(points: Sequence[Point], step: float = 0.05) -> list[Pose]:
+    """뒤로 따라갈 폴리라인을 poses_along과 같은 점으로 펼친다. yaw는 진행 방향의 반대, 즉
+    후진하는 로봇이 보는 방향이다(마지막 점은 마지막 선분의 것). 점이 하나면 yaw는 0이다."""
+    pts = _dedup(points)
+    final = 0.0
+    if len(pts) > 1:
+        (ax, ay), (bx, by) = pts[-2], pts[-1]
+        final = math.atan2(by - ay, bx - ax)
+    return [(x, y, math.atan2(-math.sin(yaw), -math.cos(yaw)))
+            for x, y, yaw in poses_along(pts, final, step)]
+
+
 class Polyline:
     """누적 거리 s로 점을 찾는 폴리라인."""
 
