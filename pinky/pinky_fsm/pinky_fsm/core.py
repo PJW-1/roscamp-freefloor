@@ -311,7 +311,8 @@ class PinkyFsm:
             route = Polyline([(float(q[0]), float(q[1])) for q in path])
             # MoveTo의 연결 확인(안내 2.2)과 같다: 로봇에서 시작하지 않는 경로는 따르지 않는다
             if (pose is None or route.length <= 0.0
-                    or route.project(pose[:2])[1] > self.p.connect_tolerance_m):
+                    or route.project(pose[:2])[1] > self.p.connect_tolerance_m
+                    or self._too_short(route, pose)):
                 return cmds + [Finish(goal_id, False, FAILED)]
         if not (distance_m > 0.0 and speed_mps > 0.0):
             return cmds + [Finish(goal_id, False, FAILED)]
@@ -337,6 +338,8 @@ class PinkyFsm:
 
     def _start_reverse_path(self, g: _Retreat, now: float, pose: Sequence[float] | None) -> list:
         """로봇에서 가장 가까운 점부터 끝까지 후진 FollowPath 하나를 보낸다."""
+        if pose is not None and self._too_short(g.route, pose):
+            return self._end_active(FAILED, stop=True)  # 기다리는 동안 끝에 닿았다
         s = g.route.project(pose[:2])[0] if pose is not None else 0.0
         rest = g.route.rest(s)
         self._seq += 1
@@ -348,6 +351,11 @@ class PinkyFsm:
         poses = poses_backing(rest, self.p.path_step_m)
         # 남은 제한(잠금 경계 이동)을 먼저 바꾼다. RPP는 제한을 그대로 속도로 쓴다
         return self._limit_speed() + [SendPath(g.seq, poses, final_goal=True, reverse=True)]
+
+    def _too_short(self, route: Polyline, pose: Sequence[float]) -> bool:
+        """가장 가까운 점부터 남은 길이 backup_min_m보다 짧다. 점 하나짜리 FollowPath를 보내지
+        않고 FAILED로 끝낸다(Codex 리뷰 3: 끝 근처의 로봇도 연결 허용 거리는 지난다)."""
+        return route.length - route.project(pose[:2])[0] < self.p.backup_min_m
 
     def _nav_busy(self, now: float) -> bool:
         """결과가 안 온 FollowPath가 아직 돌 수 있다. 취소한 뒤 여유가 지난 것은 잊는다."""

@@ -1213,6 +1213,25 @@ def test_a_running_reverse_path_is_waited_for_from_when_it_is_canceled():
     assert backups(fsm.tick(t + grace + 0.1, AT_P4, STILL, no_obstacle))
 
 
+def test_a_path_retreat_with_the_robot_already_at_its_end_fails_at_once():
+    """Codex 리뷰 3: 끝 점 0.15 m 안의 로봇은 따를 길이 없다. 점 하나짜리 FollowPath를 보내지
+    않고 FAILED로 끝낸다(backup_min_m보다 짧으면)."""
+    fsm = ready(pose=(*P3, NORTH))
+    cmds = fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=(0.35, 1.56, NORTH))
+    assert cmds[-1] == Finish("r1", False, "FAILED") and not sends(cmds)
+    assert fsm.state() == IDLE
+
+
+def test_a_path_retreat_that_reaches_its_end_while_waiting_fails_without_a_path():
+    fsm = ready()
+    (send,) = sends(move(fsm, "g1", 0.0, path=(P3, P4, P5)))
+    fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)
+    fsm.nav_result(send.seq, "canceled", 1.1, AT_P4, no_obstacle)
+    fsm.heartbeat(1.2)
+    cmds = fsm.tick(1.2, (0.35, 1.56, NORTH), STILL, no_obstacle)  # 그 사이 끝에 닿았다
+    assert Finish("r1", False, "FAILED") in cmds and not reverse_sends(cmds)
+
+
 def test_a_path_retreat_without_a_pose_fails_at_once():
     fsm = ready(pose=AT_P4)
     cmds = fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=None)
