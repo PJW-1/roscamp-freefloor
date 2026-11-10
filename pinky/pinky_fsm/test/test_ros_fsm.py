@@ -266,6 +266,44 @@ def test_a_retreat_path_away_from_the_robot_fails(harness):
     assert fake.goals == [] and fake.backups == []
 
 
+def _fake_node(late):
+    import threading
+    from types import SimpleNamespace
+    infos = []
+    node = SimpleNamespace(
+        _lock=threading.RLock(), _nav_pending={3}, _late=late, _nav_handles={3: object()},
+        get_logger=lambda: SimpleNamespace(warn=infos.append, info=infos.append),
+        _pose=lambda: None, _obstacle=lambda _p: False)
+    return node, infos
+
+
+def _broken():
+    raise RuntimeError("lost")
+
+
+def test_a_follow_path_goal_whose_send_fails_counts_as_rejected():
+    """Codex 리뷰 2: future 예외로 콜백이 죽으면 그 FollowPath는 끝내 결과가 없다."""
+    from types import SimpleNamespace
+
+    from pinky_fsm.node import PinkyFsmNode
+    late = []
+    node, infos = _fake_node(late)
+    PinkyFsmNode._on_nav_response(node, 3, SimpleNamespace(result=_broken))
+    assert late == [(3, "rejected")] and node._nav_pending == set() and infos
+
+
+def test_a_lost_follow_path_result_counts_as_aborted():
+    from types import SimpleNamespace
+
+    from pinky_fsm.node import PinkyFsmNode
+    ran = []
+    node, infos = _fake_node([])
+    node._fsm = SimpleNamespace(nav_result=lambda *a: ran.append(a[:2]) or [])
+    node._run = lambda cmds: None
+    PinkyFsmNode._on_nav_result(node, 3, SimpleNamespace(result=_broken))
+    assert ran == [(3, "aborted")] and 3 not in node._nav_handles and infos
+
+
 def test_a_goal_at_a_lock_boundary_publishes_a_speed_limit_and_lifts_it_at_the_end(harness):
     """버전 2 4절 horizon 최소판(계약 0.8-draft 제안): final_goal이 거짓이면 끝 근처에서
     nav2 speed_limit으로 줄이고, 목표가 끝나면 푼다."""

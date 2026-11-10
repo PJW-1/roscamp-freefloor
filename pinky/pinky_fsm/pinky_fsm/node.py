@@ -70,7 +70,7 @@ _FLOAT_PARAMS = (
     "backup_lateral_limit_m", "backup_speed_mps", "backup_time_allowance_s",
     "backup_result_grace_s", "recovery_pass_m", "recovery_timeout_s", "recovery_reset_m",
     # 관제가 시키는 물러나기(버전 2 1-A, 경로 물러나기)
-    "retreat_stop_wait_s", "reverse_speed_mps",
+    "retreat_stop_wait_s", "reverse_speed_mps", "nav_result_grace_s",
     # 잠금 경계 목표의 속도 제한(버전 2 4절 horizon 최소판)
     "horizon_decel_mps2", "horizon_min_mps", "horizon_cap_mps", "horizon_latency_s")
 _INT_PARAMS = ("recovery_attempts",)
@@ -402,7 +402,14 @@ class PinkyFsmNode(Node):
         self._cancel_on_accept |= self._nav_pending
 
     def _on_nav_response(self, seq: int, future) -> None:
-        handle = future.result()
+        try:
+            handle = future.result()
+        except Exception as exc:  # noqa: BLE001 - 콜백이 죽으면 이 FollowPath는 결과가 없다
+            self.get_logger().warn(f"follow_path #{seq} was not sent: {exc}")
+            with self._lock:
+                self._nav_pending.discard(seq)
+                self._late.append((seq, "rejected"))
+            return
         with self._lock:
             self._nav_pending.discard(seq)
             if not handle.accepted:
@@ -415,17 +422,20 @@ class PinkyFsmNode(Node):
         handle.get_result_async().add_done_callback(partial(self._on_nav_result, seq))
 
     def _on_nav_result(self, seq: int, future) -> None:
-        res = future.result()
-        outcome = _OUTCOME.get(res.status, "aborted")
-        if outcome != "succeeded" and res.result.error_code:
-            self.get_logger().info(f"follow_path #{seq} {outcome}: "
-                                   f"{res.result.error_code} {res.result.error_msg}")
+        try:
+            res = future.result()
+            outcome, code = _OUTCOME.get(res.status, "aborted"), int(res.result.error_code)
+            if outcome != "succeeded" and code:
+                self.get_logger().info(f"follow_path #{seq} {outcome}: "
+                                       f"{code} {res.result.error_msg}")
+        except Exception as exc:  # noqa: BLE001 - 결과를 잃었다. 실패로 보고 core가 세운다
+            self.get_logger().warn(f"follow_path #{seq} lost its result: {exc}")
+            outcome, code = "aborted", 0
         with self._lock:
             self._nav_handles.pop(seq, None)
             pose = self._pose()
             self._run(self._fsm.nav_result(seq, outcome, time.monotonic(),
-                                           pose[:3] if pose else None, self._obstacle,
-                                           int(res.result.error_code)))
+                                           pose[:3] if pose else None, self._obstacle, code))
 
     # -- 주기 ------------------------------------------------------------------------------
 

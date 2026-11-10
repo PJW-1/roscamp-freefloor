@@ -1180,6 +1180,58 @@ def test_a_path_retreat_that_is_not_from_the_robot_fails_at_once(path):
     assert cmds[-1] == Finish("r1", False, "FAILED") and not sends(cmds) and not backups(cmds)
 
 
+@pytest.mark.parametrize("path", [False, True])
+def test_a_canceled_follow_path_whose_result_never_comes_holds_a_retreat_only_for_a_grace(path):
+    """Codex 리뷰 2: FollowPath 결과를 잃어도 다음 Retreat가 모두 TIMEOUT으로 끝나지 않는다.
+    물러나기가 취소한 FollowPath는 nav_result_grace_s 동안만 기다리고, 바퀴가 서 있으면 간다."""
+    fsm = ready()
+    move(fsm, "g1", 0.0)  # 이 FollowPath의 결과는 끝내 오지 않는다
+    grace = FsmParams().nav_result_grace_s
+    assert grace < FsmParams().retreat_stop_wait_s
+    kw = {"path": [(*P3,), P4], "pose": (*P3, NORTH)} if path else {}
+    distance = 0.4 if path else 0.3
+    fsm.retreat("r1", 1.0, distance, 0.1, **kw)
+    fsm.heartbeat(1.0 + grace - 0.1)
+    held = fsm.tick(1.0 + grace - 0.1, (*P3, NORTH), STILL, no_obstacle)
+    assert not backups(held) and not reverse_sends(held), "결과를 아직 기다린다"
+    fsm.heartbeat(1.0 + grace + 0.1)
+    cmds = fsm.tick(1.0 + grace + 0.1, (*P3, NORTH), STILL, no_obstacle)
+    assert (reverse_sends(cmds) if path else backups(cmds)) and fsm.is_running("r1")
+
+
+def test_a_running_reverse_path_is_waited_for_from_when_it_is_canceled():
+    """잊는 것은 취소한 FollowPath뿐이고, 여유는 취소한 때부터 잰다."""
+    fsm = ready(pose=AT_P4)
+    fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)  # 이 후진 경로의 결과는 안 온다
+    t = 1.0 + FsmParams().nav_result_grace_s + 1.0
+    fsm.heartbeat(t)
+    assert not backups(fsm.retreat("r2", t, 0.1, 0.1))
+    grace = FsmParams().nav_result_grace_s
+    fsm.heartbeat(t + grace - 0.1)
+    assert not backups(fsm.tick(t + grace - 0.1, AT_P4, STILL, no_obstacle))
+    fsm.heartbeat(t + grace + 0.1)
+    assert backups(fsm.tick(t + grace + 0.1, AT_P4, STILL, no_obstacle))
+
+
+def test_a_path_retreat_with_the_robot_already_at_its_end_fails_at_once():
+    """Codex 리뷰 3: 끝 점 0.15 m 안의 로봇은 따를 길이 없다. 점 하나짜리 FollowPath를 보내지
+    않고 FAILED로 끝낸다(backup_min_m보다 짧으면)."""
+    fsm = ready(pose=(*P3, NORTH))
+    cmds = fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=(0.35, 1.56, NORTH))
+    assert cmds[-1] == Finish("r1", False, "FAILED") and not sends(cmds)
+    assert fsm.state() == IDLE
+
+
+def test_a_path_retreat_that_reaches_its_end_while_waiting_fails_without_a_path():
+    fsm = ready()
+    (send,) = sends(move(fsm, "g1", 0.0, path=(P3, P4, P5)))
+    fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=AT_P4)
+    fsm.nav_result(send.seq, "canceled", 1.1, AT_P4, no_obstacle)
+    fsm.heartbeat(1.2)
+    cmds = fsm.tick(1.2, (0.35, 1.56, NORTH), STILL, no_obstacle)  # 그 사이 끝에 닿았다
+    assert Finish("r1", False, "FAILED") in cmds and not reverse_sends(cmds)
+
+
 def test_a_path_retreat_without_a_pose_fails_at_once():
     fsm = ready(pose=AT_P4)
     cmds = fsm.retreat("r1", 1.0, 0.4, 0.05, path=BACK, pose=None)

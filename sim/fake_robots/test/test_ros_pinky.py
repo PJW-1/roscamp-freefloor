@@ -914,11 +914,12 @@ def _drive_out(p, truth, metres):
 
 def test_a_retreat_with_a_path_backs_along_it_round_the_corner(harness, tmp_path):
     """path는 지나온 길을 거꾸로 적은 것이다. 첫 점은 로봇 자리, 끝 점은 설 곳. 로봇은 돌지
-    않고 시킨 속도로 꺾인 곳까지 간 뒤 다음 선분을 따라 끝 점에 선다."""
+    않고 꺾인 곳까지 간 뒤 다음 선분을 따라 끝 점에 선다. 속도는 실물(FollowPathReverse)처럼
+    0.05 m/s를 넘지 않는다(Codex 리뷰 4)."""
     p = start(harness, tmp_path, robots=LONG)
     truth = watch_truth(p)
     assert wait_until(lambda: p.states and truth, 5.0)
-    move, here = _drive_out(p, truth, 0.3)
+    move, here = _drive_out(p, truth, 0.1)
     yaw = p.states[-1][1].pose.theta
     corner, end = SITE.waypoint_pose("P-6"), SITE.waypoint_pose("P-5")
     length = math.dist(here, corner) + math.dist(corner, end)
@@ -931,8 +932,42 @@ def test_a_retreat_with_a_path_backs_along_it_round_the_corner(harness, tmp_path
     assert math.dist((truth[-1][1], truth[-1][2]), end) < 0.02
     passed = min(math.dist((x, y), corner) for w, x, y in truth if w >= sent)
     assert passed < 0.02, "it went through the corner, not straight to the end"
-    assert took == pytest.approx(length / 0.2, abs=1.0), "at the commanded speed"
+    assert took == pytest.approx(length / 0.05, abs=1.5), "0.2 m/s asked, 0.05 m/s driven"
     assert p.states[-1][1].pose.theta == pytest.approx(yaw, abs=1e-6), "it backs, not turns"
+
+
+def test_a_path_retreat_starts_from_the_point_of_the_path_nearest_the_robot(harness, tmp_path):
+    """실물 pinky_fsm처럼 제 자리를 path에 투영해 거기서부터 간다. 이미 지난 앞 점으로 되돌아
+    가지 않는다(Codex 리뷰 4)."""
+    p = start(harness, tmp_path, robots=LONG)
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states and truth, 5.0)
+    move, _ = _drive_out(p, truth, 0.1)
+    corner = SITE.waypoint_pose("P-6")
+    (x1, y1) = SITE.waypoint_pose("QO")
+    n = math.dist(corner, (x1, y1))
+
+    def out(d):
+        return (corner[0] + d * (x1 - corner[0]) / n, corner[1] + d * (y1 - corner[1]) / n)
+    handle = _retreat(p, 0.5, speed_mps=0.05, path=[out(0.6), out(0.4), corner])
+    result_of(move)
+    sent = time.monotonic()
+    reached = max(along(truth))
+    res = result_of(handle, 30.0).result
+    assert (res.success, res.reason) == (True, "")
+    after = [d for (w, _, _), d in zip(truth, along(truth), strict=True) if w >= sent]
+    assert max(after) <= reached + 0.01, "it went forward to the first points"
+    assert math.dist((truth[-1][1], truth[-1][2]), corner) < 0.02
+
+
+def test_a_path_retreat_at_its_end_already_fails(harness, tmp_path):
+    from fleet_interfaces.action import Retreat
+    p = start(harness, tmp_path, robots=LONG)
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states and truth, 5.0)
+    here = SITE.waypoint_pose("P-6")
+    res = result_of(_retreat(p, 0.4, path=[SITE.waypoint_pose("P-5"), here])).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_FAILED)
 
 
 def test_a_robot_on_the_path_ends_a_path_retreat_with_obstacle_behind(harness, tmp_path):
