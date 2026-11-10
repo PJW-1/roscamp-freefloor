@@ -732,9 +732,10 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             parked=waypoint in self.site.parking,
             # 막힘으로 선 로봇은 새 호출을 받지 않고, 대기 줄에서는 뒤 로봇이 앞지르지 않는다.
             # 재투입 때문에 세운 로봇은 available(robot)이 거짓이라 호출도 앞지르기도 없다
-            # 배터리가 낮은 로봇(m.charge)도 새 호출을 받지 않는다
+            # 배터리가 낮은 로봇(m.charge)도 새 호출을 받지 않는다. 이미 불려 commit 구역을 지난
+            # 로봇은 방향을 못 바꾸니 그 호출은 그대로 한다
             eligible=(self.available(m.name) and not m.hold and m.dispatch is None
-                      and not m.charge
+                      and (not m.charge or (m.called and self._committed(m)))
                       and not stopped and (m.called or not self._held_for_block(m))),
             # A robot standing still in a wait cycle is not overtaken in the queue either (H1).
             available=(self.available(m.name) and not self._held_for_block(m) and not stopped

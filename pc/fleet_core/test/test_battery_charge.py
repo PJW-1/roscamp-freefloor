@@ -120,3 +120,39 @@ def test_on_the_free_floor_a_charging_robot_does_not_hold_up_the_robots_behind_i
     info = core.traffic._robot_info(core.traffic._missions["a"])
     assert core.traffic._missions["a"].charge
     assert not info.eligible and info.available
+
+
+# ---- 리뷰(f19f2a9)에서 고친 것 -------------------------------------------------------------
+
+def test_a_called_robot_past_the_commit_zone_keeps_its_call_when_its_battery_runs_low():
+    """commit 구역을 지난 로봇은 방향을 못 바꾼다: 이 일은 하고, 그 뒤에 충전하러 간다."""
+    core, _ = make({"r1": (4, 3), "r2": AWAY})
+    core.on_dispatch(1, WORK)
+    core.tick()
+    assert core.robot_view("r1")["state"] == "TO_WORK"
+    report(core, "r1", (4, 3), 10.0)
+    core.tick()
+    assert core.robot_view("r1")["charging"] is True
+    assert core.robot_view("r1")["called"] is True
+    assert core.robot_view("r2")["called"] is False  # 호출이 다른 로봇으로 넘어가지 않는다
+
+
+def test_a_reinstated_robot_is_still_charging_until_it_reports_enough():
+    import test_reinstate as tr
+    from fleet_core.manager import FleetManager
+    from fleet_core.traffic.lane_map import load_lane_map
+    core = FleetManager(load_lane_map(), replace(load_params(), battery_low_pct=20.0),
+                        list(tr.SPOTS), lambda: 0.0)
+    for robot, waypoint in tr.SPOTS.items():
+        tr.report(core, robot, waypoint)
+    core.on_order_board("RUN", [])
+    core.tick()
+    x, y = core.site.waypoint_pose("P-5")
+    core.on_robot_state("pinky2", x, y, 0.0, "IDLE", 10.0)
+    assert core.traffic._missions["pinky2"].charge
+    assert core.confirm_clear("pinky2", core.zones.held_by("pinky2"), "lifted") is not None
+    core.tick()
+    assert core.reinstate("pinky2", "EMPTY", "back") is True
+    x, y = core.site.waypoint_pose("P-3")
+    core.on_robot_state("pinky2", x, y, 0.0, "IDLE", 60.0)  # 낮음과 충전 완료 사이
+    assert core.traffic._missions["pinky2"].charge
