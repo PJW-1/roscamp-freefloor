@@ -431,3 +431,24 @@ def test_a_robot_on_the_dock_of_a_narrow_line_is_there_already():
     planner = FloorPlanner(_gap_floor())
     route = planner.leg((0.75, 0.45), (0.75, 0.45), in_line="work_in")
     assert route is not None and route.points == [(0.75, 0.45)] and route.length == 0.0
+
+
+def test_from_the_mouth_of_a_gap_the_step_onto_clear_floor_stays_on_the_line():
+    """Just inside the mouth (clear floor within 0.10 m) a start steps onto clear floor as
+    anywhere else, but only onto the clear cells the narrow line itself runs over, also when
+    the nearest of them are taken: never slantwise past the corner of a box."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    floor = _gap_floor()
+    planner = FloorPlanner(floor)
+    start = (0.75, 0.62)
+    assert planner._gap_line(start) is None  # the mouth, not deep in the gap
+    steps = planner._steps_onto_clear(start)
+    assert steps and all(abs(x - 0.75) <= floor.cell_m for x, _ in steps)
+    taken = frozenset(floor.cell_of(*xy) for xy in steps[:1])
+    later = planner._steps_onto_clear(start, taken)
+    assert later and all(abs(x - 0.75) <= floor.cell_m for x, _ in later)
+    assert not {floor.cell_of(*xy) for xy in later} & taken
+    shut = frozenset(floor.cell_of(*xy) for xy in steps[:4])  # both columns of the line taken
+    assert planner._steps_onto_clear(start, shut) == []  # it waits; nothing slantwise instead
+    off_floor = planner._steps_onto_clear((0.30, 0.52))  # a wall margin away from any gap
+    assert off_floor and any(abs(x - 0.30) > floor.cell_m for x, _ in off_floor)

@@ -174,6 +174,14 @@ class FloorPlanner:
                for cell in ((a[0] + di, a[1] + dj) for di in range(-reach, reach + 1)
                             for dj in range(-reach, reach + 1))):
             return None
+        return self._near_line(start)
+
+    def _near_line(self, start):
+        """Name of the narrow line start is beside: off clear floor and within JOIN_M of the
+        line where it runs over its line floor (the gap and its mouths). Else None."""
+        floor = self.floor
+        if not floor.narrow_lines or floor.cell_of(*start) in floor.clear:
+            return None
         found = []
         for name in sorted(floor.narrow_lines):
             pts = floor.fixed_lines[name].points
@@ -246,13 +254,16 @@ class FloorPlanner:
     def _steps_onto_clear(self, start, avoid=frozenset()) -> list:
         """Centres of the clear cells within STEP_ONTO_CLEAR_M that a straight step over free
         floor reaches without running over avoided cells, nearest first; none when the start
-        is not on free floor."""
+        is not on free floor. From the mouth of a gap only the clear cells its narrow line
+        runs over (within a cell of the line)."""
         floor = self.floor
         a = floor.cell_of(*start)
         if a not in floor.free:
             return []
         reach = math.ceil(STEP_ONTO_CLEAR_M / floor.cell_m)
         walkable = (floor.free - avoid) | {a}  # the start cell may be held by a close robot
+        mouth = self._near_line(start)  # in the mouth of a gap: only along the narrow line
+        line = floor.fixed_lines[mouth].points if mouth else None
         steps = []
         for di in range(-reach, reach + 1):
             for dj in range(-reach, reach + 1):
@@ -260,6 +271,8 @@ class FloorPlanner:
                 if cell not in floor.clear or cell in avoid:
                     continue
                 xy = floor.centre(cell)
+                if line and _nearest_on(xy, line)[0] > floor.cell_m:
+                    continue  # slantwise past the corner of what flanks the gap
                 d = math.dist(start, xy)
                 if d <= STEP_ONTO_CLEAR_M and line_cells(floor, [tuple(start), xy]) <= walkable:
                     steps.append((d, xy))
