@@ -172,6 +172,7 @@ class _Back:
     out_at: float | None = None  # CORRIDOR: 다 나온 때
     wait_since: float | None = None  # CORRIDOR: 물러날 칸을 기다리기 시작한 때
     fails: int = 0  # CORRIDOR: 잇달아 실패한 Retreat 수
+    goal_id: int | None = None  # 마지막 Retreat: 결과 없이 놓쳐도 늦은 결과가 오면 칸을 놓는다
 
 
 def _along(points, xy) -> tuple[float, float]:
@@ -2287,19 +2288,21 @@ class FloorController(TrafficController):
         self._out.append(RetreatCmd(m.name, goal_id, distance,
                                     self.params.floor_retreat_speed_mps, tuple(poses)))
         back.state, back.cells, back.retreated = BACKING, frozenset(cells), True
+        back.goal_id = goal_id
         self.metrics["retreats"] += 1
         self._event("INFO", "FLOOR_RETREAT_START", f"backs {distance:.2f} m {why}", m.name)
         return True
 
     def on_retreat_result(self, robot, goal_id, success, reason="") -> None:
         m = self._missions.get(robot)
+        back = self._back.get(robot)
+        if back is not None and back.goal_id == goal_id:
+            back.cells, back.goal_id = frozenset(), None  # 로봇이 섰다: 물러날 칸이 더 필요 없다
         if m is None or m.goal is None or m.goal.id != goal_id or m.goal.kind != RETREAT:
             return
         m.goal = None
-        back = self._back.get(robot)
         if back is None:
             return
-        back.cells = frozenset()
         self._cut_trail(m)
         if not success:
             self._back_fail(m, back, f"the retreat ended {reason}")
@@ -2403,8 +2406,17 @@ class FloorController(TrafficController):
     def _corridor_step(self, m: _Mission, back: _Back, now: float) -> None:
         """제 차례면 다음 Retreat(floor_retreat_max_m 이하)를 낸다. 물러날 칸을 다 잡을 수 없으면
         다음 tick에 다시 본다(맨 뒤 로봇이 먼저 가게 된다)."""
-        if m.goal is not None or self._active[m.name] or self._rear_busy(m.name, back):
-            return  # 취소한 이동이 아직 끝나지 않았거나 뒤 멤버가 아직 나오지 않았다
+        if m.goal is not None or self._rear_busy(m.name, back):
+            return  # 뒤 멤버가 아직 나오지 않았다
+        if self._active[m.name]:  # 취소한 이동의 결과가 아직 없다: 움직일 수 있다
+            if back.wait_since is None:
+                back.wait_since = now
+            elif now - back.wait_since >= self.params.floor_retreat_after_s:
+                self._event("WARN", "FLOOR_RETREAT_FAILED",
+                            f"the cancelled move has not ended for "
+                            f"{self.params.floor_retreat_after_s:.0f} s: stays where it is", m.name)
+                back.state, back.out_at, back.wait_since = OUT, now, None
+            return
         self._trim_mark(m)
         found = self._foot(m)
         if found is None or back.target is None:
@@ -2437,24 +2449,27 @@ class FloorController(TrafficController):
             back.state, back.out_at, back.wait_since = OUT, now, None
 
     def _rear_busy(self, name: str, back: _Back) -> bool:
-        """선 위 name보다 뒤(덜 깊이)에 있는 같은 무리 멤버 중 아직 나오지 않은 로봇이 있다."""
+        """선 위 name보다 뒤(덜 깊이)에 있는 같은 무리 멤버 중 아직 나오지 않은 로봇이 있다.
+        쓸 수 없는 로봇(두절 따위)은 기다리지 않는다: 그 칸은 잠금이 막는다."""
         pts = self.floor.fixed_lines[back.line].points
         mine = _along(pts, self._here(self._missions[name]))[0]
         return any(_along(pts, self._here(self._missions[n]))[0] < mine - 1e-6
                    for n, b in self._back.items()
-                   if n != name and b.owner == back.owner and b.state != OUT)
+                   if n != name and b.owner == back.owner and b.state != OUT
+                   and self._missions[n].available)
 
     def _corridor_done(self, back: _Back, now: float) -> None:
         """막힌 로봇이 다 나오고 floor_retreat_after_s가 지나면 표시를 지우고 모두 다시 계획한다."""
         owner = back.owner
         group = [n for n, b in self._back.items() if b.owner == owner]
         if (now - back.out_at < self.params.floor_retreat_after_s
-                or any(self._back[n].state != OUT for n in group)):
+                or any(self._back[n].state != OUT and self._missions[n].available
+                       for n in group)):
             return
         self._clear_mark(owner, f"kept {self.params.floor_retreat_after_s:.0f} s after "
                                 f"{back.line} was cleared, planning again")
         for name in group:
-            self._end_back(name, plan=True)
+            self._end_back(name, plan=self._missions[name].available)
 
     # ---- goal results -------------------------------------------------------------------
 

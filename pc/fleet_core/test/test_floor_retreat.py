@@ -339,6 +339,9 @@ def test_a_dropped_retreat_goal_keeps_its_cells(monkeypatch):
         world.step()
     assert events(world, "FLOOR_RETREAT_FAILED")
     assert way <= tr.zones.held_set("pinky1")
+    (_, cmd), = retreats(world)
+    world.core.on_retreat_result("pinky1", cmd.goal_id, False, "CANCELED")  # 늦게 온 결과: 섰다
+    assert not tr._back["pinky1"].cells
 
 
 def test_with_both_switches_on_the_corridor_rule_decides_on_a_line():
