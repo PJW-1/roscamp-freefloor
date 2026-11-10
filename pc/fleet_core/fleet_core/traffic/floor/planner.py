@@ -21,6 +21,8 @@ WAIT_COST = 0.8  # 서서 기다린 값의 배수: 1보다 작아야 같은 시�
 LINE_COST = 4.0  # 고정 선 칸을 자유 경로가 지날 때의 거리 배수: 도크 앞을 가로지르지 않게
 ARC_RADIUS_M = 0.15  # 꺾임을 둥글리는 원호 반지름(이보다 작게 줄 수 있다)
 ARC_STEP_M = 0.05
+GAP_DEPTH_M = 0.10  # a start with no clear cell this near is inside the gap of a narrow line
+MERGE_M = 0.05  # a report off a narrow line joins the line this far ahead of its foot
 JOIN_M = 0.12  # 이만큼 안에 있으면 들어가는 고정 선 위에 선 것으로 보고 그 자리에서 잇는다
 STEP_ONTO_CLEAR_M = 0.2  # a start stopped this close to clear floor steps onto it first
 STRAIGHT = 1e-3  # 이보다 덜 꺾이면 곧은 것으로 친다(rad)
@@ -107,11 +109,19 @@ class FloorPlanner:
         """출발 (x, y)에서 goal까지. out_line: 먼저 따를 고정 선(도크에서 나감),
         in_line: 마지막에 따를 고정 선(도크로 들어감). 길이 없으면 None."""
         lines = self.floor.fixed_lines
+        narrow = self.floor.narrow_lines
+        if out_line in narrow and rest_of_exit(start, lines[out_line].points) is None:
+            out_line = None  # off or past a narrow way out: never back into the gap along it
+        if in_line in narrow and math.dist(start, lines[in_line].points[-1]) <= 1e-9:
+            return Route([tuple(start)])  # on the dock of a narrow line already
+        gap = None if out_line else self._gap_line(start)  # the narrow line start stands on
         head = [tuple(start)]
         fixed = []
         if out_line:
             pts = list(lines[out_line].points)
             rest = rest_of_exit(start, pts)  # 나가던 중이면 남은 선만(도크로 되돌아가지 않는다)
+            if rest is not None and out_line in narrow:
+                rest = self._ahead(start, out_line)  # no step square to the line in a gap
             head = [tuple(start)] + [p for p in (pts if rest is None else rest)
                                      if math.dist(p, start) > 1e-6]
             fixed.append((0.0, polyline_length(head), out_line))
@@ -119,14 +129,23 @@ class FloorPlanner:
         if in_line:
             tail = list(lines[in_line].points)
             rest = None if out_line else _rest_of_line(start, tail)
-            if rest is not None and not line_cells(self.floor, [start, rest[0]]) <= \
-                    self.floor.clear:
+            on_line = self.floor.clear | self.floor.line_floor_of.get(in_line, frozenset())
+            if (rest is not None and gap != in_line
+                    and not line_cells(self.floor, [start, rest[0]]) <= on_line):
                 rest = None  # the step onto the line would leave clear floor: plan as usual
             if rest is not None:
                 # already standing on the approach line (it waited there): go on up the line
+                if in_line in narrow:
+                    rest = self._ahead(start, in_line)  # every point on the line
                 route = Route([tuple(start), *rest])
                 route.fixed = [(0.0, route.length, in_line)]
                 return route
+        if gap:
+            # in a gap and not on the line it is to go in by: on along the lines to clear floor
+            way = self._gap_exit(start, gap)
+            if way is None:
+                return None
+            head, fixed = way
         middle = self.plan(head[-1], tail[0], avoid, penalty, polyline_length(head), wait)
         if middle is None:
             return None
@@ -138,6 +157,73 @@ class FloorPlanner:
         route.fixed = fixed
         return route
 
+    # ---- narrow lines -------------------------------------------------------------------
+
+    def _gap_line(self, start):
+        """Name of the narrow line in whose gap start stands: off clear floor, no clear cell
+        within GAP_DEPTH_M (nearer than that it may be a robot passing the mouth with a report
+        a few cm off, which steps back onto clear floor as anywhere else) and within JOIN_M of
+        the line where it runs over its line floor (deep in a gap the robot is on the line).
+        The line whose end it has passed does not count. Else None."""
+        floor = self.floor
+        a = floor.cell_of(*start)
+        if not floor.narrow_lines or a in floor.clear:
+            return None
+        reach = math.ceil(GAP_DEPTH_M / floor.cell_m) + 1
+        if any(cell in floor.clear and math.dist(start, floor.centre(cell)) <= GAP_DEPTH_M
+               for cell in ((a[0] + di, a[1] + dj) for di in range(-reach, reach + 1)
+                            for dj in range(-reach, reach + 1))):
+            return None
+        return self._near_line(start)
+
+    def _near_line(self, start):
+        """Name of the narrow line start is beside: off clear floor and within JOIN_M of the
+        line where it runs over its line floor (the gap and its mouths). Else None."""
+        floor = self.floor
+        if not floor.narrow_lines or floor.cell_of(*start) in floor.clear:
+            return None
+        found = []
+        for name in sorted(floor.narrow_lines):
+            pts = floor.fixed_lines[name].points
+            near = _nearest_on(start, pts)
+            if near is None or near[0] > JOIN_M or (near[1] == len(pts) - 2 and near[2] >= 1.0):
+                continue
+            if floor.cell_of(*near[3]) in floor.line_floor_of[name]:
+                found.append((near[0], name))
+        return min(found)[1] if found else None
+
+    def _ahead(self, start, name) -> list:
+        """The way on along narrow line name from start: every point is on the line, so a report
+        a few cm off never sends the robot off the centre of the gap. A start off the line joins
+        it MERGE_M ahead of its foot (not square to the line: no turn on the spot in the gap)."""
+        pts = self.floor.fixed_lines[name].points
+        _, k, _, foot = _nearest_on(start, pts)
+        rest = [tuple(p) for p in pts[k + 1:]]
+        to_end = math.dist(foot, rest[0])
+        if math.dist(start, foot) > 1e-9 and to_end > MERGE_M:  # also from before the line
+            f = MERGE_M / to_end
+            rest.insert(0, (foot[0] + (rest[0][0] - foot[0]) * f,
+                            foot[1] + (rest[0][1] - foot[1]) * f))
+        return rest
+
+    def _gap_exit(self, start, name):
+        """From start in the gap of narrow line name: on along it, and along the narrow lines
+        that go on from its end, to the first line end on clear floor. (points from start,
+        fixed spans) or None when the lines end off clear floor."""
+        floor = self.floor
+        head, spans, seen = [tuple(start)], [], set()
+        while name is not None:
+            seen.add(name)
+            s0 = polyline_length(head)
+            head = head + [p for p in self._ahead(head[-1], name)
+                           if math.dist(p, head[-1]) > 1e-9]
+            spans.append((s0, polyline_length(head), name))
+            if floor.cell_of(*head[-1]) in floor.clear:
+                return head, spans
+            name = next((other for other in sorted(floor.narrow_lines - seen) if math.dist(
+                floor.fixed_lines[other].points[0], head[-1]) <= 1e-6), None)
+        return None
+
     # ---- free part ----------------------------------------------------------------------
 
     def plan(self, start, goal, avoid=frozenset(), penalty=None, s0=0.0, wait=None):
@@ -146,6 +232,8 @@ class FloorPlanner:
         a, b = floor.cell_of(*start), floor.cell_of(*goal)
         if b not in floor.clear:
             return None
+        if a not in floor.clear and self._gap_line(start):
+            return None  # in the gap of a narrow line: only that line leads out (leg)
         if a not in floor.clear:
             # stopped a few cm into a wall margin: one straight step back onto clear floor first
             for step in self._steps_onto_clear(start, avoid):
@@ -166,13 +254,16 @@ class FloorPlanner:
     def _steps_onto_clear(self, start, avoid=frozenset()) -> list:
         """Centres of the clear cells within STEP_ONTO_CLEAR_M that a straight step over free
         floor reaches without running over avoided cells, nearest first; none when the start
-        is not on free floor."""
+        is not on free floor. From the mouth of a gap only the clear cells its narrow line
+        runs over (within a cell of the line)."""
         floor = self.floor
         a = floor.cell_of(*start)
         if a not in floor.free:
             return []
         reach = math.ceil(STEP_ONTO_CLEAR_M / floor.cell_m)
         walkable = (floor.free - avoid) | {a}  # the start cell may be held by a close robot
+        mouth = self._near_line(start)  # in the mouth of a gap: only along the narrow line
+        line = floor.fixed_lines[mouth].points if mouth else None
         steps = []
         for di in range(-reach, reach + 1):
             for dj in range(-reach, reach + 1):
@@ -180,6 +271,8 @@ class FloorPlanner:
                 if cell not in floor.clear or cell in avoid:
                     continue
                 xy = floor.centre(cell)
+                if line and _nearest_on(xy, line)[0] > floor.cell_m:
+                    continue  # slantwise past the corner of what flanks the gap
                 d = math.dist(start, xy)
                 if d <= STEP_ONTO_CLEAR_M and line_cells(floor, [tuple(start), xy]) <= walkable:
                     steps.append((d, xy))
@@ -292,6 +385,20 @@ class FloorPlanner:
 def rest_of_exit(point, line):
     """point가 line(꺾은선)에서 JOIN_M 안이면 가장 가까운 구간 위 발(수직으로 내린 점)부터 남은 점들.
     멀거나 끝을 지났으면 None. 접히거나 겹친 선은 가장 가까운 구간을 고르므로 맞지 않는다."""
+    best = _nearest_on(point, line)
+    if best is None or best[0] > JOIN_M:
+        return None
+    _, k, u, foot = best
+    if k == len(line) - 2 and u >= 1.0:
+        return None  # 선 끝을 지났다
+    rest = [tuple(p) for p in line[k + 1:]]
+    if math.dist(foot, rest[0]) > 1e-9:
+        rest.insert(0, foot)  # 수직으로 붙어 선 그대로(모서리를 안 자름)
+    return rest
+
+
+def _nearest_on(point, line):
+    """(거리, 구간 번호, 구간 위 위치 u(자르지 않은 값), 발)로 point에서 가장 가까운 구간. 없으면 None."""
     best = None
     for k, ((ax, ay), (bx, by)) in enumerate(zip(line, line[1:], strict=False)):
         dx, dy = bx - ax, by - ay
@@ -303,15 +410,7 @@ def rest_of_exit(point, line):
         d = math.dist(point, (ax + uc * dx, ay + uc * dy))
         if best is None or d < best[0] - 1e-12:
             best = (d, k, u, (ax + uc * dx, ay + uc * dy))
-    if best is None or best[0] > JOIN_M:
-        return None
-    _, k, u, foot = best
-    if k == len(line) - 2 and u >= 1.0:
-        return None  # 선 끝을 지났다
-    rest = [tuple(p) for p in line[k + 1:]]
-    if math.dist(foot, rest[0]) > 1e-9:
-        rest.insert(0, foot)  # 수직으로 붙어 선 그대로(모서리를 안 자름)
-    return rest
+    return best
 
 
 def _rest_of_line(point, line):

@@ -1,0 +1,58 @@
+# 실측 경기장 지도 (2026-11-10). 벽 안쪽 2.00 x 1.00 m에 물체 둘
+# (sim/fleet_gz_sim/sites/arena_1110.yaml). 핑키 3대용. 관제는 자유바닥
+# (floor_map_arena_1110.yaml)으로 돌고, 레인은 그 길을 그린 것이다.
+#  - 자리 배치는 사용자가 2026-11-10에 정했다: 두 물체는 워크셀의 팔 둘이고 로봇은 그 사이 틈에
+#    도킹해 물건을 싣는다(WORK). 동쪽 벽이 출고(OUTBOUND), 서쪽 벽이 충전과 시작 자리(P-1..P-3)
+#  - 팔 사이 틈은 0.20 m다(실측 0.21 m). 틈에는 벽에서 0.09 m 떨어진 칸이 없어서 WORK 선을
+#    좁은 선(floor map의 narrow_lines)으로 둔다: 가운데 선 x 0.95는 양쪽 물체에서 0.10 m다
+#  - 길은 8자다. WORK 선은 틈을 북쪽에서 남쪽으로 지난다(QW -> W -> WS). 실은 로봇은 남쪽 통로를
+#    동쪽으로 가서 출고 도크(O)에 남쪽에서 들어가 북쪽으로 나오고, 북쪽 통로로 돌아온다
+#  - 충전 자리 셋은 서쪽 벽에서 0.19 m, 서로 0.30 m 떨어져 있다. WORK 들어가는 곳(QW)에 가장
+#    가까운 P-3(위)이 먼저 불리고, 돌아온 로봇도 빈 자리 중 가장 뒤(P-3 쪽)로 간다
+#
+#   y
+#  0.80  P-3   NW ----------> QW <------------------------ ON
+#                             v                             ^
+#  0.50  P-2   WM    [west]   W   [east]                    O   (출고)
+#                             v                             ^
+#  0.20  P-1   SW <---------- WS ------------------------> QO
+#       0.19  0.45  0.65-0.85 0.95 1.05-1.30               1.81  x
+floor_map: floor_map_arena_1110.yaml  # free-floor map (traffic_mode freefloor), in fleet_core/data
+half_width_m: 0.05    # 추정: 레인에서 이 거리까지는 레인 위로 친다
+lane_entry_m: 0.25    # 레인 바닥이 시작되는 거리
+origin_m: [0.0, 0.0]
+# 양방향 쌍은 충전 자리 셋뿐이다. 묶지 않는다(figure8_arena와 같다)
+bundle_two_way: false
+waypoints:
+  - {id: QW, x: 0.95, y: 0.80}     # WORK 대기 지점 (틈의 북쪽 입구 앞)
+  - {id: W, x: 0.95, y: 0.50}      # WORK 도크 (두 팔 사이)
+  - {id: WS, x: 0.95, y: 0.20}     # 틈을 나와 남쪽 통로로
+  - {id: QO, x: 1.81, y: 0.20}     # OUTBOUND 대기 지점
+  - {id: O, x: 1.81, y: 0.50}      # OUTBOUND 도크 (동쪽 벽 앞)
+  - {id: "ON", x: 1.81, y: 0.80}   # 도크를 떠나 북쪽으로
+  - {id: SW, x: 0.45, y: 0.20}     # 서쪽 끝 아래
+  - {id: WM, x: 0.45, y: 0.50}     # 서쪽 끝 가운데
+  - {id: NW, x: 0.45, y: 0.80}     # 서쪽 끝 위
+  - {id: P-1, x: 0.19, y: 0.20}    # 서쪽 벽 앞, 아래
+  - {id: P-2, x: 0.19, y: 0.50}    # 서쪽 벽 앞, 가운데
+  - {id: P-3, x: 0.19, y: 0.80}    # 서쪽 벽 앞, 위
+lanes:
+  - {from: QW, to: W}
+  - {from: W, to: WS}
+  - {from: WS, to: QO}
+  - {from: QO, to: O}
+  - {from: O, to: "ON"}
+  - {from: "ON", to: QW}
+  - {from: WS, to: SW}
+  - {from: SW, to: WM}
+  - {from: WM, to: NW}
+  - {from: NW, to: QW}
+two_way:  # 충전 자리는 막다른 곳이라 같은 레인으로 들고 난다
+  BAY1: [SW, P-1]
+  BAY2: [WM, P-2]
+  BAY3: [NW, P-3]
+stations:
+  WORK: {dock: W, queue: [[QW, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[QO, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+# WORK를 기다리는 줄이다: 뒤 칸일수록 WORK 들어가는 곳(QW)에 가깝고 먼저 불린다.
+parking: [P-1, P-2, P-3]

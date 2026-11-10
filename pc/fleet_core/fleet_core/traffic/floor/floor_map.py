@@ -7,6 +7,11 @@
 고정 선(fixed_lines)은 좁은 곳·도킹 접근·출고 앞에서 따라야 하는 선과 방향이다. 점 순서가 방향이다.
 고정 선은 통째로 잠근다(양방향 통로에서 마주 오지 않게). rolling_lines에 적은 선은 한 방향만 다니는
 선이라 바닥처럼 잠금 앞 거리만큼만 굴려 잠그고, 접근선 한 대 규칙도 쓰지 않는다(뒤 로봇이 선 위에 줄 선다).
+narrow_lines에 적은 고정 선은 clear 칸이 없는 좁은 틈(두 팔 사이 도크)을 지난다. 로봇이 선 위로만
+달리므로 칸이 아니라 선의 모든 점이 막힌 곳까지 반지름 + wall_margin_m 이상이면 된다(픽셀 1/4 간격으로
+재고, 점마다 그 간격의 반만큼 더 요구한다). 그 선이 지나는 칸 중 clear가 아닌 칸이 line_floor다(틈 안).
+자유 경로는 틈에 들어가지 않는다: 틈에는 그 선으로만 들어가고, 틈 안의 로봇은 선을 따라 앞으로만 나온다.
+좁은 선은 rolling_lines에도 있어야 한다(통째 잠금과 접근선 한 대 규칙은 틈에서 따져 보지 않았다).
 robot_half_width_m(있으면): 차동구동 로봇은 옆으로 가지 않으니 곧게 달리는 동안은 반폭 + cell_margin_m만
 잠그고, 제자리에서 돌 수 있는 곳(출발점, 끝점, 크게 꺾이는 점 앞)만 반지름 + cell_margin_m 원으로 잠근다.
 """
@@ -93,6 +98,7 @@ class FloorMap:
         self.fixed_lines = {name: FixedLine(name, tuple(tuple(map(float, p)) for p in points))
                             for name, points in (data.get("fixed_lines") or {}).items()}
         self.rolling_lines = self._read_rolling(data.get("rolling_lines") or [])
+        self.narrow_lines = self._read_narrow(data.get("narrow_lines") or [])
         self.robot_half_width_m = self._read_half_width(data.get("robot_half_width_m"))
         # beside a straight run only: robot_half_width_m + side_margin_m (default cell_margin_m)
         self.side_margin_m = self._read_side_margin(data.get("side_margin_m", self.cell_margin_m))
@@ -105,9 +111,43 @@ class FloorMap:
         self.free = frozenset(c for c in self._ids if self._cell_free(c))
         wall = self.robot_radius_m + self.wall_margin_m
         self.clear = frozenset(c for c in self.free if self._box_gap_to_wall(c) >= wall)
+        # cells under each narrow line that are not clear (the gap): driven along that line only
+        self.line_floor_of = {name: frozenset(
+            self.cell_of(x, y) for x, y in self._samples(self.fixed_lines[name], self.px_m / 4)
+        ) - self.clear for name in sorted(self.narrow_lines)}
+        self.line_floor = frozenset().union(*self.line_floor_of.values())
         self._check()
 
     # ---- reading ------------------------------------------------------------------------
+
+    def _read_narrow(self, names) -> frozenset:
+        if not isinstance(names, list) or any(not isinstance(n, str) or n not in self.fixed_lines
+                                              for n in names):
+            raise FloorMapError(f"narrow_lines {names!r} must list fixed line names")
+        if not set(names) <= self.rolling_lines:
+            raise FloorMapError(f"narrow_lines {names!r} must be rolling lines too")
+        return frozenset(names)
+
+    def _samples(self, line, step: float) -> list:
+        """Points along a fixed line, at most step apart, the ends of every part included."""
+        found = []
+        for a, b in zip(line.points, line.points[1:], strict=False):
+            steps = max(1, math.ceil(math.dist(a, b) / step - 1e-9))
+            found += [(a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps)
+                      for k in range(steps + 1)]
+        return found
+
+    def _on_narrow_line(self, pose) -> bool:
+        """pose is a point of a narrow line (a dock at its end or along it)."""
+        for name in self.narrow_lines:
+            points = self.fixed_lines[name].points
+            for (ax, ay), (bx, by) in zip(points, points[1:], strict=False):
+                dx, dy = bx - ax, by - ay
+                u = ((pose[0] - ax) * dx + (pose[1] - ay) * dy) / (dx * dx + dy * dy or 1.0)
+                u = min(1.0, max(0.0, u))
+                if math.dist(pose, (ax + u * dx, ay + u * dy)) <= 1e-6:
+                    return True
+        return False
 
     def _read_rolling(self, names) -> frozenset:
         if not isinstance(names, list) or any(n not in self.fixed_lines for n in names
@@ -183,19 +223,32 @@ class FloorMap:
         return frozenset(occupied), res, (x0, y0), (width * res, height * res)
 
     def _check(self) -> None:
-        for name, pose in [*self.docks.items(), *self.parking]:
+        wall = self.robot_radius_m + self.wall_margin_m
+        for name, pose in self.docks.items():
+            if self.cell_of(*pose) not in self.clear and not (
+                    self._on_narrow_line(pose) and self._gap_to_wall(*pose, wall) >= wall - 1e-9):
+                raise FloorMapError(f"{name} at {pose} is not on clear floor")
+        for name, pose in self.parking:
             if self.cell_of(*pose) not in self.clear:
                 raise FloorMapError(f"{name} at {pose} is not on clear floor")
         for line in self.fixed_lines.values():
             if len(line.points) < 2:
                 raise FloorMapError(f"fixed line {line.name} needs two points")
-            for a, b in zip(line.points, line.points[1:], strict=False):
-                steps = max(1, math.ceil(math.dist(a, b) / (self.cell_m / 2)))
-                for k in range(steps + 1):
-                    x, y = a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps
-                    if self.cell_of(x, y) not in self.clear:
-                        raise FloorMapError(f"fixed line {line.name} leaves clear floor at "
-                                            f"({x:.2f}, {y:.2f})")
+            if line.name in self.narrow_lines:
+                # the distance to a wall changes by at most the way between two points, so
+                # points step apart that keep wall + step / 2 keep the whole line at wall
+                step = self.px_m / 4
+                need = wall + step / 2
+                for x, y in self._samples(line, step):
+                    if (self.cell_of(x, y) not in self.free
+                            or self._gap_to_wall(x, y, need) < need - 1e-9):
+                        raise FloorMapError(f"narrow line {line.name} is nearer than "
+                                            f"{wall:.2f} m to a wall at ({x:.2f}, {y:.2f})")
+                continue
+            for x, y in self._samples(line, self.cell_m / 2):
+                if self.cell_of(x, y) not in self.clear:
+                    raise FloorMapError(f"fixed line {line.name} leaves clear floor at "
+                                        f"({x:.2f}, {y:.2f})")
 
     def _cell_free(self, cell) -> bool:
         i, j = cell
@@ -222,11 +275,12 @@ class FloorMap:
                     best = min(best, math.hypot(dx, dy))
         return best
 
-    def _gap_to_wall(self, x: float, y: float) -> float:
-        """(x, y)에서 가장 가까운 막힌 픽셀이나 지도 끝까지의 거리."""
+    def _gap_to_wall(self, x: float, y: float, limit: float = math.inf) -> float:
+        """(x, y)에서 가장 가까운 막힌 픽셀이나 지도 끝까지의 거리. limit보다 먼 것은 찾지 않고
+        limit을 돌려준다(가까운지만 볼 때)."""
         x0, y0 = self.origin
         width, height = self.cols * self.cell_m, self.rows * self.cell_m
-        best = min(x - x0, y - y0, x0 + width - x, y0 + height - y)
+        best = min(x - x0, y - y0, x0 + width - x, y0 + height - y, limit)
         reach = int(math.ceil(best / self.px_m)) + 1
         pc, pr = int((x - x0) / self.px_m), int((y - y0) / self.px_m)
         for col in range(pc - reach, pc + reach + 1):

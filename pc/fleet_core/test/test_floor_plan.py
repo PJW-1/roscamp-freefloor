@@ -306,3 +306,191 @@ def test_the_step_onto_clear_floor_leaves_a_start_cell_held_by_a_close_robot():
     start = (1.0, 0.76)
     path = FloorPlanner(floor).plan(start, (1.6, 0.4), avoid=frozenset({floor.cell_of(*start)}))
     assert path is not None and floor.cell_of(*path[1]) in floor.clear
+
+
+# ---- narrow lines: a dock in a gap that holds no clear cell --------------------------------
+
+def _gap_floor():
+    from test_floor_map import gap_data
+    from fleet_core.traffic.floor.floor_map import FloorMap
+    return FloorMap(gap_data())
+
+
+def test_a_leg_goes_into_and_out_of_a_dock_on_a_narrow_line():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    floor = _gap_floor()
+    planner = FloorPlanner(floor)
+    way_in = planner.leg((0.21, 0.75), (0.75, 0.45), in_line="work_in")
+    assert way_in is not None and way_in.points[-2:] == [(0.75, 0.75), (0.75, 0.45)]
+    way_out = planner.leg((0.75, 0.45), (1.29, 0.15), out_line="work_out")
+    assert way_out is not None and way_out.points[:2] == [(0.75, 0.45), (0.75, 0.15)]
+
+
+def test_a_robot_stopped_on_a_narrow_line_goes_on_along_it():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.75, 0.57), (0.75, 0.45), in_line="work_in")
+    assert route is not None and route.points == [(0.75, 0.57), (0.75, 0.45)]
+
+
+def test_free_paths_keep_out_of_the_gap_of_a_narrow_line():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    path = planner.plan((0.75, 0.75), (0.75, 0.15))  # straight through would be the shortest
+    assert path is not None
+    route_points = [(a[0] + (b[0] - a[0]) * k / 50, a[1] + (b[1] - a[1]) * k / 50)
+                    for a, b in zip(path, path[1:]) for k in range(51)]
+    assert not [p for p in route_points if 0.65 < p[0] < 0.85 and 0.30 < p[1] < 0.60]
+    assert planner.plan((0.21, 0.75), (0.75, 0.45)) is None  # the dock is reached by its line only
+
+
+def _in_gap(points):
+    return [p for p in points if 0.65 < p[0] < 0.85 and 0.30 < p[1] < 0.60]
+
+
+def test_a_robot_in_the_gap_without_a_line_to_follow_leaves_forward_along_the_narrow_lines():
+    """Told to go somewhere else while on the way in (no out line, no in line): on to the dock
+    and out along the way out, tagged as fixed line all the way, then over the floor."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.75, 0.55), (0.21, 0.75))
+    assert route is not None
+    assert route.points[:3] == [(0.75, 0.55), (0.75, 0.45), (0.75, 0.15)]
+    assert [name for _, _, name in route.fixed] == ["work_in", "work_out"]
+    assert route.fixed[0][0] == 0.0 and route.fixed[-1][1] == pytest.approx(0.40)
+    assert all(p[0] == 0.75 for p in _in_gap(route.points))
+    assert route.points[-1] == (0.21, 0.75)
+
+
+@pytest.mark.parametrize("x", [0.725, 0.775])
+def test_a_report_off_the_centre_line_in_the_gap_goes_on_without_a_sideways_step(x):
+    """Reports are a few cm off. Every point the robot is sent to is on the centre line, and it
+    joins the line 0.05 m ahead, not square to it (a turn on the spot in the gap), whichever
+    line the robot is on. This is where it is sent, not proof that the body clears the walls:
+    a robot that really stands 2.5 cm off the line has 0.075 m to the box, less than the 0.09 m
+    the line keeps."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    way_in = planner.leg((x, 0.55), (0.75, 0.45), in_line="work_in")
+    assert way_in is not None
+    assert way_in.points == [(x, 0.55), pytest.approx((0.75, 0.50)), (0.75, 0.45)]
+    way_out = planner.leg((x, 0.40), (1.29, 0.15), out_line="work_out")
+    assert way_out is not None
+    assert way_out.points[:3] == [(x, 0.40), pytest.approx((0.75, 0.35)), (0.75, 0.15)]
+    lost = planner.leg((x, 0.40), (1.29, 0.15))
+    assert lost is not None
+    assert lost.points[:3] == [(x, 0.40), pytest.approx((0.75, 0.35)), (0.75, 0.15)]
+    assert [name for _, _, name in lost.fixed] == ["work_out"]
+    docked = planner.leg((x, 0.455), (1.29, 0.15), out_line="work_out")  # report behind the dock
+    assert docked is not None
+    assert docked.points[:3] == [(x, 0.455), pytest.approx((0.75, 0.40)), (0.75, 0.15)]
+    near_end = planner.leg((x, 0.48), (0.75, 0.45), in_line="work_in")  # 0.03 m before the dock
+    assert near_end is not None and near_end.points == [(x, 0.48), (0.75, 0.45)]
+
+
+def test_no_free_path_starts_in_the_gap():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    assert planner.plan((0.75, 0.50), (0.21, 0.75)) is None
+    assert planner.plan((0.77, 0.40), (0.21, 0.75)) is None
+
+
+def test_a_robot_on_clear_floor_beside_the_way_in_does_not_cut_into_the_gap():
+    """0.06 m beside the line just past its start: not straight to the dock (that would enter
+    the gap off its centre line) but to the line start first."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.69, 0.72), (0.75, 0.45), in_line="work_in")
+    assert route is not None and route.points[-2:] == [(0.75, 0.75), (0.75, 0.45)]
+    assert all(p[0] == 0.75 for p in _in_gap(route.points))
+
+
+def test_a_report_beside_the_mouth_of_the_gap_is_not_taken_for_a_robot_in_it():
+    """A robot passing the mouth whose report falls a few cm into the wall margin (clear floor
+    is within 0.10 m) steps back onto clear floor as anywhere else; it is not sent through
+    the dock."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    assert planner._gap_line((0.69, 0.62)) is None
+    assert planner._gap_line((0.75, 0.50)) == "work_in"
+    route = planner.leg((0.69, 0.62), (0.21, 0.75))
+    assert route is not None and not _in_gap(route.points)
+    assert not route.fixed
+
+
+def test_a_robot_past_the_end_of_a_narrow_way_out_is_not_sent_back_into_the_gap():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.75, 0.14), (1.29, 0.15), out_line="work_out")
+    assert route is not None and not _in_gap(route.points)
+    assert route.points[0] == (0.75, 0.14) and route.points[-1] == (1.29, 0.15)
+
+
+def test_a_robot_on_the_dock_of_a_narrow_line_is_there_already():
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    planner = FloorPlanner(_gap_floor())
+    route = planner.leg((0.75, 0.45), (0.75, 0.45), in_line="work_in")
+    assert route is not None and route.points == [(0.75, 0.45)] and route.length == 0.0
+
+
+def test_from_the_mouth_of_a_gap_a_start_steps_only_onto_clear_cells_beside_the_line():
+    """Just inside the mouth (clear floor within 0.10 m) a start steps onto clear floor as
+    anywhere else, but only onto clear cells whose centre is within a cell of the narrow
+    line, also when the nearest of them are taken. (The next test checks the steps keep off
+    the walls, from sampled points all over the mouths.)"""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    floor = _gap_floor()
+    planner = FloorPlanner(floor)
+    start = (0.75, 0.62)
+    assert planner._gap_line(start) is None  # the mouth, not deep in the gap
+    steps = planner._steps_onto_clear(start)
+    assert steps and all(abs(x - 0.75) <= floor.cell_m for x, _ in steps)
+    taken = frozenset(floor.cell_of(*xy) for xy in steps[:1])
+    later = planner._steps_onto_clear(start, taken)
+    assert later and all(abs(x - 0.75) <= floor.cell_m for x, _ in later)
+    assert not {floor.cell_of(*xy) for xy in later} & taken
+    shut = frozenset(floor.cell_of(*xy) for xy in steps[:4])  # both columns of the line taken
+    assert planner._steps_onto_clear(start, shut) == []  # it waits; nothing slantwise instead
+    off_floor = planner._steps_onto_clear((0.30, 0.52))  # a wall margin away from any gap
+    assert off_floor and any(abs(x - 0.30) > floor.cell_m for x, _ in off_floor)
+
+
+def mouth_steps(floor, planner, parts=(0.2, 0.5, 0.8)):
+    """(start, step) for points (parts of a cell, squared) in every cell beside a narrow line
+    that is not deep in the gap, and the starts among them that get no step at all."""
+    found, stuck = [], []
+    near = {(c[0] + di, c[1] + dj) for c in floor.line_floor
+            for di in range(-6, 7) for dj in range(-6, 7)}  # JOIN_M and the mouths, in cells
+    for i, j in sorted((floor.free - floor.clear) & near):
+        for a in parts:
+            for b in parts:
+                start = (floor.origin[0] + (i + a) * floor.cell_m,
+                         floor.origin[1] + (j + b) * floor.cell_m)
+                if planner._near_line(start) is None or planner._gap_line(start):
+                    continue
+                steps = planner._steps_onto_clear(start)
+                found += [(start, step) for step in steps]
+                if not steps:
+                    stuck.append(start)
+    return found, stuck
+
+
+def nearer_a_wall(floor, start, step) -> float:
+    """How much nearer a wall the straight step comes than its start is."""
+    along = [(start[0] + (step[0] - start[0]) * k / 20, start[1] + (step[1] - start[1]) * k / 20)
+             for k in range(21)]
+    # a start in a cell that is not clear is within 0.09 m + a cell diagonal (0.13 m) of a wall
+    limit = 0.15
+    return floor._gap_to_wall(*start, limit) - min(floor._gap_to_wall(*p, limit) for p in along)
+
+
+def test_sampled_points_in_the_mouths_of_a_gap_have_a_step_that_keeps_off_the_walls():
+    """Nine points in every cell beside the narrow lines that is neither clear nor deep in the
+    gap: none is left without a way back onto clear floor, and at 21 points along it no step
+    is more than half a cell (1.5 cm) nearer a wall than the point it starts from."""
+    from fleet_core.traffic.floor.planner import FloorPlanner
+    floor = _gap_floor()
+    found, stuck = mouth_steps(floor, FloorPlanner(floor))
+    assert found and not stuck
+    assert max(nearer_a_wall(floor, start, step) for start, step in found) <= floor.cell_m / 2
+
