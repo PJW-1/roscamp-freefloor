@@ -1,0 +1,1 @@
+sim_time,robot,event,episode,state,truth_x,truth_y,truth_yaw,amcl_x,amcl_y,amcl_yaw,err_m,yaw_err_deg,report_age_s,next_state,duration_s,max_err_m,note

@@ -1,0 +1,58 @@
+# Free-floor map for the real arena, fourth layout (2026-11-10 night, "v4"): 1.98 x 0.99 m inside
+# the walls and four objects, read by the 07d7 Pinky from 20 standing places
+# (/home/ane/ros2camp/real_arena_slam_v4_2026-11-10, build_v4.py). arena_v4_fine.pgm is the 1 cm
+# map the site generator writes from sim/fleet_gz_sim/sites/arena_v4.yaml; it has the cells of the
+# scan map, and the robots localise on the same file. Coordinates are those of the lane map
+# sim/fake_robots/maps/arena_v4.yaml, which names this file in its floor_map key.
+image: arena_v4_fine.pgm
+resolution: 0.01
+origin: [-0.15, -0.15, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+# Robot and cells as floor_map_real_arena.yaml, but wall_margin_m is 0.003 here (0.01 there, 0.005
+# on v3): the passage north of object 3 is 0.17 m on this map (0.174 m between the scan points),
+# so its centre line is 0.085 m from both sides and a narrow line needs robot_radius_m +
+# wall_margin_m. A Pinky is 0.11 m wide: 3 cm to each side on the centre line.
+cell_m: 0.03
+robot_radius_m: 0.08
+cell_margin_m: 0.03
+robot_half_width_m: 0.06
+side_margin_m: 0.02
+wall_margin_m: 0.003
+# Stations where the user set them for v3: OUTBOUND before the middle of the west wall, the work
+# dock in the south-east corner, waiting in the north-east.
+docks:
+  WORK: [1.78, 0.17]
+  OUTBOUND: [0.17, 0.52]
+# The line waiting for WORK, along the north and the east wall of the empty east part (the last
+# is nearest to the way into WORK and goes first). Robots come out of the corridor north of
+# object 4 at (1.30, 0.875); the first spot is 0.27 m from there so that the mouth stays free.
+parking:
+  - {id: P-1, x: 1.57, y: 0.87}
+  - {id: P-2, x: 1.86, y: 0.87}
+  - {id: P-3, x: 1.86, y: 0.58}
+# A figure of eight, as the user asked on 2026-11-10 (map architecture picture): the middle
+# passage (between objects 2/3 and object 4) is where the two loops run together, northwards only.
+#   work_in:      into the dock from the north-west. Not rolling: a robot that waits for the dock
+#                 stands before the line and not on it. (On the line it stood 0.3 m before the
+#                 dock, in the way of the robot that leaves west along the south wall. Nothing
+#                 reserves that way out: it is a planned path.)
+#   outbound_in:  from the east mouth of the south corridor west along the south wall, up the
+#                 whole middle passage, west through the passage north of object 3 (0.17 m) and
+#                 down the west wall into the dock from the north.
+#   outbound_out: on south out of the dock (the dock is driven through), east between objects 1
+#                 and 2 (0.20 m) and between objects 2 and 3 (0.21 m) back into the middle passage,
+#                 up the rest of it and east through the corridor north of object 4 to its mouth.
+# So a robot is on a line all the way round the west loop and through both corridors, and drives
+# a planned path only in the empty east part: from the mouth of the north corridor to the waiting
+# spots or to work_in, and from the work dock to the start of outbound_in. (With the way out
+# ending in the middle passage, a robot whose way north was taken for a moment planned its way
+# back through the south corridor, against the others.) Every way into the west part is 0.2 m or
+# less, so OUTBOUND has a fixed way out here (v3 had none) and both of its lines are narrow lines.
+fixed_lines:
+  work_in: [[1.50, 0.45], [1.78, 0.17]]
+  outbound_in: [[1.32, 0.125], [0.97, 0.125], [0.97, 0.905], [0.60, 0.905], [0.30, 0.86], [0.17, 0.74], [0.17, 0.52]]
+  outbound_out: [[0.17, 0.52], [0.17, 0.33], [0.26, 0.24], [0.586, 0.274], [0.649, 0.432], [0.70, 0.445], [0.97, 0.445], [0.97, 0.875], [1.30, 0.875]]
+rolling_lines: [outbound_in, outbound_out]
+narrow_lines: [outbound_in, outbound_out]

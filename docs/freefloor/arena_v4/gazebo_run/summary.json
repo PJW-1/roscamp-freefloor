@@ -1,0 +1,134 @@
+{
+  "pass": true,
+  "orders_total": 8,
+  "orders_shipped": 8,
+  "orders_partial": 0,
+  "orders_held": 0,
+  "duration_s": 253.60000000000002,
+  "timed_out": false,
+  "violations": [],
+  "min_release_distance_m": 0.08409478516607292,
+  "checks": {
+    "all_orders_finished": {
+      "value": true,
+      "expected": true,
+      "ok": true
+    },
+    "orders_shipped": {
+      "value": 8,
+      "expected": 8,
+      "ok": true
+    },
+    "orders_partial": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "orders_held": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "orders_shipped_min": {
+      "value": 8,
+      "minimum": 0,
+      "ok": true
+    },
+    "fifo_violations": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "dual_arm_overlaps": {
+      "value": 0,
+      "expected": 0,
+      "arms_never_placing": [],
+      "ok": true
+    },
+    "zone_holder_max": {
+      "value": 1,
+      "expected": 1,
+      "ok": true
+    },
+    "released_without_position_check": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "unheld_zone_pose": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "released_while_off_lane": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "path_not_connected": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "robot_idle": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "direct_returns_min": {
+      "value": 5,
+      "minimum": 0,
+      "ok": true
+    },
+    "parked_while_backlog": {
+      "value": 0,
+      "expected": 0,
+      "ok": true
+    },
+    "shipped_before_operator": {
+      "value": 0,
+      "minimum": 0,
+      "ok": true
+    },
+    "detours_around_isolated": {
+      "value": 0,
+      "minimum": 0,
+      "ok": true
+    },
+    "timed_out": {
+      "value": false,
+      "expected": false,
+      "ok": true
+    },
+    "bound_after_reinstate_min": {
+      "value": 0,
+      "minimum": 0,
+      "ok": true
+    },
+    "shipped_after_reinstate_min": {
+      "value": 0,
+      "minimum": 0,
+      "ok": true
+    },
+    "unexpected_errors": {
+      "value": 0,
+      "expected": 0,
+      "codes": [],
+      "ok": true
+    },
+    "order_results": {
+      "value": {},
+      "expected": {},
+      "ok": true
+    },
+    "events_include": {
+      "missing": [],
+      "ok": true
+    },
+    "event_counts": {
+      "value": {},
+      "expected": {},
+      "ok": true
+    }
+  }
+}
