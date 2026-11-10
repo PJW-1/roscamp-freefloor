@@ -212,6 +212,13 @@ class FleetManager:
                                         error_yaw_deg)
             self._pump()
 
+    def on_retreat_result(self, robot, goal_id, success, reason="") -> None:
+        """Retreat(물러나기)의 결과. reason: OBSTACLE_BEHIND, TIMEOUT, CANCELED, FAILED(성공은 빈 값)."""
+        self._input("on_retreat_result", robot, goal_id, success, reason)
+        if not self._robot_refused("retreat result", robot):
+            self.traffic.on_retreat_result(robot, goal_id, success, reason)
+            self._pump()
+
     def on_fill_result(self, goal_id, success, placed, missing, reason="") -> None:
         self._input("on_fill_result", goal_id, success, placed, missing, reason)
         self.arm.on_fill_result(goal_id, success, placed, missing, reason)
