@@ -636,6 +636,18 @@ def test_a_robot_coming_out_of_the_gap_stops_clear_of_the_junction_while_one_goe
     assert "a" in set().union(*(inside for inside, _, _ in turns[first:]))
 
 
+def test_a_stop_inside_the_junction_does_not_end_a_lock_inside_it():
+    """A cap (a stop before a line) inside a box span whose start the lock has already reached:
+    no lock end inside the span is tried (Codex on e81fc79: it fell back to the end inside)."""
+    traffic = fleet({"b": (1.20, 0.125, math.pi)})
+    leg = heads_in(traffic, "b")
+    (s0, s1), = traffic._box_spans(leg.route)
+    leg.s, leg.s_lock = s0 - 0.05, s0
+    ends = traffic._candidates(leg, cap=(s0 + s1) / 2)
+    assert all(not s0 + 1e-9 < e < s1 - 1e-9 for e in ends), (s0, s1, ends)
+    assert traffic._candidates(leg) == [s1]  # without the cap: the whole span
+
+
 def test_the_junction_is_the_only_box_on_this_map():
     """A box is the turn circle of a rolling line where another rolling line runs through the
     turn and comes in from another side. Where the way in and the way out part at the top of the

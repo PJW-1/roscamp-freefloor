@@ -1806,7 +1806,8 @@ class FloorController(TrafficController):
         """Lock ends to try, best first. Inside a fixed line: its end, else stop before it.
         A rolling (one-way) line rolls like the floor, but inside a junction box span
         (_box_spans) it is the same: the span's end, else stop before it (no further than cap:
-        where the span ends past cap, only the stop before it, or as before if that is behind)."""
+        where the span ends past cap, only the stop before it, and nothing once the lock is
+        there: it waits until cap moves)."""
         route = leg.route
         want = min(route.length, leg.s + self.params.floor_lock_ahead_m)
         if cap is not None:
@@ -1830,7 +1831,6 @@ class FloorController(TrafficController):
                     if s0 + 1e-9 < e < s1 - 1e-9 and leg.s_lock < s1 - 1e-9:
                         picks = ([s1] if cap is None or s1 <= cap + 1e-9 else []) + (
                             [s0] if s0 > leg.s_lock + 1e-9 else [])
-                        picks = picks or [e]
                         break
             out.extend(p for p in picks if p not in out)
         return out
