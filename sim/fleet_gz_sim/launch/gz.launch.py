@@ -127,9 +127,12 @@ def seed_of(text: str) -> int | None:
     if not text.strip():
         return None
     try:
-        return int(text)
+        seed = int(text)
     except ValueError:
         raise ValueError(f"scenario_seed must be an integer, got {text!r}") from None
+    if seed < 0:  # 노드에서는 음수가 '파일의 seed'라는 뜻이다
+        raise ValueError(f"scenario_seed must be 0 or more, got {text!r}")
+    return seed
 
 
 def battery_low_of(text: str) -> float | None:

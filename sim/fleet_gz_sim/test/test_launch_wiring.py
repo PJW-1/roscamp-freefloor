@@ -774,6 +774,12 @@ def test_a_scenario_seed_that_is_no_integer_stops_the_launch(made, tmp_path):
         run(made, scenario=random_scenario(tmp_path), scenario_seed="seven")
 
 
+def test_a_negative_scenario_seed_stops_the_launch(made, tmp_path):
+    """음수는 노드에서 '파일의 seed'라는 뜻이라, launch와 노드가 다른 시간표를 보게 된다."""
+    with pytest.raises(ValueError, match="scenario_seed"):
+        run(made, scenario=random_scenario(tmp_path), scenario_seed="-3")
+
+
 def test_the_launch_loads_the_scenario_with_the_same_seed(made, tmp_path, monkeypatch):
     from fleet_gz_sim import fleet_setup
     seen = []
