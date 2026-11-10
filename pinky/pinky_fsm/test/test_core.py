@@ -1230,6 +1230,37 @@ def test_a_running_reverse_path_is_waited_for_from_when_its_cancel_is_accepted()
     assert backups(fsm.tick(t + 0.5 + grace + 0.1, AT_P4, STILL, no_obstacle))
 
 
+@pytest.mark.parametrize("accept_lost", [False, True])
+def test_a_lost_follow_path_result_ends_the_move_but_still_holds_a_retreat(accept_lost):
+    """재검토 2: 결과 future 오류는 goal이 끝났다는 뜻이 아니다. 이동은 aborted처럼 다루되,
+    그 FollowPath는 취소가 받아들여질 때까지 다음 Retreat를 붙든다."""
+    twin, fsm = ready(), ready()
+    (send,) = sends(move(fsm, "g1", 0.0))
+    move(twin, "g1", 0.0)
+    cmds = fsm.nav_lost(send.seq, 0.5, (*P3, NORTH), no_obstacle)
+    assert cmds == twin.nav_result(send.seq, "aborted", 0.5, (*P3, NORTH), no_obstacle)
+    fsm.retreat("r1", 1.0, 0.3, 0.1)
+    for resent in sends(cmds):  # aborted 뒤 다시 보낸 FollowPath의 취소는 받아들여졌다
+        fsm.nav_cancel_accepted(resent.seq, 1.0)
+    if accept_lost:
+        fsm.nav_cancel_accepted(send.seq, 1.0)
+    out = []
+    for k in range(1, 40):
+        t = 1.0 + 0.1 * k
+        fsm.heartbeat(t)
+        out += fsm.tick(t, (*P3, NORTH), STILL, no_obstacle)
+    assert bool(backups(out)) == accept_lost
+    assert (Finish("r1", False, TIMEOUT) in out) != accept_lost
+
+
+def test_a_lost_result_of_a_forgotten_follow_path_does_not_bring_it_back():
+    fsm = ready()
+    (send,) = sends(move(fsm, "g1", 0.0))
+    fsm.nav_result(send.seq, "canceled", 0.5, (*P3, NORTH), no_obstacle)
+    fsm.nav_lost(send.seq, 0.6, (*P3, NORTH), no_obstacle)
+    assert not fsm._nav_live  # noqa: SLF001
+
+
 def test_an_accepted_cancel_of_a_finished_follow_path_changes_nothing():
     fsm = ready()
     (send,) = sends(move(fsm, "g1", 0.0))

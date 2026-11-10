@@ -363,6 +363,17 @@ class PinkyFsm:
             self._nav_live[seq] = now + self.p.nav_result_grace_s
         return []
 
+    def nav_lost(self, seq: int, now: float, pose: Sequence[float] | None,
+                 obstacle: Obstacle) -> list:
+        """FollowPath 결과 future가 오류로 끝났다. goal은 아직 돌 수 있다(Codex 재검토 2).
+        실행 중인 목표에는 aborted처럼 다루되, 그 FollowPath는 노드가 보낸 취소가 받아들여질
+        때까지(nav_cancel_accepted) 잊지 않는다."""
+        until = self._nav_live.get(seq)
+        cmds = self.nav_result(seq, "aborted", now, pose, obstacle)
+        if until is not None:
+            self._nav_live[seq] = until
+        return cmds
+
     def _nav_busy(self, now: float) -> bool:
         """결과가 안 온 FollowPath가 아직 돌 수 있다. 취소가 받아들여진 뒤 여유가 지난 것은
         잊는다."""

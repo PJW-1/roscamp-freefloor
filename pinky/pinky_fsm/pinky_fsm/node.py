@@ -22,6 +22,7 @@ from functools import partial
 
 import rclpy
 from action_msgs.msg import GoalStatus
+from action_msgs.srv import CancelGoal
 from fleet_interfaces.action import Dock, MoveTo, Retreat
 from fleet_interfaces.msg import RobotState
 from geometry_msgs.msg import Pose2D, PoseStamped
@@ -60,6 +61,8 @@ FEEDBACK_PERIOD_S = 0.2
 UNKNOWN_BATTERY = -1.0  # 배터리 토픽이 없을 때. 관제는 보여 주기만 한다
 _OUTCOME = {GoalStatus.STATUS_SUCCEEDED: "succeeded", GoalStatus.STATUS_ABORTED: "aborted",
             GoalStatus.STATUS_CANCELED: "canceled"}
+# 취소 답이 이렇다면 그 goal은 돌지 않는다
+_GONE = (CancelGoal.Response.ERROR_GOAL_TERMINATED, CancelGoal.Response.ERROR_UNKNOWN_GOAL_ID)
 _RESULT = {"move": MoveTo.Result, "dock": Dock.Result, "retreat": Retreat.Result}
 _FLOAT_PARAMS = (
     "arrival_tolerance_m", "connect_tolerance_m", "refresh_within_m", "refresh_every_s",
@@ -402,9 +405,11 @@ class PinkyFsmNode(Node):
         self._cancel_on_accept |= self._nav_pending
 
     def _on_nav_cancel(self, seq: int, future) -> None:
-        """취소가 받아들여진 FollowPath만 core가 결과 없이도 잊을 수 있다(Codex 재검토 1)."""
+        """취소가 받아들여진 FollowPath만 core가 결과 없이도 잊을 수 있다(Codex 재검토 1).
+        이미 끝났거나 서버가 모르는 goal도 돌지 않으므로 같다(재검토 2: 결과를 잃은 goal)."""
         try:
-            accepted = bool(future.result().goals_canceling)
+            resp = future.result()
+            accepted = bool(resp.goals_canceling) or resp.return_code in _GONE
         except Exception as exc:  # noqa: BLE001 - 답이 없으면 계속 돌 수 있다고 본다
             self.get_logger().warn(f"follow_path #{seq} cancel got no answer: {exc}")
             return
@@ -412,6 +417,7 @@ class PinkyFsmNode(Node):
             self.get_logger().warn(f"follow_path #{seq} cancel was refused")
             return
         with self._lock:
+            self._nav_handles.pop(seq, None)  # 다시 취소하지 않는다. 결과가 오면 그대로 받는다
             self._run(self._fsm.nav_cancel_accepted(seq, time.monotonic()))
 
     def _on_nav_response(self, seq: int, future) -> None:
@@ -442,9 +448,17 @@ class PinkyFsmNode(Node):
             if outcome != "succeeded" and code:
                 self.get_logger().info(f"follow_path #{seq} {outcome}: "
                                        f"{code} {res.result.error_msg}")
-        except Exception as exc:  # noqa: BLE001 - 결과를 잃었다. 실패로 보고 core가 세운다
+        except Exception as exc:  # noqa: BLE001 - 결과를 잃었다. goal은 아직 돌 수 있다
             self.get_logger().warn(f"follow_path #{seq} lost its result: {exc}")
-            outcome, code = "aborted", 0
+            with self._lock:
+                handle = self._nav_handles.get(seq)
+                if handle is not None:  # 취소가 받아들여질 때까지 core가 이 goal을 기다린다
+                    handle.cancel_goal_async().add_done_callback(
+                        partial(self._on_nav_cancel, seq))
+                pose = self._pose()
+                self._run(self._fsm.nav_lost(seq, time.monotonic(),
+                                             pose[:3] if pose else None, self._obstacle))
+            return
         with self._lock:
             self._nav_handles.pop(seq, None)
             pose = self._pose()
