@@ -29,7 +29,9 @@ FLOOR = floor_map_for(LANES)
 REAL = floor_map_for(load_lane_map(REPO / "sim" / "fake_robots" / "maps" / "real_arena.yaml"))
 BODY = FLOOR.robot_radius_m + FLOOR.cell_margin_m
 SPEED = 0.15
-LOCKS = {"floor_lock_ahead_m": 0.15, "floor_extend_step_m": 0.05, "release_distance_m": 0.17}
+# floor_shortcut: the shortcut is off unless asked for; the tests here drive it
+LOCKS = {"floor_lock_ahead_m": 0.15, "floor_extend_step_m": 0.05, "release_distance_m": 0.17,
+         "floor_shortcut": True}
 THREE = (("pinky1", "P-3"), ("pinky2", "P-2"), ("pinky3", "P-1"))
 KINDS = [{"A": 1, "C": 1}, {"B": 1}, {"D": 1, "A": 1}, {"C": 1}, {"B": 1, "D": 1}, {"A": 1}]
 MIDDLE_X = (0.85, 1.08)   # between objects 2 and 3 and object 4
@@ -237,10 +239,10 @@ DOCK = (*FLOOR.docks["OUTBOUND"], SOUTH)
 ON_THE_WAY = (0.97, 0.20, NORTH)  # going up the middle passage, 0.245 m before the fork
 
 
-def fleet(poses, left=None):
+def fleet(poses, left=None, **over):
     """Traffic of a fleet manager on this floor, robots standing at poses (x, y, yaw).
-    left: robot -> seconds of arm work it has left at its station."""
-    params = replace(load_params(), traffic_mode="freefloor", **LOCKS)
+    left: robot -> seconds of arm work it has left at its station. over: other parameters."""
+    params = replace(load_params(), traffic_mode="freefloor", **{**LOCKS, **over})
     core = FleetManager(LANES, params, list(poses), lambda: 0.0)
     for _ in range(3):
         for name, (x, y, yaw) in poses.items():
@@ -300,6 +302,37 @@ def test_a_robot_takes_the_shortcut_when_it_is_through_before_the_docked_robot_c
     assert move.y > OBJECT_3[1] + 0.05 and move.x < GAP_13[0]  # sent past the gaps in one go
     assert [c.code for c in traffic._out
             if isinstance(c, EventOut) and c.robot == "b"].count("FLOOR_SHORTCUT") == 1
+
+
+def test_the_floor_without_the_shortcut_is_the_figure_eight_alone():
+    """Switched off, the controller's floor is the one before the shortcut was drawn: the other
+    lines and the floor under them as they are, the gap between objects 1 and 3 no floor."""
+    plain = FLOOR.without_shortcuts()
+    assert set(plain.fixed_lines) == set(FLOOR.fixed_lines) - {"outbound_short"}
+    assert all(plain.fixed_lines[name] == FLOOR.fixed_lines[name] for name in plain.fixed_lines)
+    assert plain.rolling_lines == plain.narrow_lines == {"outbound_in", "outbound_out"}
+    assert plain.line_floor_of == {name: FLOOR.line_floor_of[name] for name in plain.narrow_lines}
+    gap = FLOOR.cell_of(*GAP_13)
+    assert gap in FLOOR.line_floor_of["outbound_short"] and gap not in plain.line_floor
+    assert (plain.free, plain.clear, plain.docks) == (FLOOR.free, FLOOR.clear, FLOOR.docks)
+    assert plain.parking == FLOOR.parking
+
+
+def test_no_robot_takes_the_shortcut_while_the_switch_is_off():
+    """floor_shortcut is off unless asked for: the floor is then the one without the shortcut
+    (its line, its gap cells), and a robot that would take it stays on the way in."""
+    for name in ("fleet_params.yaml", "fleet_params_real_arena.yaml"):
+        assert load_params(DEFAULT_FLOOR.parent / name).floor_shortcut is False
+    traffic = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 8.0}, floor_shortcut=False)
+    assert traffic.floor.shortcuts == {} and "outbound_short" not in traffic.floor.fixed_lines
+    assert traffic.floor.cell_of(*GAP_13) not in traffic.floor.line_floor
+    at_work(traffic, "a")
+    leg = heads_in(traffic, "b")
+    assert leg.in_line == "outbound_in"
+    assert cell(traffic, *GAP_13) not in traffic.zones.held_set("b")
+    assert not [c for c in traffic._out if isinstance(c, EventOut) and c.code == "FLOOR_SHORTCUT"]
+    on = fleet({"a": DOCK, "b": ON_THE_WAY}, left={"a": 8.0})
+    assert on.floor.shortcuts == {"outbound_short": "outbound_in"}  # the tests here turn it on
 
 
 def test_a_robot_sent_again_to_the_dock_from_the_gap_goes_on_along_the_shortcut():
@@ -440,9 +473,10 @@ def test_a_report_thrown_aside_before_the_last_corner_does_not_put_the_robot_pas
     assert leg.s == pytest.approx(corner - 0.16, abs=0.01)
     b = moved(traffic, "b", 0.223, 0.641, west, reports=1)
     assert leg.s < corner
+    once = leg.s
     for _ in range(5):  # the ticks until the next report see the same one: no further
         traffic._follow(b)
-    assert leg.s < corner
+    assert leg.s == once
 
 
 def test_a_robot_that_was_silent_for_a_while_is_followed_up_to_where_it_is():
@@ -452,7 +486,9 @@ def test_a_robot_that_was_silent_for_a_while_is_followed_up_to_where_it_is():
     leg = heads_in(traffic, "b")
     x, y = leg.route.at(0.60)
     moved(traffic, "b", x, y, math.pi, reports=1)
-    assert 0.0 < leg.s < 0.60
+    assert leg.s == pytest.approx(0.15)  # FOLLOW_AHEAD_M
+    moved(traffic, "b", x, y, math.pi, reports=1)
+    assert leg.s == pytest.approx(0.30)
     moved(traffic, "b", x, y, math.pi, reports=5)
     assert leg.s == pytest.approx(0.60, abs=0.01)
 
@@ -516,6 +552,47 @@ def test_a_robot_keeps_to_the_way_in_while_another_leaves_the_dock_for_the_gaps(
     traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "P-1")
     assert traffic._legs["a"].out_line == "outbound_out"
     assert heads_in(traffic, "b").in_line == "outbound_in"
+
+
+def test_a_robot_on_its_way_out_keeps_the_line_after_a_leg_that_was_not_planned():
+    """A robot leaving the dock is asked for a new leg on every tick while another robot stands on
+    its parking spot. On a tick with no plan to spare the leg has no route; the leg after it has to
+    go on along the way out all the same, the only way out of the west part. (Gazebo,
+    gz_arena_v4_slow_work, 2026-11-11: FLOOR_NO_PATH on every tick, then the robot stood 0.26 m
+    from the dock for good and the next one could not leave it.)"""
+    spots = dict(FLOOR.parking)
+    traffic = fleet({"a": DOCK, "b": (*spots["P-1"], EAST)})
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    assert traffic._legs["a"].out_line == "outbound_out" and traffic._legs["a"].route is not None
+    traffic._drive(a)
+    moved(traffic, "a", 0.23, 0.27, -math.pi / 4)  # out of the dock, before the gap
+    traffic._plan_budget = 0
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    assert traffic._legs["a"].route is None  # planned on the next tick
+    traffic._plan_budget = 99
+    traffic._start_leg(a, "TO_PARK", None, "P-1")  # asked again before that
+    leg = traffic._legs["a"]
+    assert leg.out_line == "outbound_out"
+    assert leg.route is not None and points(leg.route)[-1] == pytest.approx(spots["P-1"])
+    assert not [c for c in traffic._out if isinstance(c, EventOut) and c.code == "FLOOR_NO_PATH"]
+
+
+def test_a_robot_off_its_way_out_does_not_take_it_up_again_after_a_leg_with_no_route():
+    """The line is kept only while the robot is on it: past its end the next leg is a free one."""
+    spots = dict(FLOOR.parking)
+    traffic = fleet({"a": DOCK})
+    a = traffic._missions["a"]
+    traffic._start_leg(a, "TO_PARK", None, "P-1")
+    traffic._drive(a)
+    moved(traffic, "a", 1.45, 0.87, EAST, reports=200)  # past the mouth of the north corridor
+    traffic._plan_budget = 0
+    traffic._start_leg(a, "TO_PARK", None, "P-2")
+    traffic._plan_budget = 99
+    traffic._start_leg(a, "TO_PARK", None, "P-2")
+    leg = traffic._legs["a"]
+    assert leg.route is not None and not leg.route.fixed
+    assert points(leg.route)[-1] == pytest.approx(spots["P-2"])
 
 
 def test_a_robot_takes_the_shortcut_when_the_one_that_left_is_past_the_gaps():
@@ -765,3 +842,11 @@ def test_every_robot_drives_the_figure_eight_one_way(monkeypatch):
 def test_robots_take_the_shortcut_in_a_run_and_ship_every_order(tmp_path, monkeypatch):
     _, world = run(tmp_path, monkeypatch, 1, THREE, 6, 20, 600)
     assert any(e.code == "FLOOR_SHORTCUT" for e in world.events)
+
+
+def test_robots_ship_every_order_without_the_shortcut_while_the_switch_is_off(tmp_path,
+                                                                              monkeypatch):
+    monkeypatch.setitem(LOCKS, "floor_shortcut", False)
+    _, world = run(tmp_path, monkeypatch, 1, THREE, 6, 20, 600)
+    assert world.core.traffic.metrics["shortcuts"] == 0
+    assert not any(e.code == "FLOOR_SHORTCUT" for e in world.events)

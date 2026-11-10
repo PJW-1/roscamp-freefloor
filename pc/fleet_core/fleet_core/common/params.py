@@ -102,6 +102,8 @@ class FleetParams:
     floor_dock_schedule: bool = False
     floor_pre_admit_margin_s: float = 1.0  # 딱 맞는 때보다 이만큼 먼저 출발
     floor_dock_aging_s: float = 30.0  # 이만큼 기다리면 다시 먼저 온 순서(굶김 방지)
+    # 끔: 지도의 지름길(shortcuts)을 없는 것으로 본다. 켬: 접근선 대신 탈 수 있을 때 탄다
+    floor_shortcut: bool = False
 
 
 def load_params(path=None) -> FleetParams:

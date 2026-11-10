@@ -160,6 +160,9 @@ class FloorController(TrafficController):
     def __init__(self, site, params, robots, clock, next_goal_id=None, floor=None):
         super().__init__(site, params, robots, clock, next_goal_id)
         self.floor = floor or floor_map_for(site)
+        if not params.floor_shortcut:
+            # 지름길을 끄면 지름길이 없는 바닥으로 돈다: 그 선도, 그 선 밑의 좁은 칸도 없다
+            self.floor = self.floor.without_shortcuts()
         if self.floor.robot_radius_m < params.robot_radius_m:
             raise ValueError(f"the floor map radius {self.floor.robot_radius_m} m is smaller "
                              f"than the fleet radius {params.robot_radius_m} m")
@@ -750,6 +753,10 @@ class FloorController(TrafficController):
         span = old.route.fixed_at(old.s) if old is not None and old.route is not None else None
         if out_line is None and span is not None and span[2] == old.out_line:
             out_line = old.out_line  # 출구선을 나가던 중: 남은 선을 마저 간다
+        elif out_line is None and old is not None and old.route is None and old.out_line:
+            # 앞 다리가 길 없이 끝났다(이번 틱에 계획할 몫이 없었다, 길을 못 찾았다): 나가던 선을
+            # 잊지 않는다. 선 위에 없으면 _plan이 뺀다
+            out_line = old.out_line
         in_line = self._line(station, "in") if station else None
         if (span is not None and span[2] == old.in_line
                 and self._shortcut.get(in_line) == old.in_line):

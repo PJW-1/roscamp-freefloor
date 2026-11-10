@@ -520,6 +520,22 @@ def test_a_shortcut_leaves_its_line_and_joins_it_again():
     assert merge == pytest.approx(0.20 + 0.90 + math.hypot(0.40, 0.10))  # (0.35, 0.55) on
 
 
+def test_a_floor_without_its_shortcuts_is_the_floor_drawn_without_them():
+    """The floor a controller uses while the shortcut is switched off: the shortcut is no line of
+    it at all (no fixed, rolling or narrow line, no floor under it), the rest is as it was."""
+    data = shortcut_data(narrow_lines=["outbound_in", "outbound_short"])
+    floor, plain = FloorMap(data), FloorMap(data).without_shortcuts()
+    assert plain.shortcuts == {} and plain.shortcut_parts == {}
+    assert set(plain.fixed_lines) == {"outbound_in"}
+    assert plain.rolling_lines == plain.narrow_lines == {"outbound_in"}
+    assert set(plain.line_floor_of) == {"outbound_in"}
+    assert plain.fixed_lines["outbound_in"] == floor.fixed_lines["outbound_in"]
+    assert (plain.free, plain.clear, plain.docks) == (floor.free, floor.clear, floor.docks)
+    assert floor.shortcuts == {"outbound_short": "outbound_in"}  # the floor itself is not changed
+    assert data["shortcuts"] == {"outbound_short": "outbound_in"}
+    assert plain.without_shortcuts() is plain  # nothing to leave out
+
+
 @pytest.mark.parametrize("bad", [
     "outbound_in", ["outbound_short"], [], 0, {"outbound_short": "nowhere"},
     {"nowhere": "outbound_in"}, {"outbound_short": "outbound_short"},
@@ -562,10 +578,15 @@ def test_a_shortcut_that_meets_another_line_again_away_from_its_dock_is_refused(
     """The traffic control holds the stretch a shortcut shares with the other lines from its fork
     at once. Meeting another line again further on (not only where it touches the robot at the
     dock, as the shortcut's own line does) would be a place it stands in the way, not held."""
+    from dataclasses import replace
+
     from fleet_core.traffic.floor.controller import FloorController
-    site = load_lane_map()
-    FloorController(site, load_params(), ["r1"], lambda: 0.0, floor=FloorMap(shortcut_data()))
+    site, on = load_lane_map(), replace(load_params(), floor_shortcut=True)
+    FloorController(site, on, ["r1"], lambda: 0.0, floor=FloorMap(shortcut_data()))
     data = shortcut_data()
     data["fixed_lines"]["across"] = [[1.15, 0.75], [1.15, 0.25]]  # crosses it at x 1.15
     with pytest.raises(ValueError, match="outbound_short"):
-        FloorController(site, load_params(), ["r1"], lambda: 0.0, floor=FloorMap(data))
+        FloorController(site, on, ["r1"], lambda: 0.0, floor=FloorMap(data))
+    # switched off, the shortcut is no line of the floor: nothing to refuse
+    off = FloorController(site, load_params(), ["r1"], lambda: 0.0, floor=FloorMap(data))
+    assert "outbound_short" not in off.floor.fixed_lines
