@@ -496,3 +496,56 @@ def test_the_edge_left_to_another_robot_grows_as_the_place_gets_better_known():
     for _ in range(3):
         core2.on_robot_state("a", *AT_WORK, 0.0, "IDLE")  # 흔들림 없는 보고
     assert core2.traffic._body_reach(core2.traffic._missions["a"]) == core2.traffic._near
+
+
+# ---- 리뷰(6e3a120)에서 고친 것 -------------------------------------------------------------
+
+def unsettled_warnings(out):
+    return [c for c in out if type(c).__name__ == "EventOut" and c.code == "FLOOR_PLACE_UNSETTLED"]
+
+
+def later(core, now, dt, k):
+    """시계를 dt만큼 보낸다(관제 시계는 보고가 와야 간다). 보고는 1 cm씩 달라 자리가 가라앉지 않는다."""
+    now[0] += dt
+    core.on_robot_state("a", HERE[0] + 0.01 * (k % 2), HERE[1], 0.0, "IDLE")
+
+
+def test_the_first_move_wait_does_not_start_again_when_the_move_could_not_be_sent():
+    """다 기다린 뒤 앞 칸을 못 잡아 보내지 못해도, 다음에 다시 5초를 기다리지 않고 경고도 한 번만 낸다."""
+    from fleet_core.traffic.floor.controller import FIRST_MOVE_WAIT_S
+    core, now = floor_core()
+    traffic, m = core.traffic, core.traffic._missions["a"]
+    later(core, now, 0.1, 0)
+    assert not traffic._settled(m)
+    later(core, now, FIRST_MOVE_WAIT_S + 0.1, 1)
+    assert traffic._settled(m)  # 다 기다렸다(이번에는 보내지 못했다고 하자)
+    later(core, now, 0.1, 2)
+    assert not traffic._knows_place(m)
+    assert traffic._settled(m)  # 처음부터 다시 기다리지 않는다
+    later(core, now, FIRST_MOVE_WAIT_S + 0.1, 3)
+    assert traffic._settled(m)
+    assert len(unsettled_warnings(core.tick())) == 1
+
+
+def test_a_robot_placed_again_waits_for_its_first_move_from_the_start():
+    from fleet_core.traffic.floor.controller import FIRST_MOVE_WAIT_S
+    core, now = floor_core()
+    traffic, m = core.traffic, core.traffic._missions["a"]
+    later(core, now, 0.1, 0)
+    assert not traffic._settled(m)
+    later(core, now, FIRST_MOVE_WAIT_S + 0.1, 1)
+    assert traffic._settled(m)
+    m.placed = False  # 치웠다가 다시 올렸다
+    later(core, now, 0.1, 2)
+    assert m.placed and not traffic._settled(m)
+
+
+def test_the_body_reach_is_never_less_than_the_robot_radius_of_the_map():
+    """폭보다 긴 로봇: 돌 때 모서리(반폭 x sqrt 2)가 지도의 몸 반지름보다 작으면 몸 반지름으로 본다."""
+    core, _ = figure8_core(("a",))
+    traffic, m = core.traffic, core.traffic._missions["a"]
+    traffic.floor.robot_half_width_m = 0.03  # 폭 6 cm, 몸 반지름은 그대로 0.08
+    traffic._near = 0.05
+    for _ in range(3):
+        core.on_robot_state("a", *AT_WORK, 0.0, "IDLE")  # 흔들림 없는 보고
+    assert traffic._body_reach(m) >= traffic.floor.robot_radius_m

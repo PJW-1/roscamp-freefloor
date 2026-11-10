@@ -186,7 +186,8 @@ class FloorController(TrafficController):
         self._phase_at: dict[str, tuple[str, float]] = {}  # 로봇 -> (단계, 들어간 시각)
         self._stand_ban: dict[str, set[str]] = {}  # 접근선 -> 미리 출발한 로봇이 못 서는 칸
         self._stand: dict[str, deque] = {}  # 로봇 -> 서 있는 동안의 최근 보고 자리(STAND_REPORTS개)
-        self._unsettled: dict[str, float] = {}  # 로봇 -> 첫 출발을 기다리기 시작한 시각
+        # 로봇 -> 첫 출발을 기다리기 시작한 시각(다 기다렸으면 None)
+        self._unsettled: dict[str, float | None] = {}
         self._started: set[str] = set()  # 자리 잡은 뒤 MoveTo를 한 번이라도 받은 로봇
         self._recent: dict[str, deque] = {}  # 로봇 -> 달리는 동안의 최근 보고 자리
         self._span_cache: dict[str, tuple] = {}  # 로봇 -> (경로, 나아간 칸 수, 칸별 시각표)
@@ -311,8 +312,9 @@ class FloorController(TrafficController):
 
     def _body_reach(self, m: _Mission) -> float:
         """서 있는 로봇의 몸이 평균 자리에서 닿을 수 있는 반지름: 제자리에서 돌 때 모서리
-        (반폭의 sqrt(2)배) + 평균의 오차(3 x 보고 표준편차 / sqrt(보고 수)). 곧게 달릴 때 쥐는
-        반지름(_near)보다 작게 보지 않고, 보고가 둘보다 적으면 몸 원 전체로 본다."""
+        (반폭의 sqrt(2)배, 지도의 몸 반지름보다 작지 않게) + 평균의 오차(3 x 보고 표준편차 /
+        sqrt(보고 수)). 곧게 달릴 때 쥐는 반지름(_near)보다 작게 보지 않고, 보고가 둘보다 적으면
+        몸 원 전체로 본다."""
         seen = self._stand.get(m.name)
         half = self.floor.robot_half_width_m
         if not seen or len(seen) < 2 or not half:
@@ -320,7 +322,8 @@ class FloorController(TrafficController):
         n = len(seen)
         mx, my = self._mean(seen)
         var = sum((x - mx) ** 2 + (y - my) ** 2 for x, y in seen) / (2 * (n - 1))
-        return max(self._near, math.hypot(half, half) + 3.0 * math.sqrt(var / n))
+        corner = max(self.floor.robot_radius_m, math.hypot(half, half))  # 폭보다 긴 몸
+        return max(self._near, corner + 3.0 * math.sqrt(var / n))
 
     def _settled(self, m: _Mission) -> bool:
         """첫 출발을 해도 된다: 이미 달린 적이 있거나, 서 있는 자리를 믿을 만하거나(_knows_place),
@@ -329,11 +332,13 @@ class FloorController(TrafficController):
             self._unsettled.pop(m.name, None)
             return True
         since = self._unsettled.setdefault(m.name, self._clock())
+        if since is None:
+            return True  # 이미 다 기다렸다: 보내지 못해 다시 물어도 처음부터 기다리지 않는다
         if self._clock() - since < FIRST_MOVE_WAIT_S:
             return False
         self._event("WARN", "FLOOR_PLACE_UNSETTLED",
                     f"first move after {FIRST_MOVE_WAIT_S:.0f} s without a settled place", m.name)
-        self._unsettled.pop(m.name, None)
+        self._unsettled[m.name] = None
         return True
 
     def _hold_where_it_stands(self, m: _Mission) -> None:
