@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
       "action/Dock.action"
       "action/FillBasket.action"
       "action/SwapBasket.action"
+      "action/Retreat.action"
       "srv/SetRunMode.srv"
       "srv/ReportOrder.srv"
       "srv/SubmitOrder.srv"
