@@ -110,3 +110,18 @@ def test_the_three_pinkys_start_on_the_three_parking_spots():
         assert poses[robot][:2] == pytest.approx(site.waypoint_pose(cfg.start))
     data = yaml.safe_load(SCENARIO.read_text(encoding="utf-8"))
     assert data["map"] == "arena_v4"
+
+
+@pytest.mark.parametrize("name, robots, orders", [
+    ("gz_arena_v4_two", ["pinky1", "pinky2"], 10),
+    ("gz_arena_v4_slow_work", ["pinky1", "pinky2", "pinky3"], 8),
+])
+def test_the_scenarios_that_take_the_shortcut_more_run_on_the_same_site(name, robots, orders):
+    path = PKG / "scenarios" / f"{name}.yaml"
+    found = arena_for(path, PKG, FAKE)
+    assert found.name == "arena_v4"
+    site, scenario = load(path, found.lane_map)
+    assert list(scenario.robots) == robots
+    assert {cfg.start for cfg in scenario.robots.values()} <= set(site.parking)
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert len(data["orders"]) == data["expect"]["orders_shipped"] == orders
