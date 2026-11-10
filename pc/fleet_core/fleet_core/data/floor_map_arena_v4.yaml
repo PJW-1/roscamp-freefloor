@@ -36,8 +36,9 @@ parking:
 # passage (between objects 2/3 and object 4) is where the two loops run together, northwards only.
 #   work_in:      into the dock from the north-west. Not rolling: a robot that waits for the dock
 #                 stands before the line and not on it. (On the line it stood 0.3 m before the
-#                 dock, in the way of the robot that leaves west along the south wall. Nothing
-#                 reserves that way out: it is a planned path.)
+#                 dock, in the way of the robot that leaves west along the south wall. That
+#                 way out is a planned path, locked piece by piece as the robot drives and not
+#                 reserved as a whole.)
 #   outbound_in:  from the east mouth of the south corridor west along the south wall, up the
 #                 whole middle passage, west through the passage north of object 3 (0.17 m) and
 #                 down the west wall into the dock from the north.
