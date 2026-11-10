@@ -39,6 +39,8 @@ STOP = "STOP"
 
 MOVE = "move"
 DOCK = "dock"
+# 관제가 시키는 물러나기(RetreatCmd, 제안). 임무 경로(path)를 쓰지 않는다. 판단은 교통 층이 한다
+RETREAT = "retreat"
 
 # 맵에 적힌 스테이션 동작
 FILL = "fill"

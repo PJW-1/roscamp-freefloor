@@ -28,6 +28,8 @@ invariants instead of lane checks. Extra columns, filled for both modes:
     pre_admits      freefloor: 선이 비기 전에 차례를 준 횟수(floor_dock_schedule). 출발 성공 수는 아니다
 
     --set KEY=VALUE  freefloor 실행의 파라미터를 바꾼다(여러 번 가능). 예: --set floor_dock_schedule=true
+                     floor_block_retreat나 floor_corridor_clear를 켜면 가짜 로봇이 실제 방향을 yaw로
+                     보고한다(곧게 물러나는 방향을 관제가 알아야 한다). 끄면 예전처럼 yaw 0
 """
 from __future__ import annotations
 
@@ -77,7 +79,13 @@ def build(data, map_, seed, traffic_mode):
                       arm_s_per_item=parsed.arm.seconds_per_item,
                       swap_step_s=parsed.arm.swap_seconds / 2, dock_s=parsed.dock.duration_s,
                       gaussian_noise=True,
+                      report_heading=_retreats(),
                       floor=floor)
+
+
+def _retreats() -> bool:
+    """물러나기(Retreat)를 켠 실행인가. 켜면 관제가 로봇이 보는 방향을 알아야 한다."""
+    return bool(OVERRIDES.get("floor_block_retreat") or OVERRIDES.get("floor_corridor_clear"))
 
 
 def _line_idle(traffic) -> int:
@@ -180,7 +188,7 @@ def run(map_, scenario, seed, traffic_mode, timeout_s=None, frame_every=0):
         placement_outside=len(getattr(world, "placement_outside", ())) if metrics else "",
     )
     row.update({f"wait_{r}_s": round(s, 3) for r, s in meter.wait.items()})
-    if any(f["type"] == "blocked" for f in data.get("faults") or []):
+    if any(f["type"] in baseline.OBJECT_FAULTS for f in data.get("faults") or []):
         row.update(object_still_s=round(meter.object_still, 3), object_hits=meter.object_hits)
     return row, world
 
