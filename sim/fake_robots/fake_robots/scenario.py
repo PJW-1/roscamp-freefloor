@@ -15,6 +15,7 @@ ARM_FAULTS = ("arm_fail", "swap_partial")
 FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
 # 이 고장이 난 로봇은 돌아오지 않으므로 주차를 기다리지 않는다.
 GONE_FAULTS = ("stuck", "operator_remove")
+OBJECT_RADIUS_M = 0.10  # object 고장의 기본 반지름: 사람 다리나 작은 상자
 REINSTATE_BASKETS = ("EMPTY", "NONE")  # operator_reinstate가 관리자 대신 알리는 바구니
 EXPECT_DEFAULTS = {
     "all_orders_finished": True,

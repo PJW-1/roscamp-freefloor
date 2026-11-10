@@ -2,7 +2,9 @@
 
 로봇은 직선으로 달리며 잡음 섞인 자세를 보고한다. 가짜 중앙 서버가 주문판을 관리한다.
 장애 일정으로 통신 두절, 내비 중단, 도킹 실패, 정지, 앞 물체(막힘), 보고 밀림,
-로봇에서 떨어진 path(bad_path), 팔 실패와 무응답, 배터리 부족(low_battery)을 넣는다.
+로봇에서 떨어진 path(bad_path), 팔 실패와 무응답, 배터리 부족(low_battery), 지도에 없는 물체
+(object: 자리, 시각, 머무는 시간, 반지름)를 넣는다.
+관제가 시킨 물러나기(RetreatCmd)는 Nav2 BackUp(path가 비면)이나 후진 FollowPath처럼 돈다.
 로봇은 핑키처럼 받은 path가 제 자리를 지나는지 본다(지시서 7.5). 멀면 PATH_NOT_CONNECTED.
 매 단계 안전 불변식을 검사하므로 이 세계를 쓰는 테스트는 모두 불변식도 검증한다.
 """
@@ -22,6 +24,7 @@ from fleet_core.common.commands import (
     MoveCmd,
     OrderRecord,
     ReportOrderCmd,
+    RetreatCmd,
     SwapCmd,
 )
 from fleet_core.common.params import load_params
@@ -64,7 +67,7 @@ class VirtualRobot:
     speed: float
     noise: float
     goal_id: int | None = None
-    goal_kind: str = ""  # 이동 또는 도킹
+    goal_kind: str = ""  # 이동(move), 도킹(dock) 또는 물러나기(retreat)
     target: tuple[float, float] | None = None
     goal_elapsed: float = 0.0
     dock_left: float = 0.0
@@ -87,6 +90,8 @@ class VirtualRobot:
     drift: float = 0.0  # 보고를 진행 방향 왼쪽으로 미는 거리, 실제 위치는 그대로
     bad_paths: int = 0  # 다음 path 목표 몇 개를 옆으로 밀린 채 받는다
     bad_path_offset: float = 0.0
+    retreat_speed: float = 0.0  # 물러나기 속도. 갈 곳은 via와 target
+    retreat_turns: bool = False  # path를 따르는 물러나기: 진행 반대 방향을 본다
 
 
 @dataclass
@@ -119,6 +124,7 @@ class SimWorld:
     params: object = None
     gaussian_noise: bool = False  # 한계 없는 잡음. 실제 위치추정과 ROS 가짜 노드가 그렇다
     site: object = None  # 예전 테스트는 셀 배치를 쓴다
+    report_heading: bool = False  # 보고 yaw가 실제 진행 방향이다. 끄면 예전처럼 0
 
     def __post_init__(self):
         self.t = 0.0
@@ -136,6 +142,7 @@ class SimWorld:
         self.arm_faults = {"fill_fail": [], "fill_silent": 0, "swap_fail": 0, "swap_partial": 0,
                            "swap_silent": 0}
         self.pending_faults = sorted(self.faults, key=lambda f: f["at_s"])
+        self.objects = self._objects()
         self.reported: dict[str, tuple[float, float]] = {}
         self.virtual = {}
         for name, spec in self.robots.items():
@@ -153,6 +160,20 @@ class SimWorld:
         self.min_true_release_distance = float("inf")
         self.path_refusals: list[tuple[float, str, int]] = []  # (시각, 로봇, goal_id)
         self.batteries = self._battery_models()
+
+    def _objects(self) -> list[tuple[float, float, float, float, float]]:
+        """object 고장: (나타날 때, 사라질 때, x, y, 반지름). 관제는 모른다."""
+        found = [f for f in self.faults if f["type"] == "object"]
+        if not found:
+            return []
+        from fake_robots.scenario import OBJECT_RADIUS_M  # 이 고장을 쓰는 세계만 필요하다
+        return [(f["at_s"], f["at_s"] + f["duration_s"], f["x"], f["y"],
+                 f.get("radius_m", OBJECT_RADIUS_M)) for f in found]
+
+    def objects_now(self) -> list[tuple[float, float, float]]:
+        """지금 바닥에 있는 물체 (x, y, 반지름)."""
+        return [(x, y, radius) for start, end, x, y, radius in self.objects
+                if start <= self.t < end]
 
     def _battery_models(self) -> dict:
         """low_battery가 있는 로봇만 배터리 모형을 둔다. 나머지는 예전처럼 배터리를 안 보낸다."""
@@ -270,6 +291,8 @@ class SimWorld:
                 self.run_mode = fault["mode"]
             elif kind == "low_battery":
                 pass  # 배터리 모형(self.batteries)이 시각을 직접 본다
+            elif kind == "object":
+                pass  # objects_now가 시각을 직접 본다
             else:
                 raise ValueError(kind)
 
@@ -322,6 +345,8 @@ class SimWorld:
             r.goal_elapsed += DT
             if r.goal_kind == "dock":
                 self._drive_dock(r)
+            elif r.goal_kind == "retreat":
+                self._drive_retreat(r)
             else:
                 self._drive_move(r)
 
@@ -360,6 +385,41 @@ class SimWorld:
         if dist <= step and not r.via:
             r.x, r.y = r.target
             self._finish_goal(r, self.core.on_move_result, True, "")
+        elif dist > 0:
+            r.x += dx / dist * min(step, dist)
+            r.y += dy / dist * min(step, dist)
+
+    def _drive_retreat(self, r):
+        """뒤로 간다(로봇은 돌아서지 않는다). 남은 길 전체에서 몸이 다른 로봇이나 물체에 닿으면
+        그 자리에 서서 OBSTACLE_BEHIND(Nav2 BackUp처럼). 지금보다 가까워지지 않는 것(앞의 로봇
+        등)은 막지 않는다. 멈춘(stuck) 로봇은 이동처럼 TIMEOUT으로 끝난다."""
+        if r.stuck:
+            if r.goal_elapsed >= NAV_TIMEOUT_AFTER_S:
+                self._finish_goal(r, self.core.on_retreat_result, False, "TIMEOUT")
+            return
+        radius = self.params.robot_radius_m
+        way = [(r.x, r.y), *r.via, r.target]
+        things = [(o.x, o.y, radius) for o in self.virtual.values() if o is not r and not o.removed]
+        for ox, oy, reach in things + self.objects_now():
+            gap = path_gap(ox, oy, way)
+            if gap <= radius + reach and gap < math.dist((ox, oy), (r.x, r.y)) - 1e-9:
+                self._finish_goal(r, self.core.on_retreat_result, False, "OBSTACLE_BEHIND")
+                return
+        step = r.retreat_speed * DT
+        while r.via:
+            gap = math.dist((r.x, r.y), r.via[0])
+            if gap > step:
+                break
+            r.x, r.y = r.via.pop(0)
+            step -= gap
+        aim = r.via[0] if r.via else r.target
+        dx, dy = aim[0] - r.x, aim[1] - r.y
+        dist = math.hypot(dx, dy)
+        if dist > 0 and r.retreat_turns:
+            r.heading = math.atan2(-dy, -dx)  # 진행 반대 방향을 본다
+        if dist <= step and not r.via:
+            r.x, r.y = r.target
+            self._finish_goal(r, self.core.on_retreat_result, True, "")
         elif dist > 0:
             r.x += dx / dist * min(step, dist)
             r.y += dy / dist * min(step, dist)
@@ -446,13 +506,14 @@ class SimWorld:
             y += math.cos(r.heading) * r.drift
             self.reported[r.name] = (x, y)
             state = "BLOCKED" if r.blocked else "MOVING" if r.goal_id else "IDLE"
+            yaw = r.heading if self.report_heading else 0.0
             battery = self.batteries.get(r.name)
             if battery is None:
-                self.core.on_robot_state(r.name, x, y, 0.0, state)
+                self.core.on_robot_state(r.name, x, y, yaw, state)
             else:
                 # 실제 자세와 서 있는지로 충전한다
                 level = battery.percent(self.t, r.x, r.y, r.goal_kind != "move")
-                self.core.on_robot_state(r.name, x, y, 0.0, state, battery=level)
+                self.core.on_robot_state(r.name, x, y, yaw, state, battery=level)
 
     # ---- commands -----------------------------------------------------------------------
 
@@ -472,6 +533,8 @@ class SimWorld:
             self._start_move(item)
         elif isinstance(item, DockCmd):
             self._start_dock(item)
+        elif isinstance(item, RetreatCmd):
+            self._start_retreat(item)
         elif isinstance(item, CancelCmd):
             self._cancel(item)
         else:
@@ -484,6 +547,9 @@ class SimWorld:
         old = r.goal_id
         if r.goal_kind == "move":
             self._queued_results.append((r.name, self.core.on_move_result,
+                                         (r.name, old, False, "CANCELED")))
+        elif r.goal_kind == "retreat":
+            self._queued_results.append((r.name, self.core.on_retreat_result,
                                          (r.name, old, False, "CANCELED")))
         else:
             self._queued_results.append((r.name, self.core.on_dock_result,
@@ -558,6 +624,42 @@ class SimWorld:
         self._queued_results.append((r.name, self.core.on_move_result,
                                      (r.name, cmd.goal_id, False, "PATH_NOT_CONNECTED")))
         return True
+
+    def _start_retreat(self, cmd):
+        """달리던 goal을 세우고(CANCELED) 물러난다. path가 비면 보는 방향 반대로 곧게 distance_m,
+        있으면 그 꺾은선을 후진으로 따른다. path가 로봇에서 lane_error_warn_m보다 멀면 FAILED."""
+        assert cmd.speed_mps > 0.0, f"{cmd} speed"
+        assert 0.0 < cmd.distance_m <= self.params.floor_retreat_max_m + 1e-9, f"{cmd} distance"
+        points = [tuple(p[:2]) for p in cmd.path]
+        if points:
+            length = sum(math.dist(a, b) for a, b in zip(points, points[1:], strict=False))
+            assert len(points) >= 2 and abs(length - cmd.distance_m) <= 1e-6, (
+                f"{cmd} distance is not the path length {length:.6f}")
+        r = self.virtual[cmd.robot]
+        if not r.comm_up or r.removed:
+            return
+        self._preempt(r)
+        r.target, r.via = None, []
+        if points and path_gap(r.x, r.y, points) > self.params.lane_error_warn_m:
+            self._queued_results.append((r.name, self.core.on_retreat_result,
+                                         (r.name, cmd.goal_id, False, "FAILED")))
+            return
+        if points:  # 첫 점은 로봇 자리: 실제 자리에서 다음 점들을 잇는다
+            way = [(r.x, r.y), *points[1:]]
+        else:
+            way = [(r.x, r.y), (r.x - math.cos(r.heading) * cmd.distance_m,
+                                r.y - math.sin(r.heading) * cmd.distance_m)]
+        self._check_retreat_way(r, cmd, way)
+        r.docked_at = ""
+        r.goal_id = cmd.goal_id
+        r.goal_kind = "retreat"
+        r.via, r.target = way[1:-1], way[-1]
+        r.retreat_turns = bool(points)
+        r.retreat_speed = cmd.speed_mps
+        r.goal_elapsed = 0.0
+
+    def _check_retreat_way(self, r, cmd, way):
+        """FloorWorld는 지나갈 칸을 쥐었는지 본다. 레인 세계는 구역 불변식이 매 단계 본다."""
 
     def _start_dock(self, cmd):
         r = self.virtual[cmd.robot]

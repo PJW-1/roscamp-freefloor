@@ -3,7 +3,7 @@
 레인 검사 대신 칸 불변식을 매 단계 본다.
   - 로봇의 실제 몸(반지름 r, 지도에 robot_half_width_m이 있으면 진행 방향의 정사각형)이 닿는 칸은
     모두 그 로봇이 쥔 칸이다(쥔 칸 밖으로 나가지 않음).
-  - 받은 MoveTo path 위 어느 점에서도 몸이 닿는 칸은 그 로봇이 쥔 칸이다.
+  - 받은 MoveTo path 위 어느 점에서도 몸이 닿는 칸은 그 로봇이 쥔 칸이다. Retreat가 갈 길도 같다.
   - 로봇 사이 거리 >= 2r, 물건 수는 그대로(SimWorld와 같은 검사).
 frames를 켜면 tools/floor_view.py가 읽는 기록을 모은다. tick 계산 시간도 잰다.
 """
@@ -159,6 +159,24 @@ class FloorWorld(SimWorld):
         return f > 0 and math.dist((r.x, r.y), a) > LINE_TOLERANCE_M and f <= 1 and \
             math.dist((r.x, r.y), (ax + f * dx, ay + f * dy)) < 0.02
 
+    def _check_retreat_way(self, r, cmd, way):
+        """물러날 길 위 몸이 닿는 칸은 모두 쥔 칸이다(MoveTo path와 같은 검사). 출발 자리와 크게
+        꺾이는 점에서는 원(돈다), 선분 위에서는 진행 방향 정사각형이다."""
+        held = self.core.zones.held_set(cmd.robot)
+        cells = self._footprint(*way[0], r.heading, turning=True)
+        heading = None
+        limit = self.params.eta_turn_min_rad
+        for a, b in zip(way, way[1:], strict=False):
+            if math.dist(a, b) <= 1e-9:
+                continue
+            yaw = math.atan2(b[1] - a[1], b[0] - a[0])
+            if heading is not None and abs(math.remainder(yaw - heading, math.tau)) > limit:
+                cells |= self._footprint(*a, yaw, turning=True)
+            heading = yaw
+            for x, y in sample_line([a, b], self.floor.cell_m / 8):
+                cells |= self._footprint(x, y, yaw)
+        assert cells <= held, f"{cmd} backs over cells it does not hold: {cells - held}"
+
     def _start_dock(self, cmd):
         r = self.virtual[cmd.robot]
         if not r.comm_up or r.removed:
@@ -192,8 +210,9 @@ class FloorWorld(SimWorld):
         for r in present:
             if self.t < r.localizing_until:
                 continue
-            # 서 있거나 MoveTo를 막 받은(아직 출발 자리에서 도는) 로봇은 원
-            turning = r.goal_kind != "move" or r.goal_elapsed == 0.0
+            # 서 있거나 MoveTo를 막 받은(아직 출발 자리에서 도는) 로봇은 원. 물러나는 로봇은
+            # 이동처럼 정사각형(앞뒤가 같다)
+            turning = r.goal_kind not in ("move", "retreat") or r.goal_elapsed == 0.0
             body = self._footprint(r.x, r.y, r.heading, turning=turning)
             if not self.core.traffic._missions[r.name].placed:
                 # not on the map yet (its reported cells were taken): it gets no goal, and no
