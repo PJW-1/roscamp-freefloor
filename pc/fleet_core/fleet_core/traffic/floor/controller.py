@@ -74,6 +74,8 @@ RESERVE_PENALTY_M = 0.5  # extra cost of a cell another robot plans to be in at 
 SIDESTEP_REACH_M = 1.2  # how far a robot looks for a free spot to step aside to
 SIDESTEP_HOLD_S = 3.0  # how long it stays aside before planning its leg again
 FIRST_MOVE_REPORTS = 20  # 첫 출발 전에 모을 서 있는 보고 수(10 Hz면 2 s): 평균의 잡음이 1/4.5로 준다
+FIRST_MOVE_WAIT_S = 5.0  # 자리가 가라앉지 않아도 이만큼 기다렸으면 떠난다(예전처럼 마지막 자리로)
+STAND_REPORTS = 50  # 서 있는 로봇의 자리로 평균 낼 최근 보고 수(10 Hz면 5 s): 조금씩 밀린 로봇을 따라간다
 STAND_STILL_M = 0.001  # 서 있는 보고가 모두 이 안에 모이면 잡음이 없다: 모으지 않고 떠난다
 STAND_JUMP_M = 0.12  # 보고가 평균에서 이보다 멀면 로봇이 옮겨진 것으로 보고 평균을 다시 시작한다
 MOVING_REPORTS = 5  # 달리는 로봇의 자리로 평균 낼 최근 보고 수(10 Hz, 0.15 m/s면 3 cm 뒤처진다)
@@ -183,8 +185,8 @@ class FloorController(TrafficController):
         self.station_left = None  # 매니저가 꽂는다: 로봇 -> 스테이션 작업 남은 초 또는 None
         self._phase_at: dict[str, tuple[str, float]] = {}  # 로봇 -> (단계, 들어간 시각)
         self._stand_ban: dict[str, set[str]] = {}  # 접근선 -> 미리 출발한 로봇이 못 서는 칸
-        # 로봇 -> [x 합, y 합, 보고 수, x 최소, x 최대, y 최소, y 최대]: 서 있는 동안의 보고
-        self._stand: dict[str, list] = {}
+        self._stand: dict[str, deque] = {}  # 로봇 -> 서 있는 동안의 최근 보고 자리(STAND_REPORTS개)
+        self._unsettled: dict[str, float] = {}  # 로봇 -> 첫 출발을 기다리기 시작한 시각
         self._started: set[str] = set()  # 자리 잡은 뒤 MoveTo를 한 번이라도 받은 로봇
         self._recent: dict[str, deque] = {}  # 로봇 -> 달리는 동안의 최근 보고 자리
         self._span_cache: dict[str, tuple] = {}  # 로봇 -> (경로, 나아간 칸 수, 칸별 시각표)
@@ -279,41 +281,60 @@ class FloorController(TrafficController):
             return
         recent.clear()
         seen = self._stand.get(m.name)
-        if seen is not None and math.dist((seen[0] / seen[2], seen[1] / seen[2]),
-                                          (m.x, m.y)) > STAND_JUMP_M:
+        if seen is not None and math.dist(self._mean(seen), (m.x, m.y)) > STAND_JUMP_M:
             seen = None  # 옮겨졌다
         if seen is None:
-            self._stand[m.name] = [m.x, m.y, 1, m.x, m.x, m.y, m.y]
-            return
-        seen[0] += m.x
-        seen[1] += m.y
-        seen[2] += 1
-        seen[3], seen[4] = min(seen[3], m.x), max(seen[4], m.x)
-        seen[5], seen[6] = min(seen[5], m.y), max(seen[6], m.y)
+            seen = self._stand[m.name] = deque(maxlen=STAND_REPORTS)
+        seen.append((m.x, m.y))
+
+    @staticmethod
+    def _mean(points) -> tuple[float, float]:
+        return (sum(p[0] for p in points) / len(points), sum(p[1] for p in points) / len(points))
 
     def _here(self, m: _Mission) -> tuple[float, float]:
-        """로봇 자리: 서 있으면 그동안 보고의 평균, 달리면 최근 보고 몇 개의 평균(보고 잡음이 준다.
-        달릴 때는 조금 뒤처지는데 뒤는 아직 쥔 칸이다). 모은 것이 없으면 마지막 보고."""
+        """로봇 자리: 서 있으면 최근 보고 STAND_REPORTS개의 평균, 달리면 최근 MOVING_REPORTS개의
+        평균(보고 잡음이 준다. 달릴 때는 조금 뒤처지는데 뒤는 아직 쥔 칸이다). 모은 것이 없으면
+        마지막 보고."""
+        seen = self._stand.get(m.name) or self._recent.get(m.name)
+        return self._mean(seen) if seen else (m.x, m.y)
+
+    def _knows_place(self, m: _Mission) -> bool:
+        """서 있는 자리를 평균으로 믿을 만하다: 서 있는 보고가 FIRST_MOVE_REPORTS번 모였거나,
+        보고가 전혀 흔들리지 않는다(둘 이상이 STAND_STILL_M 안)."""
         seen = self._stand.get(m.name)
-        if seen is not None:
-            return (seen[0] / seen[2], seen[1] / seen[2])
-        recent = self._recent.get(m.name)
-        if recent:
-            return (sum(p[0] for p in recent) / len(recent),
-                    sum(p[1] for p in recent) / len(recent))
-        return (m.x, m.y)
+        if not seen:
+            return False
+        if len(seen) >= FIRST_MOVE_REPORTS:
+            return True
+        xs, ys = [p[0] for p in seen], [p[1] for p in seen]
+        return len(seen) >= 2 and max(max(xs) - min(xs), max(ys) - min(ys)) <= STAND_STILL_M
+
+    def _body_reach(self, m: _Mission) -> float:
+        """서 있는 로봇의 몸이 평균 자리에서 닿을 수 있는 반지름: 제자리에서 돌 때 모서리
+        (반폭의 sqrt(2)배) + 평균의 오차(3 x 보고 표준편차 / sqrt(보고 수)). 곧게 달릴 때 쥐는
+        반지름(_near)보다 작게 보지 않고, 보고가 둘보다 적으면 몸 원 전체로 본다."""
+        seen = self._stand.get(m.name)
+        half = self.floor.robot_half_width_m
+        if not seen or len(seen) < 2 or not half:
+            return self._body
+        n = len(seen)
+        mx, my = self._mean(seen)
+        var = sum((x - mx) ** 2 + (y - my) ** 2 for x, y in seen) / (2 * (n - 1))
+        return max(self._near, math.hypot(half, half) + 3.0 * math.sqrt(var / n))
 
     def _settled(self, m: _Mission) -> bool:
-        """첫 출발을 해도 될 만큼 자리를 안다: 이미 달린 적이 있거나, 서 있는 보고가
-        FIRST_MOVE_REPORTS번 모였거나, 보고가 전혀 흔들리지 않는다(둘 이상이 STAND_STILL_M 안)."""
-        if m.name in self._started:
+        """첫 출발을 해도 된다: 이미 달린 적이 있거나, 서 있는 자리를 믿을 만하거나(_knows_place),
+        FIRST_MOVE_WAIT_S를 기다렸다(보고가 계속 튀거나 BLOCKED여서 자리가 가라앉지 않는 로봇)."""
+        if m.name in self._started or self._knows_place(m):
+            self._unsettled.pop(m.name, None)
             return True
-        seen = self._stand.get(m.name)
-        if seen is None:
+        since = self._unsettled.setdefault(m.name, self._clock())
+        if self._clock() - since < FIRST_MOVE_WAIT_S:
             return False
-        if seen[2] >= FIRST_MOVE_REPORTS:
-            return True
-        return seen[2] >= 2 and max(seen[4] - seen[3], seen[6] - seen[5]) <= STAND_STILL_M
+        self._event("WARN", "FLOOR_PLACE_UNSETTLED",
+                    f"first move after {FIRST_MOVE_WAIT_S:.0f} s without a settled place", m.name)
+        self._unsettled.pop(m.name, None)
+        return True
 
     def _hold_where_it_stands(self, m: _Mission) -> None:
         """서 있는 로봇은 평균 자리 둘레의 빈 칸을 채워 둔다. 남이 쥔 칸은 청하지 않는다.
@@ -342,18 +363,21 @@ class FloorController(TrafficController):
 
     def _spare_edge(self, m: _Mission, cells, points) -> set[str]:
         """자리를 아는(_settled) 서 있는 로봇이 출발 원에서 요구하지 않을 칸: 원의 맨 가장자리
-        (자리에서 몸 원 반지름 - cell_margin_m / 2보다 먼 칸)이고, 갈 길의 띠(반폭 띠) 밖이고, 다른
-        로봇이 쥔 칸. 몸(반지름 robot_radius_m)은 그 칸에 닿지 않는다. 맞닿아 선 두 로봇의 원이
-        칸 한 줄 겹쳐 서로 기다리는 것을 막는다. 반폭을 적은 지도에서만 한다(반폭이 없으면 길의
-        띠가 곧 몸 원이라 뺄 칸이 없다)."""
-        if (self._near >= self._body or m.name not in self._stand or not self._settled(m)):
+        (몸이 닿을 수 있는 반지름 _body_reach보다 먼 칸)이고, 갈 길의 띠(반폭 띠) 밖이고, 다른 로봇이
+        쥔 칸. 맞닿아 선 두 로봇의 원이 칸 한 줄 겹쳐 서로 기다리는 것을 막는다. 반폭을 적은
+        지도에서, 서 있는 자리를 믿을 만할 때만 한다(_knows_place)."""
+        if self._near >= self._body or not self._knows_place(m):
             return set()
         here = self._here(m)
-        inner = self._body - self.floor.cell_margin_m / 2
+        inner = self._body_reach(m)
+        if inner >= self._body:
+            return set()
         box, at = self.floor.box_distance, self.floor.cell_at
+        # 출발 원 둘레만 본다(원은 길의 첫 점 둘레로도 잡혀 평균 자리 기준으로는 조금 넘친다)
+        outer = self._body + self.floor.cell_m
         edge = {c for c in cells
                 if self.zones.holder(c) not in (None, m.name)
-                and inner < box(at(c), *here) <= self._body}
+                and inner < box(at(c), *here) <= outer}
         if not edge:
             return edge
         return edge - self._ids(swept_cells(self.floor, points, self._near))
@@ -372,6 +396,10 @@ class FloorController(TrafficController):
         """보고 자리의 몸 칸을 잡는다. 못 잡으면 맵 밖에 두고 다음 보고 때 다시 한다."""
         if m.robot_state in NOT_PLACEABLE:
             return
+        # 새로 올린 로봇: 예전에 서 있던 자리와 달린 적을 잊는다(첫 출발을 다시 기다린다)
+        for memory in (self._stand, self._recent, self._unsettled):
+            memory.pop(m.name, None)
+        self._started.discard(m.name)
         cells = self._body_cells(m.x, m.y)
         if not self.zones.force_acquire(m.name, cells):
             in_the_way = sorted({self.zones.holder(c) for c in cells} - {None, m.name})
@@ -439,7 +467,11 @@ class FloorController(TrafficController):
         if not m.available:
             return
         need = self._body_now(m)
-        if need <= self.zones.held_set(m.name) or self.zones.acquire_all(m.name, need):
+        # 평균은 늦거나 틀릴 수 있다: 보고 자리의 몸(여유 없는 반지름)이 남의 칸 위인지도 본다
+        body = self._ids(disk_cells(self.floor, m.x, m.y, self.floor.robot_radius_m))
+        on_others = any(self.zones.holder(c) not in (None, m.name) for c in body)
+        if not on_others and (need <= self.zones.held_set(m.name)
+                              or self.zones.acquire_all(m.name, need)):
             self._off_cells[m.name] = 0
             return
         self._off_cells[m.name] += 1

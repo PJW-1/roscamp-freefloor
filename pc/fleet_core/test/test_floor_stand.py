@@ -296,9 +296,10 @@ def test_a_new_route_starts_where_the_robot_stands_not_at_its_last_noisy_report(
 # ---- 출발 원의 가장자리 칸 --------------------------------------------------------------------
 # 8자 경기장(3 cm 칸, 몸 원 0.11 m, 반폭 띠 0.09 m). a는 WORK 도크(0.15, 0.525)에서 남쪽으로 떠난다.
 
-NORTH_EDGE = (0.15, 0.64)  # 칸 줄 y 0.63~0.66: 도크에서 0.105 m, 원의 맨 가장자리, 가는 길 반대쪽
-NORTH_NEAR = (0.15, 0.58)  # 칸 줄 y 0.57~0.60: 도크에서 0.045 m, 몸 바로 옆
-SOUTH_EDGE = (0.15, 0.40)  # 칸 줄 y 0.39~0.42: 도크에서 0.105 m, 가는 길 위
+AT_WORK = (0.15, 0.522)  # WORK 도크(0.15, 0.525)에 3 mm 못 미쳐 섰다
+NORTH_EDGE = (0.15, 0.64)  # 칸 줄 y 0.63~0.66: 선 자리에서 0.108 m, 원(0.11 m)의 테두리, 가는 길 반대쪽
+NORTH_INSIDE = (0.15, 0.61)  # 칸 줄 y 0.60~0.63: 0.078 m, 원 안
+SOUTH_EDGE = (0.15, 0.40)  # 칸 줄 y 0.39~0.42: 0.102 m, 가는 길 위
 
 
 def leaving_work_beside(cell_xy):
@@ -306,9 +307,8 @@ def leaving_work_beside(cell_xy):
     core, now = figure8_core(("a", "b"))
     traffic = core.traffic
     floor = traffic.floor
-    w = FIGURE8_LANES.waypoint_pose("W")
     for _ in range(3):
-        core.on_robot_state("a", *w, 0.0, "IDLE")
+        core.on_robot_state("a", *AT_WORK, 0.0, "IDLE")
         core.on_robot_state("b", 0.15, 0.80, 0.0, "IDLE")
     cell = floor.cell_id(floor.cell_of(*cell_xy))
     traffic.zones.release("a", cell)
@@ -327,7 +327,7 @@ def test_a_standing_robot_starts_without_an_edge_cell_of_its_circle_that_another
     assert traffic.zones.holder(cell) == "b" and not traffic.zones.waited_cells("a")
 
 
-@pytest.mark.parametrize("cell_xy", [NORTH_NEAR, SOUTH_EDGE])
+@pytest.mark.parametrize("cell_xy", [NORTH_INSIDE, SOUTH_EDGE])
 def test_a_standing_robot_still_waits_for_a_cell_its_body_or_its_way_needs(cell_xy):
     traffic, cell = leaving_work_beside(cell_xy)
     m, leg = traffic._missions["a"], traffic._legs["a"]
@@ -392,3 +392,107 @@ def test_a_path_sent_to_a_moving_robot_starts_beside_its_progress_not_behind_it(
     first = points[0]
     assert route.project(*first)[0] == pytest.approx(leg.s, abs=0.005)
     assert route.project(*first)[1] == pytest.approx(route.project(*here)[1], abs=0.005)  # 옆 거리는 그대로
+
+
+# ---- Codex 리뷰(859564e) ------------------------------------------------------------------
+
+
+def test_an_edge_cell_is_left_to_another_robot_only_when_the_place_is_well_known():
+    """달린 적이 있어도 서 있는 보고가 적고 흔들리면 평균을 믿지 못한다: 원 전체를 요구한다."""
+    core, now = figure8_core(("a", "b"))
+    traffic = core.traffic
+    floor = traffic.floor
+    core.on_robot_state("b", 0.15, 0.80, 0.0, "IDLE")
+    for dx, dy in ((0.004, -0.003), (-0.003, 0.002), (-0.001, 0.001)):  # 평균은 AT_WORK, 보고 셋
+        core.on_robot_state("a", AT_WORK[0] + dx, AT_WORK[1] + dy, 0.0, "IDLE")
+    traffic._started.add("a")
+    cell = floor.cell_id(floor.cell_of(*NORTH_EDGE))
+    traffic.zones.release("a", cell)
+    assert traffic.zones.acquire_all("b", traffic.zones.held_set("b") | {cell})
+    traffic._start_leg(traffic._missions["a"], "TO_OUTBOUND", "OUTBOUND", "O")
+    assert not traffic._extend(traffic._missions["a"], traffic._legs["a"])
+    assert cell in traffic.zones.waited_cells("a")
+
+
+def test_a_report_on_cells_another_robot_holds_stops_the_robot_whatever_the_mean_says(monkeypatch):
+    """평균은 늦거나 틀릴 수 있다. 보고 자리의 몸(반지름 robot_radius_m)이 남의 칸 위에 세 번 이어지면
+    예전처럼 세운다."""
+    core, now = floor_core(("a", "b"))
+    traffic = core.traffic
+    floor = traffic.floor
+    core.on_robot_state("b", 1.05, 1.75, 0.0, "IDLE")
+    for _ in range(3):
+        core.on_robot_state("a", *HERE, 0.0, "IDLE")
+    m = traffic._missions["a"]
+    traffic._start_leg(m, "TO_PARK", None, "B")
+    assert moves(core) and m.goal is not None
+    there = (HERE[0], HERE[1] + 0.35)  # 평균 자리에서 먼 곳, b가 쥔 칸
+    taken = {floor.cell_id(c) for c in [floor.cell_of(*there)]}
+    assert traffic.zones.acquire_all("b", traffic.zones.held_set("b") | taken)
+    monkeypatch.setattr(traffic, "_here", lambda mission: HERE)  # 평균은 제자리에 머문다
+    for _ in range(traffic.params.release_confirm_samples):
+        core.on_robot_state("a", *there, 0.0, "MOVING")
+    assert m.goal is None  # 가던 MoveTo를 거뒀다
+
+
+def test_the_mean_of_a_standing_robot_follows_a_slow_move():
+    """서 있는 평균은 최근 STAND_REPORTS개만 본다: 조금씩 밀린 로봇을 따라간다."""
+    from fleet_core.traffic.floor.controller import STAND_REPORTS
+    core, now = floor_core()
+    traffic, m = core.traffic, core.traffic._missions["a"]
+    for _ in range(STAND_REPORTS + 10):
+        core.on_robot_state("a", *HERE, 0.0, "IDLE")
+    for _ in range(STAND_REPORTS):
+        core.on_robot_state("a", HERE[0] + 0.08, HERE[1], 0.0, "IDLE")  # 8 cm 밀렸다(다시 모을 만큼은 아님)
+    assert math.dist(traffic._here(m), (HERE[0] + 0.08, HERE[1])) < 0.005
+
+
+def test_a_robot_placed_again_starts_with_no_memory_of_where_it_stood():
+    core, now = floor_core()
+    traffic, m = core.traffic, core.traffic._missions["a"]
+    noisy(core, now, "a", FIRST_MOVE_REPORTS)
+    traffic._started.add("a")
+    m.placed = False  # 치웠다가 다시 올렸다
+    core.on_robot_state("a", HERE[0] + 0.05, HERE[1], 0.0, "IDLE")
+    assert m.placed and "a" not in traffic._started
+    assert traffic._here(m) == (HERE[0] + 0.05, HERE[1]) and not traffic._settled(m)
+
+
+def test_the_first_move_goes_after_a_while_even_if_the_place_never_settles():
+    """보고가 계속 튀어 자리가 가라앉지 않아도 FIRST_MOVE_WAIT_S 뒤에는 떠난다(예전처럼 마지막 자리로)."""
+    from fleet_core.traffic.floor.controller import FIRST_MOVE_WAIT_S
+    core, now = floor_core()
+    traffic = core.traffic
+    spots = [HERE, (HERE[0] + STAND_JUMP_M + 0.02, HERE[1])]
+    core.on_robot_state("a", *HERE, 0.0, "IDLE")
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")
+    sent = []
+    for k in range(int(FIRST_MOVE_WAIT_S / 0.1) + 3):
+        now[0] += 0.1
+        core.on_robot_state("a", *spots[(k + 1) % 2], 0.0, "IDLE")  # 번갈아 튄다: 매번 다시 모은다
+        sent += moves(core)
+        if k < int(FIRST_MOVE_WAIT_S / 0.1) - 2:
+            assert not sent
+    assert sent
+
+
+def test_the_edge_left_to_another_robot_grows_as_the_place_gets_better_known():
+    """몸이 닿을 수 있는 반지름 = 돌 때 모서리(0.085 m) + 평균 오차(3 x 표준편차 / sqrt(보고 수)).
+    그보다 먼 칸만 남에게 둔다. 보고가 쌓일수록 그 반지름이 준다(반폭 띠 0.09 m보다 작아지지는 않음)."""
+    core, now = figure8_core(("a",))
+    traffic, m = core.traffic, core.traffic._missions["a"]
+    assert traffic._body_reach(m) >= traffic._body  # 보고가 없다: 원 전체
+    k = 0
+    reach = []
+    for n in (FIRST_MOVE_REPORTS, 50):
+        while len(traffic._stand.get("a", ())) < n:
+            dx, dy = NOISE[k % len(NOISE)]
+            k += 1
+            core.on_robot_state("a", AT_WORK[0] + dx, AT_WORK[1] + dy, 0.0, "IDLE")
+        reach.append(traffic._body_reach(m))
+    corner = math.hypot(traffic.floor.robot_half_width_m, traffic.floor.robot_half_width_m)
+    assert corner + 0.01 < reach[1] < reach[0] < traffic._body
+    core2, _ = figure8_core(("a",))
+    for _ in range(3):
+        core2.on_robot_state("a", *AT_WORK, 0.0, "IDLE")  # 흔들림 없는 보고
+    assert core2.traffic._body_reach(core2.traffic._missions["a"]) == core2.traffic._near
