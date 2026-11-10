@@ -839,3 +839,130 @@ def test_a_low_battery_drops_and_charges_back_at_the_parking_spot(harness, tmp_p
     assert levels[0] == 90.0 and min(levels) < 20.0
     assert levels[low:] == sorted(levels[low:])  # 서 있는 동안 계속 찬다
     assert any(20.0 < v < 80.0 for v in levels[low:])
+
+
+# ---- 관제가 시키는 물러나기(버전 2 1-A, 계약 0.9-draft 제안. path는 자유바닥) -----------------
+
+
+def _retreat(p, distance_m, speed_mps=0.1, path=()):
+    from fleet_interfaces.action import Retreat
+    client = ActionClient(p.node, Retreat, CONTRACT_OBJ.name("retreat", pinky="pinky1"))
+    assert client.wait_for_server(10.0)
+    goal = Retreat.Goal(distance_m=distance_m, speed_mps=speed_mps)
+    for x, y in path:
+        pose = Pose()
+        pose.position.x, pose.position.y = x, y
+        goal.path.append(pose)
+    fut = client.send_goal_async(goal)
+    assert wait_until(fut.done, 5.0) and fut.result().accepted
+    return fut.result()
+
+
+def test_a_retreat_ends_the_move_and_backs_straight_up_facing_the_same_way(harness, tmp_path):
+    p = start(harness, tmp_path, robots=LONG)
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states, 5.0)
+    move = p.goal("QO")
+    assert wait_until(lambda: max(along(truth), default=0.0) > 0.4, 10.0)
+    yaw = p.states[-1][1].pose.theta
+    handle = _retreat(p, 0.15)
+    assert result_of(move).result.reason == MoveTo.Result.REASON_CANCELED
+    peak = max(along(truth))
+    res = result_of(handle).result
+    assert (res.success, res.reason) == (True, "")
+    assert peak - along(truth)[-1] == pytest.approx(0.15, abs=0.03)
+    assert p.states[-1][1].pose.theta == pytest.approx(yaw, abs=1e-6), "it backs, not turns"
+    assert RobotState.STATE_MOVING in states_since(p)
+
+
+def test_a_robot_behind_ends_a_retreat_with_obstacle_behind(harness, tmp_path):
+    from fake_robots.common import TRUTH_TOPIC
+    from fleet_interfaces.action import Retreat
+    robots = {**LONG, "pinky2": {"start": "P-5"}}
+    p = start(harness, tmp_path, robots=robots)
+    truth = watch_truth(p)
+    other = p.node.create_publisher(RobotState, TRUTH_TOPIC.format(robot="pinky2"),
+                                    to_ros_qos(CONTRACT_OBJ.qos("robot_state")))
+    assert wait_until(lambda: p.states and truth, 5.0)
+    x, y = SITE.waypoint_pose("P-6")
+    (x1, y1) = SITE.waypoint_pose("QO")
+    n = math.dist((x, y), (x1, y1))
+    bx, by = x - 0.2 * (x1 - x) / n, y - 0.2 * (y1 - y) / n  # 뒤 0.2 m, 몸 둘은 0.16 m
+    p.node.create_timer(0.05, lambda: other.publish(RobotState(
+        robot_id="pinky2", pose=Pose2D(x=bx, y=by))))
+    time.sleep(0.5)
+    res = result_of(_retreat(p, 0.15)).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_OBSTACLE_BEHIND)
+    assert math.dist((truth[-1][1], truth[-1][2]), (x, y)) < 0.05, "it stopped before the robot"
+
+
+def test_a_lost_heartbeat_ends_a_retreat_with_a_contract_reason(harness, tmp_path):
+    """1-A Codex 7: Retreat 결과 reason은 계약의 값만 쓴다(heartbeat가 끊기면 FAILED)."""
+    from fleet_interfaces.action import Retreat
+    p = start(harness, tmp_path, heartbeat_timeout_s=0.5, robots=LONG)
+    assert wait_until(lambda: p.states, 5.0)
+    res = result_of(_retreat(p, 0.3, speed_mps=0.05)).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_FAILED)
+
+
+def _drive_out(p, truth, metres):
+    """P-6에서 QO 쪽으로 metres 넘게 간 뒤 그 자리(진실 자세)를 돌려준다. 이동은 아직 열려 있다."""
+    move = p.goal("QO")
+    assert wait_until(lambda: max(along(truth), default=0.0) > metres, 10.0)
+    return move, (truth[-1][1], truth[-1][2])
+
+
+def test_a_retreat_with_a_path_backs_along_it_round_the_corner(harness, tmp_path):
+    """path는 지나온 길을 거꾸로 적은 것이다. 첫 점은 로봇 자리, 끝 점은 설 곳. 로봇은 돌지
+    않고 시킨 속도로 꺾인 곳까지 간 뒤 다음 선분을 따라 끝 점에 선다."""
+    p = start(harness, tmp_path, robots=LONG)
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states and truth, 5.0)
+    move, here = _drive_out(p, truth, 0.3)
+    yaw = p.states[-1][1].pose.theta
+    corner, end = SITE.waypoint_pose("P-6"), SITE.waypoint_pose("P-5")
+    length = math.dist(here, corner) + math.dist(corner, end)
+    sent = time.monotonic()
+    handle = _retreat(p, length, speed_mps=0.2, path=[here, corner, end])
+    assert result_of(move).result.reason == MoveTo.Result.REASON_CANCELED
+    res = result_of(handle, 30.0).result
+    took = time.monotonic() - sent
+    assert (res.success, res.reason) == (True, "")
+    assert math.dist((truth[-1][1], truth[-1][2]), end) < 0.02
+    passed = min(math.dist((x, y), corner) for w, x, y in truth if w >= sent)
+    assert passed < 0.02, "it went through the corner, not straight to the end"
+    assert took == pytest.approx(length / 0.2, abs=1.0), "at the commanded speed"
+    assert p.states[-1][1].pose.theta == pytest.approx(yaw, abs=1e-6), "it backs, not turns"
+
+
+def test_a_robot_on_the_path_ends_a_path_retreat_with_obstacle_behind(harness, tmp_path):
+    from fake_robots.common import TRUTH_TOPIC
+    from fleet_interfaces.action import Retreat
+    robots = {**LONG, "pinky2": {"start": "P-5"}}
+    p = start(harness, tmp_path, robots=robots)
+    truth = watch_truth(p)
+    other = p.node.create_publisher(RobotState, TRUTH_TOPIC.format(robot="pinky2"),
+                                    to_ros_qos(CONTRACT_OBJ.qos("robot_state")))
+    assert wait_until(lambda: p.states and truth, 5.0)
+    corner, end = SITE.waypoint_pose("P-6"), SITE.waypoint_pose("P-5")
+    n = math.dist(corner, end)
+    bx, by = (corner[0] + 0.3 * (end[0] - corner[0]) / n,
+              corner[1] + 0.3 * (end[1] - corner[1]) / n)  # 꺾인 뒤 0.3 m, 경로 위
+    p.node.create_timer(0.05, lambda: other.publish(RobotState(
+        robot_id="pinky2", pose=Pose2D(x=bx, y=by))))
+    time.sleep(0.5)
+    here = (truth[-1][1], truth[-1][2])
+    res = result_of(_retreat(p, n, speed_mps=0.2, path=[here, end]), 30.0).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_OBSTACLE_BEHIND)
+    assert math.dist((truth[-1][1], truth[-1][2]), (bx, by)) > 0.16 - 1e-6, "it stopped short"
+
+
+def test_a_retreat_path_that_does_not_start_at_the_robot_fails(harness, tmp_path):
+    from fleet_interfaces.action import Retreat
+    p = start(harness, tmp_path, robots=LONG)
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states and truth, 5.0)
+    far = [SITE.waypoint_pose("P-5"), SITE.waypoint_pose("P-4")]
+    res = result_of(_retreat(p, 0.5, path=far)).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_FAILED)
+    assert math.dist((truth[-1][1], truth[-1][2]), SITE.waypoint_pose("P-6")) < 1e-6
