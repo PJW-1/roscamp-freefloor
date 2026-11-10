@@ -970,6 +970,43 @@ def test_a_path_retreat_at_its_end_already_fails(harness, tmp_path):
     assert (res.success, res.reason) == (False, Retreat.Result.REASON_FAILED)
 
 
+def _frame_at_p6():
+    """P-6에서 QO 쪽(u)과 그 왼쪽(v)으로 잰 점."""
+    (x0, y0), (x1, y1) = SITE.waypoint_pose("P-6"), SITE.waypoint_pose("QO")
+    n = math.dist((x0, y0), (x1, y1))
+    ux, uy = (x1 - x0) / n, (y1 - y0) / n
+    return lambda u, v: (x0 + u * ux - v * uy, y0 + u * uy + v * ux)
+
+
+def test_a_path_retreat_whose_end_is_beside_the_robot_fails(harness, tmp_path):
+    """Codex 재검토 3: 실물처럼 남은 길은 제 자리를 투영한 점부터 끝까지 잰다. 끝 점 0.1 m
+    옆의 로봇은 남은 길이 0이라 FAILED이고 움직이지 않는다."""
+    from fleet_interfaces.action import Retreat
+    p = start(harness, tmp_path, robots=LONG)
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states and truth, 5.0)
+    at = _frame_at_p6()
+    res = result_of(_retreat(p, 0.5, path=[at(0.0, 0.5), at(0.0, 0.1)])).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_FAILED)
+    assert math.dist((truth[-1][1], truth[-1][2]), at(0.0, 0.0)) < 1e-6
+
+
+def test_a_path_retreat_as_near_two_segments_takes_the_earlier_one(harness, tmp_path):
+    """Codex 재검토 3: 두 선분이 똑같이 가까우면 실물(Polyline.project)처럼 앞 선분이다. 접힌
+    path를 처음부터 끝까지 간다."""
+    p = start(harness, tmp_path, robots=LONG)
+    truth = watch_truth(p)
+    assert wait_until(lambda: p.states and truth, 5.0)
+    at = _frame_at_p6()
+    sent = time.monotonic()
+    fold = [at(0.0, 0.02), at(0.15, 0.02), at(0.15, -0.02), at(0.0, -0.02)]
+    res = result_of(_retreat(p, 0.4, speed_mps=0.05, path=fold), 30.0).result
+    assert (res.success, res.reason) == (True, "")
+    far = max(math.dist((x, y), at(0.0, 0.0)) for w, x, y in truth if w >= sent)
+    assert far > 0.14, "it went round the fold, not straight to the end"
+    assert math.dist((truth[-1][1], truth[-1][2]), fold[-1]) < 0.02
+
+
 def test_a_robot_on_the_path_ends_a_path_retreat_with_obstacle_behind(harness, tmp_path):
     from fake_robots.common import TRUTH_TOPIC
     from fleet_interfaces.action import Retreat
