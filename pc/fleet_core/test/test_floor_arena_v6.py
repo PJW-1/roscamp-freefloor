@@ -63,3 +63,32 @@ def test_three_pinkys_ship_eight_orders_on_the_smaller_cells(tmp_path, monkeypat
     assert world.cell_violations == 0  # 몸이 잠근 칸 밖으로 나가지 않는다(위치 잡음 0.03 m)
     assert row["min_gap_m"] >= 0.22
     assert max(world.tick_s) < 1.0  # 핑키는 관제 신호가 1.5 s 끊기면 선다
+
+
+def test_wait_spot_search_checks_only_the_cells_it_needs(monkeypatch):
+    """대기 자리를 찾을 때 후보 칸을 모두 미리 걸러 보지 않는다: 칸 0.02 m 지도에서 한 주기가 길어졌다
+    (핑키는 관제 신호가 1.5 s 끊기면 선다). 쓰는 자리까지만 _standing_cells를 부른다."""
+    from dataclasses import replace
+
+    from fleet_core.manager import FleetManager
+    from fleet_core.traffic.floor.controller import _Leg
+    from fleet_core.traffic.floor.planner import Route
+
+    params = replace(load_params(), traffic_mode="freefloor", **LOCKS)
+    line = next(n for n in FLOOR.fixed_lines if n.endswith("_in"))
+    x0, y0 = FLOOR.fixed_lines[line].points[-1]  # 선 끝(도크): 대기 자리 범위 밖이라 자리를 찾아야 한다
+    core = FleetManager(LANES, params, ["a"], lambda: 0.0)
+    for _ in range(3):
+        core.on_robot_state("a", x0, y0, 0.0, "IDLE")
+    traffic = core.traffic
+    traffic._plan_budget = 99
+    leg = _Leg(None, FLOOR.fixed_lines[line].points[-1], in_line=line)
+    leg.waiting = True
+    traffic._legs["a"] = leg
+    calls = []
+    real = traffic._standing_cells
+    monkeypatch.setattr(traffic, "_standing_cells", lambda x, y: (calls.append(1), real(x, y))[1])
+    monkeypatch.setattr(traffic, "_route", lambda m, start, goal, *a, **k: Route([start, goal]))
+    traffic._plan_wait(traffic._missions["a"], leg, None)
+    assert leg.route is not None
+    assert len(calls) <= 300, len(calls)

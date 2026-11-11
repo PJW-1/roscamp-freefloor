@@ -1408,7 +1408,17 @@ class FloorController(TrafficController):
         spots = sorted((c for c in self.floor.clear
                         if near <= math.dist(line_start, self.floor.centre(c)) <= far),
                        key=lambda c: math.dist(line_start, self.floor.centre(c)))
-        spots = [c for c in spots if self._standing_cells(*self.floor.centre(c)).isdisjoint(banned)]
+        # 후보는 가까운 차례로 하나씩 본다: 쓰는 자리까지만 칸을 검사한다(칸 0.02 m 지도에서 주기가 길어진다)
+        seen: dict = {}
+
+        def clean(cell) -> bool:
+            ok = seen.get(cell)
+            if ok is None:
+                ok = seen[cell] = self._standing_cells(*self.floor.centre(cell)).isdisjoint(banned)
+            return ok
+
+        def free_spots():
+            return (c for c in spots if clean(c))
         # 도크에서 나갈 마지막 길을 막지 않는 자리 먼저. 그런 자리가 없으면 예전대로 고른다
         closing = []
 
@@ -1420,9 +1430,9 @@ class FloorController(TrafficController):
                 return False
             return True
 
-        first = self._wait_route(m, start, (c for c in spots if opens(c)), out_line)
+        first = self._wait_route(m, start, (c for c in free_spots() if opens(c)), out_line)
         if first is None and closing:
-            first = self._wait_route(m, start, spots, out_line)
+            first = self._wait_route(m, start, free_spots(), out_line)
         if first is None:
             leg.route = None  # nowhere to wait now: try again after floor_replan_s
             return
