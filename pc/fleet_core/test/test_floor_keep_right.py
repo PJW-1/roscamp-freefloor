@@ -199,6 +199,31 @@ def test_robots_meeting_north_of_object_1_do_not_pass_side_by_side_one_waits():
     assert "DEADLOCK_UNRESOLVED" not in codes(w), codes(w)
 
 
+# 기다릴 pinky1이 이미 pinky2의 길 위에 서 있어 비켜 선다
+SIDESTEP_POSES = {"pinky1": (0.20, 0.76), "pinky2": (0.80, 0.78)}
+SIDESTEP_GOALS = {"pinky1": "NE", "pinky2": "QO"}
+
+
+def test_a_waiter_that_steps_aside_never_sends_its_old_leg():
+    w, traffic = world(SIDESTEP_POSES)
+    stale = []
+    for fn in ("_extend", "_send"):
+        real = getattr(traffic, fn)
+
+        def check(m, leg, *args, _real=real, **kwargs):
+            if traffic._legs.get(m.name) is not leg:
+                stale.append((round(w.t, 1), m.name))
+            return _real(m, leg, *args, **kwargs)
+        setattr(traffic, fn, check)
+    send(traffic, SIDESTEP_GOALS)
+    _, _, longest, reached = drive(w, traffic, SIDESTEP_GOALS, seconds=90.0)
+    assert "FLOOR_SIDESTEP" in codes(w), codes(w)
+    assert not stale, stale
+    assert reached, longest
+    assert w.cell_violations == 0
+    assert "DEADLOCK_UNRESOLVED" not in codes(w), codes(w)
+
+
 # ---- 3. 혼자면 예전과 같다 ---------------------------------------------------------------------
 
 
@@ -240,6 +265,39 @@ def test_a_robot_that_is_blocked_while_they_pass_leaves_no_wait_cycle_unresolved
     assert "FLOOR_BLOCKED" in codes(w)
     assert w.cell_violations == 0
     assert "DEADLOCK_UNRESOLVED" not in codes(w), codes(w)
+
+
+def test_a_new_lane_whose_first_lock_would_end_inside_a_fixed_line_is_not_taken():
+    """고정 선 구간 안에서 끝나는 첫 잠금은 잡지 않는다(그 선은 통째로 잡거나 그 앞에 선다)."""
+    w, traffic = world(SOUTH_POSES)
+    send(traffic, SOUTH_GOALS)
+    from fleet_core.traffic.floor.controller import _Pass
+    from fleet_core.traffic.floor.planner import Route
+    routes = {}
+    for n in SOUTH_GOALS:
+        leg = traffic._legs[n]
+        r = Route(list(leg.route.points), [(0.05, leg.route.length - 0.05, "X")])
+        routes[n] = r
+    p = _Pass(tuple(SOUTH_GOALS), {n: {} for n in SOUTH_GOALS})
+    held = {n: set(traffic.zones.held_by(n)) for n in SOUTH_GOALS}
+    before = {n: (traffic._legs[n].route, traffic._passes.get(n)) for n in SOUTH_GOALS}
+    assert not traffic._apply_pass(p, routes)
+    assert {n: set(traffic.zones.held_by(n)) for n in SOUTH_GOALS} == held
+    assert {n: (traffic._legs[n].route, traffic._passes.get(n)) for n in SOUTH_GOALS} == before
+
+
+def test_a_waiter_stops_waiting_when_the_robot_it_waits_for_is_blocked():
+    """좁은 통로에서 기다리는 동안 먼저 가는 로봇이 오래 막히면(BLOCKED) 기다리기를 푼다."""
+    w, traffic = world(NORTH_POSES)
+    send(traffic, NORTH_GOALS)
+    assert w.run_until(lambda: bool(traffic._yields), timeout_s=30.0)
+    leader = next(iter(traffic._yields.values())).leader
+    w.pending_faults.append({"at_s": w.t + 0.1, "type": "blocked", "robot": leader,
+                             "duration_s": 40.0})
+    assert w.run_until(lambda: traffic._missions[leader].robot_state == "BLOCKED",
+                       timeout_s=10.0)
+    assert w.run_until(lambda: not traffic._yields, timeout_s=2.0), traffic._yields
+    assert w.cell_violations == 0
 
 
 def test_an_object_in_one_lane_while_they_pass_leaves_no_wait_cycle_unresolved():

@@ -1858,6 +1858,8 @@ class FloorController(TrafficController):
             return  # 첫 출발 전: 자리가 가라앉기 전에는 보내지 않으니 앞 칸도 잡지 않는다
         if self._keep_right:
             self._watch_pass(m, leg)
+            if self._legs.get(m.name) is not leg:
+                return  # 비켜 서기로 다리가 바뀌었다
         self._take_shortcut(m, leg)
         grew = self._extend(m, leg)
         cap = self._line_cap(m, leg)
@@ -2444,7 +2446,7 @@ class FloorController(TrafficController):
         if cached is not None and cached[0] == key:
             return cached[1]
         plan = self._pair_decide(la.route, la.s, lb.route, lb.s)
-        self._pair_cache[a, b] = (key, plan)
+        self._pair_cache[a, b] = (key, plan, la.route, lb.route)  # 경로를 쥐어 id가 다시 쓰이지 않게
         return plan
 
     def _lane_avoid(self, name: str, here) -> frozenset:
@@ -2535,6 +2537,8 @@ class FloorController(TrafficController):
             m, leg = self._missions[n], self._legs[n]
             trial = _Leg(route, leg.goal_xy, in_line=leg.in_line)
             end = min(route.length, self.params.floor_lock_ahead_m)
+            if self._splits_span(route, end):
+                return False
             cells = self._drive_cells(m, trial, end, self._drive_path(m, trial, end))
             if any(self.zones.holder(c) not in (None, n) for c in cells) or cells & taken:
                 return False
@@ -2561,6 +2565,15 @@ class FloorController(TrafficController):
         self._event("INFO", "FLOOR_KEEP_RIGHT",
                     f"{a} and {b} pass side by side, each in its right lane", a)
         return True
+
+    def _splits_span(self, route, end: float) -> bool:
+        """첫 잠금(0..end)이 고정 선이나 교차 상자 구간 안에서 끝나거나 그 안에서 시작한다
+        (_candidates처럼 통째로 잡거나 그 앞에 서야 하는 곳): 이 길로는 바꾸지 않는다."""
+        rolling = self.floor.rolling_lines
+        spans = [(s0, s1) for s0, s1, line in route.fixed if line not in rolling]
+        spans += self._box_spans(route)
+        return any(s0 - 1e-9 <= 0.0 < s1 - 1e-9 or s0 + 1e-9 < end < s1 - 1e-9
+                   for s0, s1 in spans)
 
     def _pass_on_plan(self, m: _Mission, leg: _Leg, start, out_line, route):
         """계획하는 다리: 다른 로봇 한 대와 두 줄 통로를 마주 지나게 되면 둘 다 오른쪽 줄로 간다(그 로봇을
@@ -2686,7 +2699,7 @@ class FloorController(TrafficController):
         if out is not None and leg.s < out + YIELD_AFTER_M:
             end = min(leg.route.length, out + YIELD_AFTER_M)
             cells = self._ringed(swept_cells(self.floor, leg.route.between(leg.s, end), self._body))
-        self._ban_cache[leader] = (key, cells)
+        self._ban_cache[leader] = (key, cells, leg.route)  # 경로를 쥐어 id가 다시 쓰이지 않게
         return cells
 
     def _yield_over(self, waiter: str, wait: _Yield, now: float) -> bool:
@@ -2695,6 +2708,8 @@ class FloorController(TrafficController):
         if (leader is None or not leader.available or leg is None or leg.route is None or leg.done
                 or own is None or own.route is None or own.resume is not None):
             return True
+        if leader.robot_state == BLOCKED or wait.leader in self._block_since:
+            return True  # 먼저 갈 로봇이 막혔다: 기다리지 않고 예전처럼 푼다
         if not self._yield_ban(wait.leader, wait.passages):
             return True  # 지나갔다
         stuck = leg.stuck_since
