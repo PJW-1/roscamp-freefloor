@@ -107,6 +107,20 @@ def test_the_first_move_waits_until_a_noisy_place_has_settled():
     assert first and math.dist(first[0].path[0][:2], HERE) < 0.01  # 평균 자리에서 떠난다
 
 
+def test_a_robot_locks_nothing_ahead_until_its_place_has_settled():
+    """자리가 가라앉기 전에는 MoveTo를 보내지 않으니 앞 칸도 잡지 않는다. 튄 보고로 잡은 앞 칸이
+    옆에 선 로봇의 실제 몸에 걸렸다(arena_v4, 2대 씨앗 5: 0.2 s에 "stands on cells others hold")."""
+    core, now = floor_core()
+    traffic = core.traffic
+    noisy(core, now, "a", 3)
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "B")
+    core.tick()
+    leg = traffic._legs["a"]
+    assert leg.route is not None and leg.s_lock == 0.0
+    noisy(core, now, "a", FIRST_MOVE_REPORTS - 3)
+    assert moves(core) and leg.s_lock > 0.0
+
+
 def test_reports_that_do_not_move_at_all_need_no_settling():
     core, now = floor_core()
     traffic = core.traffic

@@ -885,6 +885,14 @@ def test_two_pinkys_ship_six_orders(tmp_path, monkeypatch):
     run(tmp_path, monkeypatch, 1, THREE[:2], 6, 15, 600)
 
 
+@pytest.mark.parametrize("shortcut", [False, True])
+def test_two_pinkys_start_from_noisy_first_reports(tmp_path, monkeypatch, shortcut):
+    """씨앗 5: P-2의 로봇이 P-3으로 당겨 가라는 다리를 받고, 가라앉지 않은 보고로 앞 칸을 잡아
+    P-3에 선 로봇의 실제 몸에 걸렸다(0.2~0.3 s). 자리가 가라앉기 전에는 앞 칸을 잡지 않는다."""
+    monkeypatch.setitem(LOCKS, "floor_shortcut", shortcut)
+    run(tmp_path, monkeypatch, 5, THREE[:2], 10, 10, 600)
+
+
 def test_every_robot_drives_the_figure_eight_one_way(monkeypatch):
     """Middle passage northwards, south passage westwards, north passage eastwards, and past
     the outbound dock southwards, for the whole run."""
