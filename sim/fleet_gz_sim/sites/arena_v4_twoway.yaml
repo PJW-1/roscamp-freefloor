@@ -1,0 +1,49 @@
+# v4 경기장(sites/arena_v4.yaml)과 벽·물체가 같다. 다른 것은 레인 지도뿐이다: 도킹 구간만 한 방향이고
+# 나머지 통로는 양방향이며 관제는 양방향 자유바닥 지도(floor_map_arena_v4_twoway.yaml)로 돈다.
+# 상자는 arena_v4에서 그대로 옮겼다(손으로 고치지 않는다).
+lane_map: arena_v4_twoway             # sim/fake_robots/maps/의 이름
+lane_clearance_m: 0.08         # 물체 3 북쪽 통로(0.17 m)의 가운데 선이 양쪽에서 0.085 m다
+bounds_m: [0.0, 0.0, 1.98, 0.99] # 벽 안쪽 면
+boxes:
+  # object 1: x 0.37..0.54, y 0.39..0.55 (9 boxes)
+  - {name: object1_01, kind: block, x0: 0.51, y0: 0.39, x1: 0.52, y1: 0.40}
+  - {name: object1_02, kind: block, x0: 0.38, y0: 0.40, x1: 0.52, y1: 0.41}
+  - {name: object1_03, kind: block, x0: 0.38, y0: 0.41, x1: 0.53, y1: 0.43}
+  - {name: object1_04, kind: block, x0: 0.37, y0: 0.43, x1: 0.53, y1: 0.46}
+  - {name: object1_05, kind: block, x0: 0.37, y0: 0.46, x1: 0.54, y1: 0.49}
+  - {name: object1_06, kind: block, x0: 0.38, y0: 0.49, x1: 0.54, y1: 0.52}
+  - {name: object1_07, kind: block, x0: 0.38, y0: 0.52, x1: 0.50, y1: 0.53}
+  - {name: object1_08, kind: block, x0: 0.38, y0: 0.53, x1: 0.47, y1: 0.54}
+  - {name: object1_09, kind: block, x0: 0.42, y0: 0.54, x1: 0.43, y1: 0.55}
+  # object 2: x 0.68..0.85, y 0.05..0.34 (11 boxes)
+  - {name: object2_01, kind: block, x0: 0.72, y0: 0.05, x1: 0.83, y1: 0.07}
+  - {name: object2_02, kind: block, x0: 0.71, y0: 0.07, x1: 0.83, y1: 0.08}
+  - {name: object2_03, kind: block, x0: 0.71, y0: 0.08, x1: 0.84, y1: 0.10}
+  - {name: object2_04, kind: block, x0: 0.70, y0: 0.10, x1: 0.84, y1: 0.12}
+  - {name: object2_05, kind: block, x0: 0.69, y0: 0.12, x1: 0.85, y1: 0.15}
+  - {name: object2_06, kind: block, x0: 0.68, y0: 0.15, x1: 0.85, y1: 0.25}
+  - {name: object2_07, kind: block, x0: 0.69, y0: 0.25, x1: 0.85, y1: 0.29}
+  - {name: object2_08, kind: block, x0: 0.70, y0: 0.29, x1: 0.85, y1: 0.30}
+  - {name: object2_09, kind: block, x0: 0.71, y0: 0.30, x1: 0.85, y1: 0.32}
+  - {name: object2_10, kind: block, x0: 0.72, y0: 0.32, x1: 0.82, y1: 0.33}
+  - {name: object2_11, kind: block, x0: 0.73, y0: 0.33, x1: 0.75, y1: 0.34}
+  # object 3: x 0.70..0.83, y 0.55..0.82 (5 boxes)
+  - {name: object3_01, kind: block, x0: 0.72, y0: 0.55, x1: 0.83, y1: 0.59}
+  - {name: object3_02, kind: block, x0: 0.71, y0: 0.59, x1: 0.83, y1: 0.65}
+  - {name: object3_03, kind: block, x0: 0.70, y0: 0.65, x1: 0.83, y1: 0.75}
+  - {name: object3_04, kind: block, x0: 0.71, y0: 0.75, x1: 0.83, y1: 0.81}
+  - {name: object3_05, kind: block, x0: 0.71, y0: 0.81, x1: 0.82, y1: 0.82}
+  # object 4: x 1.08..1.22, y 0.25..0.76 (13 boxes)
+  - {name: object4_01, kind: block, x0: 1.12, y0: 0.25, x1: 1.22, y1: 0.27}
+  - {name: object4_02, kind: block, x0: 1.11, y0: 0.27, x1: 1.22, y1: 0.31}
+  - {name: object4_03, kind: block, x0: 1.10, y0: 0.31, x1: 1.22, y1: 0.34}
+  - {name: object4_04, kind: block, x0: 1.09, y0: 0.34, x1: 1.22, y1: 0.38}
+  - {name: object4_05, kind: block, x0: 1.08, y0: 0.38, x1: 1.22, y1: 0.55}
+  - {name: object4_06, kind: block, x0: 1.09, y0: 0.55, x1: 1.22, y1: 0.57}
+  - {name: object4_07, kind: block, x0: 1.09, y0: 0.57, x1: 1.21, y1: 0.59}
+  - {name: object4_08, kind: block, x0: 1.10, y0: 0.59, x1: 1.21, y1: 0.63}
+  - {name: object4_09, kind: block, x0: 1.11, y0: 0.63, x1: 1.21, y1: 0.67}
+  - {name: object4_10, kind: block, x0: 1.12, y0: 0.67, x1: 1.21, y1: 0.71}
+  - {name: object4_11, kind: block, x0: 1.13, y0: 0.71, x1: 1.21, y1: 0.74}
+  - {name: object4_12, kind: block, x0: 1.14, y0: 0.74, x1: 1.21, y1: 0.75}
+  - {name: object4_13, kind: block, x0: 1.15, y0: 0.75, x1: 1.16, y1: 0.76}
