@@ -601,6 +601,78 @@ def test_a_robot_off_its_way_out_does_not_take_it_up_again_after_a_leg_with_no_r
     assert points(leg.route)[-1] == pytest.approx(spots["P-2"])
 
 
+def ticks_while_the_spot_is_taken(n):
+    """a가 북쪽 통로 끝(MOUTH, E1)에, b가 P-1에 서 있다. a는 P-1로 가는 주차 다리를 받고 n틱 돈다.
+    틱마다 계획 몫 하나, 시계 0.1 s. 새 다리 수, 계획 수, 보낸 MoveTo 수를 센다."""
+    spots = dict(FLOOR.parking)
+    clock = [0.0]
+    params = replace(load_params(), traffic_mode="freefloor", **LOCKS)
+    poses = {"a": (*MOUTH, EAST), "b": (*spots["P-1"], EAST)}
+    core = FleetManager(LANES, params, list(poses), lambda: clock[0])
+    for _ in range(3):
+        for name, (x, y, yaw) in poses.items():
+            core.on_robot_state(name, x, y, yaw, "IDLE")
+    traffic = core.traffic
+    a = traffic._missions["a"]
+    traffic._start_park_leg(a)
+    assert a.path[-1] == "P-1" and traffic._spot_taken(a)
+    counts = {"legs": 0, "plans": 0}
+    start_leg, plan = traffic._start_leg, traffic._plan
+
+    def counted_leg(*args, **kwargs):
+        counts["legs"] += 1
+        return start_leg(*args, **kwargs)
+
+    def counted_plan(*args, **kwargs):
+        counts["plans"] += 1
+        return plan(*args, **kwargs)
+
+    traffic._start_leg, traffic._plan = counted_leg, counted_plan
+
+    def tick():
+        clock[0] = round(clock[0] + 0.1, 6)
+        traffic._plan_budget = 1
+        traffic.step("a")
+
+    traffic._out.clear()
+    for _ in range(n):
+        tick()
+    return traffic, counts, tick
+
+
+def test_a_robot_keeps_its_leg_while_another_stands_on_its_parking_spot():
+    """주차 칸에 다른 로봇이 서 있는 동안 같은 칸을 다시 고르면 다리를 새로 시작하지 않는다
+    (예전: 틱마다 새 다리, 계획 몫과 MoveTo를 매 틱 썼다. 7절 끝, 9절 5번)."""
+    traffic, counts, _ = ticks_while_the_spot_is_taken(50)
+    moves = [c for c in traffic._out if isinstance(c, MoveCmd)]
+    assert counts["legs"] == 0, counts
+    assert counts["plans"] <= 6, counts  # 잠금이 못 늘 때 floor_replan_s(1 s)마다 다시 찾는 것뿐
+    assert len(moves) <= 2, len(moves)
+    assert traffic._missions["a"].path[-1] == "P-1"
+
+
+def test_a_robot_waiting_for_its_parking_spot_goes_as_soon_as_it_is_free():
+    spots = dict(FLOOR.parking)
+    traffic, _, tick = ticks_while_the_spot_is_taken(30)
+    before = traffic._legs["a"].s_lock
+    assert before < LOCKS["floor_lock_ahead_m"] - 0.05  # b 앞에서 잠금이 멈췄다
+    for cell_id in list(traffic.zones.held_set("b")):  # b가 P-2로 옮겨 갔다
+        traffic.zones.release("b", cell_id)
+    b = traffic._missions["b"]
+    b.x, b.y = spots["P-2"]
+    assert traffic.zones.force_acquire("b", traffic._body_cells(*spots["P-2"]))
+    traffic._out.clear()
+    tick()
+    tick()
+    leg = traffic._legs["a"]
+    assert leg.route is not None and points(leg.route)[-1] == pytest.approx(spots["P-1"])
+    # 서 있는 로봇이라 잠금은 floor_lock_ahead_m까지만 는다
+    assert leg.s_lock == pytest.approx(leg.s + LOCKS["floor_lock_ahead_m"])
+    moves = [c for c in traffic._out if isinstance(c, MoveCmd)]
+    assert moves and moves[-1].goal_id == traffic._missions["a"].goal.id
+    assert leg.route.project(moves[-1].x, moves[-1].y)[0] > before + 0.05
+
+
 def test_a_robot_takes_the_shortcut_when_the_one_that_left_is_past_the_gaps():
     traffic = fleet({"a": (1.10, 0.875, EAST), "b": ON_THE_WAY})
     traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "P-1")

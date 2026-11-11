@@ -840,6 +840,10 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         return goal
 
     def _start_park_leg(self, m: _Mission) -> None:
+        self._start_leg(m, TO_PARK, None, self._park_target(m))
+
+    def _park_target(self, m: _Mission):
+        """주차 다리가 갈 지점(상태를 바꾸지 않는다)."""
         anchor_waypoint = m.path[self._anchor(m)]
         goal = self._park_goal(m, anchor_waypoint)
         if goal is None:
@@ -847,7 +851,7 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
             goal = anchor_waypoint if anchor_waypoint in self.site.parking else self.site.parking[0]
             if goal not in self._usable_parking(m):
                 goal = self._wait_outside_queue(anchor_waypoint)
-        self._start_leg(m, TO_PARK, None, goal)
+        return goal
 
     def _usable_parking(self, m: _Mission) -> tuple:
         """Parking spots a robot can still leave the queue from (work order 1.1, H3).
