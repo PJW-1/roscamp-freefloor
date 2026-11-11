@@ -10,7 +10,7 @@ negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.25
 # Robot, cells and margins as floor_map_arena_v5.yaml. The passage north of the long shelves is
-# eight clear cells wide (0.42 m), the others one to three.
+# eight clear cells wide (0.42 m), the west passage six (0.37 m), the others one to three.
 cell_m: 0.03
 robot_radius_m: 0.08
 cell_margin_m: 0.03
