@@ -1641,8 +1641,11 @@ class FloorController(TrafficController):
         if leg is None:
             return
         if m.phase == TO_PARK and self._spot_taken(m):
-            self._start_park_leg(m)  # someone stopped on the spot first: pick again
-            leg = self._legs[m.name]
+            # 누가 먼저 칸에 섰다: 다시 고른다. 같은 칸이면 다리를 그대로 두고 기다린다
+            goal = self._park_target(m)
+            if goal != m.path[-1]:
+                self._start_leg(m, TO_PARK, None, goal)
+                leg = self._legs[m.name]
         if leg.waiting and self._admitted(m, leg):
             if m.goal:
                 self._cancel_goal(m)
@@ -1664,6 +1667,8 @@ class FloorController(TrafficController):
             return
         if m.goal is None and self._clock() < m.retry_at:
             return
+        if m.goal is None and not self._settled(m):
+            return  # 첫 출발 전: 자리가 가라앉기 전에는 보내지 않으니 앞 칸도 잡지 않는다
         self._take_shortcut(m, leg)
         grew = self._extend(m, leg)
         cap = self._line_cap(m, leg)
