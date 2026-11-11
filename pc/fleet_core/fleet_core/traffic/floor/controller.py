@@ -54,6 +54,7 @@ from fleet_core.traffic.deadlock import choose_retreat, find_cycle, wait_graph
 from fleet_core.traffic.floor.cells import CellLocks, disk_cells, swept_cells
 from fleet_core.traffic.floor.eta import route_s
 from fleet_core.traffic.floor.floor_map import floor_map_for
+from fleet_core.traffic.floor.lanes import passages
 from fleet_core.traffic.floor.planner import (
     NEIGHBOURS,
     FloorPlanner,
@@ -128,6 +129,15 @@ RETREAT_TRIES = 2  # 통로: Retreat가 잇달아 이만큼 실패하면 그 자
 # 따라잡을 때까지 기다린다. 기록 간격(TRAIL_STEP_M)과 평균 자리의 잡음보다 크고, 이 길이의 곧은
 # 선은 꺾인 길에서 칸 여유(cell_margin_m 0.03 m)만큼도 벗어나지 않는다
 STALE_TRAIL_M = 0.05
+# 우측통행(floor_keep_right, 제안)
+PASS_MAX_CELLS = 10  # 수직으로 이어진 빈 칸이 이만큼 이하인 곳만 통로로 본다
+PASS_MEET_M = 0.5  # 두 길을 계약 속도로 같이 달릴 때 이만큼 가까워지는 동안을 만나는 때로 본다
+PASS_ALIGN = 0.85  # 통로 안 진행 방향과 통로 축의 코사인이 이보다 작으면 통로 안에서 돈다(약 32도)
+PASS_EXTRA_M = 0.4  # 줄로 가는 길이 이만큼까지 길어도 나란히 지난다
+LANE_CHANGE_M = 0.15  # 통로 끝과 로봇 자리 둘레 이만큼은 줄을 바꾸며 지나도 된다
+PASS_RETRY_S = 1.0  # 정하지 못한 짝은 이만큼 뒤에 다시 본다
+PASS_SAMPLE_M = 0.03  # 길을 이만큼마다 본다
+YIELD_AFTER_M = 0.25  # 기다리는 로봇은 먼저 갈 로봇이 통로를 나와 이만큼 더 갈 길까지 비운다
 SOLO, CORRIDOR = "solo", "corridor"
 SEARCH, BACKING, REROUTED, HOLD, TURN, OUT = (
     "SEARCH", "BACKING", "REROUTED", "HOLD", "TURN", "OUT")
@@ -194,6 +204,20 @@ class _Back:
     wait_since: float | None = None  # CORRIDOR: 물러날 칸을 기다리기 시작한 때
     fails: int = 0  # CORRIDOR: 잇달아 실패한 Retreat 수
     goal_id: int | None = None  # 마지막 Retreat: 결과 없이 놓쳐도 늦은 결과가 오면 칸을 놓는다
+
+
+@dataclass
+class _Pass:
+    """나란히 지나가기 하나: 두 로봇과 로봇마다 오른쪽 줄로 갈 통로 {통로 번호: 진행 부호}."""
+    robots: tuple
+    trips: dict
+
+
+@dataclass
+class _Yield:
+    """두 줄이 안 서는 통로: 먼저 갈 로봇과 둘이 마주 지날 통로 번호들."""
+    leader: str
+    passages: tuple
 
 
 def _along(points, xy) -> tuple[float, float]:
@@ -292,6 +316,21 @@ class FloorController(TrafficController):
         self._way_now: dict[tuple, frozenset] = {}  # (접근선, 대기 자리들) -> 도크에서 닿는 목표 칸
         if self._back_on:
             self.metrics.update(retreats=0, reroutes=0, corridor_clears=0)
+        # 우측통행(제안). 꺼져 있으면 아래 것은 비어 있고 아무 데서도 쓰지 않는다
+        self._keep_right = bool(params.floor_keep_right)
+        self._passes: dict[str, _Pass] = {}  # 로봇 -> 나란히 지나가기(두 로봇이 같은 것)
+        self._yields: dict[str, _Yield] = {}  # 좁은 통로: 기다리는 로봇 -> 먼저 갈 로봇
+        self._pair_tried: dict[tuple, float] = {}  # (로봇, 로봇) -> 정하지 못한 때
+        self._pair_cache: dict[tuple, tuple] = {}  # (로봇, 로봇) -> (열쇠, 답)
+        self._ban_cache: dict[str, tuple] = {}  # 먼저 갈 로봇 -> (열쇠, 비울 칸)
+        self._passages = []
+        self._passage_of: tuple[dict, dict] = ({}, {})  # 축마다 칸 (i, j) -> 통로 번호
+        if self._keep_right:
+            self._passages = passages(self.floor, self._near, PASS_MAX_CELLS)
+            for k, passage in enumerate(self._passages):
+                for c in passage.cells:
+                    self._passage_of[passage.axis][c] = k
+            self.metrics.update(keep_right=0, narrow_waits=0)
 
     # ---- cells --------------------------------------------------------------------------
 
@@ -751,6 +790,8 @@ class FloorController(TrafficController):
                 m.stall_hold = False
         if self._back_on:
             self._back_tick(now)
+        if self._keep_right:
+            self._tidy_keep_right()
         return self._check_deadlock(now)
 
     def _follow(self, m: _Mission) -> None:
@@ -828,6 +869,8 @@ class FloorController(TrafficController):
         """지금 자리에서 goal_waypoint까지 새 바닥 경로. 따라가던 MoveTo는 교체될 때까지 쥔다.
         asked_at: 접근선 줄에 선 시각(비켜 섰다 돌아온 대기 로봇), None이면 지금."""
         self.zones.cancel_all_requests(m.name)
+        if self._keep_right:
+            self._drop_keep_right(m.name)
         here = self._dock_here(m)
         station = next((s for s, st in self.site.stations.items() if st.dock == goal_waypoint),
                        None)
@@ -890,6 +933,8 @@ class FloorController(TrafficController):
             leg.done = m.goal is None and not moving and not self._active[m.name]
             return
         route = self._route(m, start, leg.goal_xy, out_line, leg.in_line)
+        if self._keep_right:
+            route = self._pass_on_plan(m, leg, start, out_line, route)
         if route is None:
             self.metrics["no_path"] += 1
             leg.route = None  # never drive on to the end of an old route (a wait spot)
@@ -1445,6 +1490,8 @@ class FloorController(TrafficController):
         """_route_past에 스테이션 도크의 몸 둘레 칸(_dock_keep)을 벽으로 더해 찾는다: 도크 옆을
         지나는 길이 도킹한 로봇의 칸에서 몸 하나만큼 떨어진다(그 옆에 서도 돌 수 있고, 도크를 나오는
         로봇과 서로 기다리지 않는다). 그렇게는 길이 없으면 예전처럼 찾는다."""
+        if self._passes and m.name in self._passes:
+            extra = frozenset(extra) | self._lane_avoid(m.name, start)  # 나란히 지나는 중: 제 줄로
         if self._dock_keep:
             route = self._route_past(m, start, goal, out_line, in_line, extra, cautious,
                                      self._dock_keep)
@@ -1515,8 +1562,9 @@ class FloorController(TrafficController):
         reach = self.params.detour_speed_mps * self.params.floor_plan_window_s
         mine = self._headings(route.points, reach)
         out = set()
+        partner = self._partner(robot) if self._passes else None
         for name, leg in self._legs.items():
-            if name == robot or not self._passing(name):
+            if name == robot or not self._passing(name) or name == partner:
                 continue
             ahead = leg.route.between(leg.s, min(leg.route.length, leg.s + reach))
             theirs = self._headings(ahead, reach)
@@ -1654,7 +1702,9 @@ class FloorController(TrafficController):
         """계획기 wait: 남이 쓰는 시각에 그 칸에 닿으면 (빌 때까지 서 있는 값 m, 벌점 m).
         여럿이 연달아 쓰면 마지막 로봇이 비울 때까지 기다린다. 마주 오는 로봇의 칸은 기다려도
         비지 않는다: 기다림 대신 벌점 RESERVE_PENALTY_M."""
-        others = [spans for spans in (self._spans(n) for n in self._legs if n != robot) if spans]
+        partner = self._partner(robot) if self._passes else None  # 나란히 지날 로봇은 빼고 본다
+        others = [spans for spans in (self._spans(n) for n in self._legs
+                                      if n != robot and n != partner) if spans]
         v = self.params.detour_speed_mps
         lag = max(0.0, self.params.release_distance_m - self._body) / v  # 지나간 칸을 놓기까지
 
@@ -1750,9 +1800,12 @@ class FloorController(TrafficController):
         if len(self._legs) > 1 and leg.route.fixed_at(leg.s) is None:
             held = self.zones.held_set(m.name)
             body = self._body_cells(m.x, m.y)
+            partner = self._partner(m.name) if self._passes else None
             for other, theirs in self._legs.items():
                 if other == m.name or other in leg.no_yield or m.name in theirs.behind:
                     continue
+                if other == partner:
+                    continue  # 나란히 지난다: 서로 비켜 주지 않는다
                 if not self._moving(other):
                     continue
                 cross = self._crossing(m.name, other)
@@ -1761,6 +1814,12 @@ class FloorController(TrafficController):
                 # 이미 비켜 주는 중이면 보고 잡음으로 몸이 걸쳐 보여도 차례를 지킨다
                 if other in leg.behind or (cross[0] == other and cross[1].isdisjoint(body)):
                     bans[other] = cross[1] - held
+            wait = self._yields.get(m.name) if self._yields else None
+            if wait is not None and wait.leader not in leg.no_yield:
+                # 두 줄이 안 서는 통로: 먼저 갈 로봇이 통로를 지나 나올 길을 잡지 않는다
+                ban = self._yield_ban(wait.leader, wait.passages) - held
+                if ban:
+                    bans[wait.leader] = bans.get(wait.leader, set()) | ban
         leg.behind = tuple(bans)
         return bans
 
@@ -1797,6 +1856,10 @@ class FloorController(TrafficController):
             return
         if m.goal is None and not self._settled(m):
             return  # 첫 출발 전: 자리가 가라앉기 전에는 보내지 않으니 앞 칸도 잡지 않는다
+        if self._keep_right:
+            self._watch_pass(m, leg)
+            if self._legs.get(m.name) is not leg:
+                return  # 비켜 서기로 다리가 바뀌었다
         self._take_shortcut(m, leg)
         grew = self._extend(m, leg)
         cap = self._line_cap(m, leg)
@@ -2206,6 +2269,462 @@ class FloorController(TrafficController):
             return  # 보고가 없거나 LOCALIZING뿐: 어디 섰는지 모른다
         if self._run_mode == RUN and self._park_goal(m, m.path[m.idx]):
             self._start_park_leg(m)
+
+    # ---- 우측통행(floor_keep_right, 제안, 실측 전) -----------------------------------------------
+    #
+    # 두 로봇이 지금 길을 계약 속도로 같이 달린다고 보고 PASS_MEET_M 안으로 가까워지는 동안(만나는 때)
+    # 각자 있는 통로 칸을 본다(_meeting). 서로 반대로 가며 둘 다 그 통로를 지나는데:
+    #   - 만나는 곳이 모두 두 줄 열이고 아무도 통로 안에서 돌지 않으면, 둘이 반대로 지나는 통로마다
+    #     각자 진행 방향의 오른쪽 끝 줄로만 가게 다시 계획한다(_lane_avoid: 통로의 다른 칸을 피함).
+    #     달리던 로봇은 새 길의 첫 잠금을 잡을 수 있을 때만 바꾼다(_apply_pass). 그동안 둘은 서로
+    #     비켜 주지 않고(_give_way), 서로를 마주 오는 로봇이나 예약으로 보지 않는다.
+    #   - 아니면(두 줄이 안 서는 칸, 통로 안에서 돎, 줄로 바꾸지 못함) 통로에 먼저 닿는 로봇이 지나고
+    #     다른 로봇은 그 로봇이 통로를 지나 YIELD_AFTER_M 더 갈 길을 잡지 않고 선다(_yield_ban).
+    # 계획할 때(_pass_on_plan)도 보아, 마주 오는 로봇을 피해 돌아가는 길보다 줄로 가는 길이 짧으면 줄로
+    # 간다. 한 대가 서거나(BLOCKED, 막힘 표시, 잠금이 floor_replan_s 못 늘어남) 통로를 다 지나면 끝나고,
+    # 그 뒤는 예전 규칙이 맡는다. 안전은 늘 칸 잠금이 맡는다.
+
+    def _partner(self, name: str) -> str | None:
+        p = self._passes.get(name)
+        if p is None:
+            return None
+        return p.robots[1] if p.robots[0] == name else p.robots[0]
+
+    def _pass_ready(self, name: str, planning: bool = False) -> bool:
+        """우측통행을 볼 로봇: 바닥 경로를 가는 중이고 막히지 않았다. planning: 지금 계획하는 다리."""
+        m, leg = self._missions.get(name), self._legs.get(name)
+        if not (m is not None and m.available and m.fault != ERROR and leg is not None
+                and not leg.waiting and leg.resume is None
+                and m.phase in (TO_WORK, TO_OUTBOUND, TO_PARK) and m.robot_state != BLOCKED
+                and name not in self._block_since and name not in self._marks
+                and name not in self._back and (m.goal is None or m.goal.kind == MOVE)):
+            return False
+        return planning or (leg.route is not None and not leg.done
+                            and leg.route.fixed_at(leg.s) is None)
+
+    def _samples(self, route) -> tuple[list, float]:
+        """경로 위 PASS_SAMPLE_M 안팎 간격 점 [(s, x, y, 방향 x, 방향 y)]과 간격. 경로에 붙여 둔다."""
+        got = getattr(route, "pass_samples", None)
+        if got is not None:
+            return got
+        pts, cum = route.points, route.cum
+        out = []
+        n = max(1, math.ceil(route.length / PASS_SAMPLE_M))
+        if len(pts) < 2 or route.length <= 1e-9:
+            out.append((0.0, pts[-1][0], pts[-1][1], 0.0, 0.0))
+            got = (out, 1.0)
+        else:
+            k, way = 1, (0.0, 0.0)
+            for i in range(n + 1):
+                s = route.length * i / n
+                while k < len(pts) - 1 and cum[k] < s - 1e-12:
+                    k += 1
+                (ax, ay), (bx, by) = pts[k - 1], pts[k]
+                span = cum[k] - cum[k - 1]
+                f = min(1.0, max(0.0, (s - cum[k - 1]) / span)) if span > 1e-12 else 1.0
+                if span > 1e-12:
+                    way = ((bx - ax) / span, (by - ay) / span)
+                out.append((s, ax + (bx - ax) * f, ay + (by - ay) * f, *way))
+            got = (out, route.length / n)
+        route.pass_samples = got
+        return got
+
+    @staticmethod
+    def _at(samples, step: float, s: float) -> int:
+        return min(len(samples) - 1, max(0, round(s / step)))
+
+    def _passage_at(self, x: float, y: float, hx: float, hy: float):
+        """(통로 번호, 축을 따라가나): 진행 방향에 가까운 축의 통로, 없으면 다른 축의 통로(가로지름).
+        통로 밖이면 None."""
+        cell = self.floor.cell_of(x, y)
+        axis = 0 if abs(hx) >= abs(hy) else 1
+        k = self._passage_of[axis].get(cell)
+        if k is not None:
+            return k, True
+        k = self._passage_of[1 - axis].get(cell)
+        return None if k is None else (k, False)
+
+    def _trips(self, route, s0: float) -> tuple[dict, set]:
+        """route의 s0부터 끝까지 지나는 통로 {번호: [들어가는 s, 나오는 s, 진행 부호]}와 그중 통로 안에서
+        도는 통로(축을 벗어나거나 거꾸로 감. 통로 양 끝 LANE_CHANGE_M 안은 줄 바꾸기로 친다), 그리고
+        통로 끝에서 LANE_CHANGE_M보다 깊은 데서 길이 끝나는 통로."""
+        samples, step = self._samples(route)
+        trips, off = {}, []
+        for s, x, y, hx, hy in samples[self._at(samples, step, s0):]:
+            found = self._passage_at(x, y, hx, hy)
+            if found is None:
+                continue
+            k, along = found
+            h = (hx, hy)[self._passages[k].axis]
+            t = trips.get(k)
+            if t is None:
+                t = trips[k] = [s, s, 0]
+            t[1] = s
+            if along and abs(h) >= PASS_ALIGN:
+                sign = 1 if h > 0 else -1
+                if t[2] == 0:
+                    t[2] = sign
+                elif t[2] != sign:
+                    off.append((k, s, True))
+            else:
+                off.append((k, s, False))
+        bad = {k for k, t in trips.items() if t[2] == 0}
+        for k, s, back in off:
+            t = trips[k]
+            if back or t[0] + LANE_CHANGE_M < s < t[1] - LANE_CHANGE_M:
+                bad.add(k)
+        _, x, y, hx, hy = samples[-1]
+        found = self._passage_at(x, y, hx, hy)
+        if found is not None and found[0] in trips:
+            k = found[0]
+            passage = self._passages[k]
+            col = self.floor.cell_of(x, y)[passage.axis]
+            cols = [c[passage.axis] for c in passage.cells]
+            left = (max(cols) - col) if trips[k][2] > 0 else (col - min(cols))
+            if left * self.floor.cell_m > LANE_CHANGE_M:
+                bad.add(k)  # 통로 깊이 들어가 끝난다
+        return trips, bad
+
+    def _meeting(self, ra, sa: float, rb, sb: float):
+        """두 길을 s_a, s_b부터 계약 속도로 같이 달릴 때(floor_plan_window_s 앞까지) PASS_MEET_M 안으로
+        가까워지는 동안 두 로봇이 있는 통로: ({통로 번호: 두 줄이 안 서는 칸이나 가로지르는 칸이 드나},
+        마주 보나). 가까워지지 않으면 None."""
+        a_pts, a_step = self._samples(ra)
+        b_pts, b_step = self._samples(rb)
+        n = int(self.params.floor_plan_window_s * self.params.detour_speed_mps / PASS_SAMPLE_M)
+        places, facing, met = {}, False, False
+        for i in range(n + 1):
+            d = i * PASS_SAMPLE_M
+            if sa + d > ra.length + PASS_SAMPLE_M and sb + d > rb.length + PASS_SAMPLE_M:
+                break
+            a = a_pts[self._at(a_pts, a_step, sa + d)]
+            b = b_pts[self._at(b_pts, b_step, sb + d)]
+            if math.dist(a[1:3], b[1:3]) > PASS_MEET_M:
+                continue
+            met = True
+            if a[3] * b[3] + a[4] * b[4] < -0.5:
+                facing = True
+            for _, x, y, hx, hy in (a, b):
+                found = self._passage_at(x, y, hx, hy)
+                if found is None:
+                    continue
+                k, along = found
+                places[k] = places.get(k, False) or not along or (
+                    self.floor.cell_of(x, y) not in self._passages[k].pair)
+        return (places, facing) if met else None
+
+    def _pair_decide(self, ra, sa: float, rb, sb: float):
+        """두 길이 마주 지나는 통로: (lanes, wait). lanes: 둘 다 오른쪽 줄로 갈 수 있으면
+        {통로 번호: (a 부호, b 부호)}, 아니면 None. wait: (만나는 통로들, a가 그중 처음 닿는 데까지 m,
+        b는 m). 통로에서 마주 지나지 않으면 None."""
+        meet = self._meeting(ra, sa, rb, sb)
+        if meet is None:
+            return None
+        found, facing = meet
+        if not facing:
+            return None
+        ta, bad_a = self._trips(ra, sa)
+        tb, bad_b = self._trips(rb, sb)
+        shared = {k for k in ta.keys() & tb.keys() if ta[k][2] * tb[k][2] < 0}
+        # 둘이 반대로 지나는 통로만 본다(한 로봇만 지나는 통로는 그 로봇이 나오며 엇갈린다)
+        places = set(found) & shared
+        if not places:
+            return None
+        narrow = any(found[k] for k in places)
+        wait = (tuple(sorted(places)), min(ta[k][0] for k in places) - sa,
+                min(tb[k][0] for k in places) - sb)
+        lanes = None
+        if not narrow and not places & (bad_a | bad_b):
+            lanes = {k: (ta[k][2], tb[k][2]) for k in sorted(shared - bad_a - bad_b)
+                     if self._passages[k].pair}
+        return lanes or None, wait
+
+    def _pair_plan(self, a: str, b: str):
+        la, lb = self._legs[a], self._legs[b]
+        key = (id(la.route), round(la.s / PASS_SAMPLE_M), id(lb.route), round(lb.s / PASS_SAMPLE_M))
+        cached = self._pair_cache.get((a, b))
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        plan = self._pair_decide(la.route, la.s, lb.route, lb.s)
+        self._pair_cache[a, b] = (key, plan, la.route, lb.route)  # 경로를 쥐어 id가 다시 쓰이지 않게
+        return plan
+
+    def _lane_avoid(self, name: str, here) -> frozenset:
+        """나란히 지나는 로봇이 피할 칸 (i, j): 지나는 통로의 두 줄 열 중 제 오른쪽 줄이 아닌 칸.
+        로봇 자리와 목적지 둘레(통로 축으로 LANE_CHANGE_M 안)는 빼서 통로 안에서도 줄로 옮겨 가고
+        통로 끝의 목적지로 나올 수 있다."""
+        p = self._passes[name]
+        leg = self._legs.get(name)
+        goal = leg.goal_xy if leg is not None else None
+        out = set()
+        for k, sign in p.trips[name].items():
+            passage = self._passages[k]
+            ax = passage.axis
+            lane = passage.lo if (sign > 0) == (ax == 0) else passage.hi
+            # 목적지는 통로 안에 있을 때만(밖이면 통로를 나와서 돈다)
+            ends = [here] + ([goal] if goal is not None
+                             and self.floor.cell_of(*goal) in passage.pair else [])
+            for c in passage.pair - lane:
+                x = self.floor.centre(c)
+                if any(abs(x[ax] - e[ax]) <= LANE_CHANGE_M
+                       and abs(x[1 - ax] - e[1 - ax]) <= PASS_MEET_M for e in ends):
+                    continue
+                out.add(c)
+        return frozenset(out)
+
+    def _in_lane(self, name: str, route, s0: float) -> bool:
+        """route의 s0부터가 나란히 지나는 통로에서 피할 칸을 밟지 않고, 그 통로들을 같은 쪽으로 지난다."""
+        samples, step = self._samples(route)
+        avoid = self._lane_avoid(name, route.at(s0))
+        if any(self.floor.cell_of(x, y) in avoid
+               for _, x, y, _, _ in samples[self._at(samples, step, s0):]):
+            return False
+        trips, bad = self._trips(route, s0)
+        return all(k in trips and trips[k][2] == sign and k not in bad
+                   for k, sign in self._passes[name].trips[name].items())
+
+    def _route_direct(self, m: _Mission, start, goal, out_line, in_line):
+        """마주 오는 로봇을 돌아가지 않고 예약 벌점도 없는 길(서 있는 로봇의 칸은 피한다)."""
+        walls = self._wall_cells(m.name)
+        mine = {self.floor.cell_at(c)
+                for c in self.zones.held_set(m.name) & set(self._body_cells(*start))}
+        for keep in ([self._dock_keep] if self._dock_keep else []) + [frozenset()]:
+            route = self._plan_around(start, goal, out_line, in_line, walls | keep, frozenset(),
+                                      None, mine)
+            if route is not None:
+                return route
+        return None
+
+    def _pass_routes(self, names, lanes, planning=None, out_line=None, planned=None):
+        """names 두 로봇이 lanes 통로를 각자 오른쪽 줄로 갈 길 {로봇: 새 길, 지금 길이 이미 줄이면 None}.
+        planning: 지금 계획하는 로봇(지금 자리에서 out_line으로, 길이는 planned와 견준다). 못 찾으면 None.
+        상태는 바꾸지 않는다."""
+        p = _Pass(tuple(names), {n: {k: signs[i] for k, signs in lanes.items()}
+                                 for i, n in enumerate(names)})
+        saved = {n: self._passes.get(n) for n in names}
+        for n in names:
+            self._passes[n] = p  # _route가 줄을 따르게
+        found = {}
+        try:
+            for n in names:
+                m, leg = self._missions[n], self._legs[n]
+                if n != planning and self._in_lane(n, leg.route, leg.s):
+                    found[n] = None
+                    continue
+                here = self._here(m)
+                route = self._route(m, here, leg.goal_xy, out_line if n == planning else None,
+                                    leg.in_line)
+                old = planned.length if n == planning else leg.route.length - leg.s
+                if (route is None or not self._in_lane(n, route, 0.0)
+                        or route.length > old + PASS_EXTRA_M):
+                    return None
+                found[n] = route
+        finally:
+            for n, before in saved.items():
+                if before is None:
+                    self._passes.pop(n, None)
+                else:
+                    self._passes[n] = before
+        return found, p
+
+    def _apply_pass(self, p: _Pass, routes: dict, planning=None) -> bool:
+        """새 길로 바꾸고 나란히 지나가기를 건다. 달리던 로봇은 새 길의 첫 잠금을 한꺼번에 잡을 수 있을
+        때만 바꾼다(둘 다 못 잡으면 아무것도 바꾸지 않는다)."""
+        swaps, taken = {}, set()
+        for n, route in routes.items():
+            if route is None or n == planning:
+                continue
+            m, leg = self._missions[n], self._legs[n]
+            trial = _Leg(route, leg.goal_xy, in_line=leg.in_line)
+            end = min(route.length, self.params.floor_lock_ahead_m)
+            if self._splits_span(route, end):
+                return False
+            cells = self._drive_cells(m, trial, end, self._drive_path(m, trial, end))
+            if any(self.zones.holder(c) not in (None, n) for c in cells) or cells & taken:
+                return False
+            taken |= cells
+            swaps[n] = (route, end, cells)
+        for n, (_, _, cells) in swaps.items():
+            if not self.zones.acquire_all(n, cells):
+                self.zones.cancel_all_requests(n)
+                return False
+        now = self._clock()
+        for n, (route, end, _) in swaps.items():
+            leg = self._legs[n]
+            leg.route = route
+            leg.s, leg.s_lock, leg.s_sent = 0.0, end, 0.0
+            leg.done = False
+            leg.planned_at = now
+            leg.stuck_since = leg.no_way_since = None
+            leg.behind, leg.yields, leg.yield_since = (), (), None
+        for n in p.robots:
+            self._passes[n] = p
+            self._yields.pop(n, None)
+        self.metrics["keep_right"] += 1
+        a, b = p.robots
+        self._event("INFO", "FLOOR_KEEP_RIGHT",
+                    f"{a} and {b} pass side by side, each in its right lane", a)
+        return True
+
+    def _splits_span(self, route, end: float) -> bool:
+        """첫 잠금(0..end)이 고정 선이나 교차 상자 구간 안에서 끝나거나 그 안에서 시작한다
+        (_candidates처럼 통째로 잡거나 그 앞에 서야 하는 곳): 이 길로는 바꾸지 않는다."""
+        rolling = self.floor.rolling_lines
+        spans = [(s0, s1) for s0, s1, line in route.fixed if line not in rolling]
+        spans += self._box_spans(route)
+        return any(s0 - 1e-9 <= 0.0 < s1 - 1e-9 or s0 + 1e-9 < end < s1 - 1e-9
+                   for s0, s1 in spans)
+
+    def _pass_on_plan(self, m: _Mission, leg: _Leg, start, out_line, route):
+        """계획하는 다리: 다른 로봇 한 대와 두 줄 통로를 마주 지나게 되면 둘 다 오른쪽 줄로 간다(그 로봇을
+        돌아가는 고른 길이 더 짧으면 고른 길)."""
+        name = m.name
+        if name in self._passes or not self._pass_ready(name, planning=True):
+            return route
+        direct = self._route_direct(m, start, leg.goal_xy, out_line, leg.in_line)
+        if direct is None:
+            return route
+        found = []
+        for other in sorted(self._legs):
+            if other == name or other in self._passes or not self._pass_ready(other):
+                continue
+            plan = self._pair_decide(direct, 0.0, self._legs[other].route, self._legs[other].s)
+            if plan is not None:
+                found.append((other, plan[0]))
+        if len(found) != 1 or found[0][1] is None or self._plan_budget <= 0:
+            return route
+        other, lanes = found[0]
+        self._plan_budget -= 1
+        made = self._pass_routes((name, other), lanes, planning=name, out_line=out_line,
+                                 planned=direct)
+        if made is None:
+            return route
+        routes, p = made
+        mine = routes[name]
+        theirs = self._legs[other]
+        if (route is not None and route.length <= mine.length
+                and self._pair_decide(route, 0.0, theirs.route, theirs.s) is None):
+            return route  # 고른 길은 그 로봇과 마주 지나지 않고 더 짧다
+        if not self._apply_pass(p, routes, planning=name):
+            return route
+        return mine
+
+    def _watch_pass(self, m: _Mission, leg: _Leg) -> None:
+        """달리는 동안: 나란히 지나가기와 기다리기를 끝낼지, 새로 걸지 본다."""
+        name = m.name
+        if name in self._passes or name in self._yields or not self._pass_ready(name):
+            return
+        now = self._clock()
+        for other in sorted(self._legs):
+            if (other == name or other in self._passes or other in self._yields
+                    or not self._pass_ready(other)):
+                continue
+            pair = (min(name, other), max(name, other))
+            if now - self._pair_tried.get(pair, -math.inf) < PASS_RETRY_S:
+                continue
+            plan = self._pair_plan(name, other)
+            if plan is None:
+                continue
+            lanes, wait = plan
+            if lanes is not None:
+                if self._plan_budget <= 0:
+                    return
+                self._plan_budget -= 1
+                made = self._pass_routes((name, other), lanes)
+                if made is not None and self._apply_pass(made[1], made[0]):
+                    return
+            self._start_yield(name, other, wait)
+            self._pair_tried[pair] = now
+            return
+
+    def _tidy_keep_right(self) -> None:
+        """끝난 나란히 지나가기와 기다리기를 지운다(tick마다)."""
+        now = self._clock()
+        for p in {id(p): p for p in self._passes.values()}.values():
+            if self._pass_over(p, now):
+                for n in p.robots:
+                    self._passes.pop(n, None)
+        for name, wait in list(self._yields.items()):
+            if self._yield_over(name, wait, now):
+                del self._yields[name]
+
+    def _pass_over(self, p: _Pass, now: float) -> bool:
+        for n in p.robots:
+            if self._passes.get(n) is not p or not self._pass_ready(n):
+                return True
+            leg = self._legs[n]
+            trips, _ = self._trips(leg.route, leg.s)
+            if not trips.keys() & p.trips[n].keys():
+                return True  # 줄로 갈 통로를 다 지났다
+            if leg.stuck_since is not None and now - leg.stuck_since >= self.params.floor_replan_s:
+                return True  # 섰다: 예전 규칙(다시 계획, 교착 처리)에 맡긴다
+        return False
+
+    def _start_yield(self, a: str, b: str, wait) -> bool:
+        """통로에 먼저 닿는 로봇(시각 차가 YIELD_TIE_S 안이면 우선순위)이 지나고 다른 로봇은 기다린다.
+        기다릴 로봇이 이미 먼저 갈 로봇의 길 위에 서 있으면 그 길 밖으로 비켜 선다(_sidestep).
+        둘 다 통로 안이면 하지 않는다."""
+        k, ea, eb = wait
+        if ea <= 1e-9 and eb <= 1e-9:
+            return False
+        if abs(ea - eb) < YIELD_TIE_S * self.params.detour_speed_mps:
+            waiter = choose_retreat([a, b], self._priority)
+            leader = b if waiter == a else a
+        else:
+            leader, waiter = (a, b) if ea < eb else (b, a)
+        ban = self._yield_ban(leader, k)
+        if not ban:
+            return False
+        if not ban.isdisjoint(self._body_now(self._missions[waiter])):
+            return self._sidestep(self._missions[waiter], (waiter, leader))
+        self._yields[waiter] = _Yield(leader, k)
+        self.metrics["narrow_waits"] += 1
+        self._event("INFO", "FLOOR_NARROW_WAIT",
+                    f"waits for {leader} to come through the passage", waiter)
+        return True
+
+    def _yield_ban(self, leader: str, k: tuple) -> set[str]:
+        """먼저 갈 로봇이 통로들 k를 다 지나 YIELD_AFTER_M 더 갈 때까지 쓸 칸(몸 반지름, cell_margin_m을
+        두름). 통로를 그만큼 지났으면 빈 것."""
+        leg = self._legs.get(leader)
+        if leg is None or leg.route is None:
+            return set()
+        key = (id(leg.route), round(leg.s / PASS_SAMPLE_M), k)
+        cached = self._ban_cache.get(leader)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        trips, _ = self._trips(leg.route, 0.0)
+        out = max((trips[p][1] for p in k if p in trips), default=None)
+        cells = set()
+        if out is not None and leg.s < out + YIELD_AFTER_M:
+            end = min(leg.route.length, out + YIELD_AFTER_M)
+            cells = self._ringed(swept_cells(self.floor, leg.route.between(leg.s, end), self._body))
+        self._ban_cache[leader] = (key, cells, leg.route)  # 경로를 쥐어 id가 다시 쓰이지 않게
+        return cells
+
+    def _yield_over(self, waiter: str, wait: _Yield, now: float) -> bool:
+        leader = self._missions.get(wait.leader)
+        leg, own = self._legs.get(wait.leader), self._legs.get(waiter)
+        if (leader is None or not leader.available or leg is None or leg.route is None or leg.done
+                or own is None or own.route is None or own.resume is not None):
+            return True
+        if leader.robot_state == BLOCKED or wait.leader in self._block_since:
+            return True  # 먼저 갈 로봇이 막혔다: 기다리지 않고 예전처럼 푼다
+        if not self._yield_ban(wait.leader, wait.passages):
+            return True  # 지나갔다
+        stuck = leg.stuck_since
+        return stuck is not None and now - stuck >= self.params.floor_pass_wait_s
+
+    def _drop_keep_right(self, name: str) -> None:
+        """새 다리: 이 로봇의 나란히 지나가기와 기다리기를 지운다."""
+        p = self._passes.get(name)
+        if p is not None:
+            for n in p.robots:
+                self._passes.pop(n, None)
+        self._yields.pop(name, None)
+        for waiter, wait in list(self._yields.items()):
+            if wait.leader == name:
+                del self._yields[waiter]
 
     # ---- 물러나기(제안, 실측 전) ---------------------------------------------------------------
     #
