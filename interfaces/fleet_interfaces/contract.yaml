@@ -1,6 +1,9 @@
 # 이름, 타입, QoS의 유일한 기준. 코드는 `key`로 찾으므로 이름이나 QoS는 여기만 고친다.
 # 팀 합의 전까지 모두 초안이다. QoS depth는 실제 Wi-Fi에서 측정해야 한다.
-version: 0.9-draft
+version: 0.10-draft
+# 0.10 (2026-11-11, freefloor 가지, 제안(팀 합의 전)): RobotState에 bool obstacle_seen, float32 obstacle_x,
+# obstacle_y, obstacle_radius를 더했다. BLOCKED, RECOVERING일 때 핑키가 본 경로 위 물체(지도 좌표, 반지름
+# 0이면 관제 기본값). 옛 핑키는 false. 관제는 floor_obstacle_report를 켤 때만 쓴다. 핑키 계약 2절, 4절.
 # 0.9 (2026-11-11, freefloor 가지, 제안(팀 합의 전)): 액션 /{pinky}/retreat(fleet_interfaces/action/Retreat).
 # 개인 레포 main 계약 0.7의 Retreat(distance_m, speed_mps로 뒤로 곧게, Nav2 BackUp)에
 # geometry_msgs/Pose[] path를 더했다. path가 있으면 핑키는 지나온 길을 거꾸로 적은 그 경로를 후진

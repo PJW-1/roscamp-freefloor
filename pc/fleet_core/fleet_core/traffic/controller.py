@@ -118,10 +118,11 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
 
     # 공개 메서드는 모르는 로봇 이름을 무시한다. INPUT_REJECTED는 FleetManager가 낸다.
 
-    def on_robot_state(self, robot, x, y, yaw, state, battery=0.0) -> None:
+    def on_robot_state(self, robot, x, y, yaw, state, battery=0.0, obstacle=None) -> None:
         m = self._missions.get(robot)
         if m is None:
             return
+        m.obstacle = obstacle  # 막힘 물체 자리(제안). 자유바닥이 스위치를 켤 때만 쓴다
         self._note_self_recovery(m, state)
         state = self._self_recovery_as_blocked(m, state)
         if state != BLOCKED:

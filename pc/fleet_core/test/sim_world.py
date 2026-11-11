@@ -42,6 +42,7 @@ BLOCK_CLEAR_S = 1.0  # 물체가 이만큼 안 보이면 BLOCKED를 끄고 이�
 LINE_TOLERANCE_M = 1e-6
 OBJECT_LOOK_M = 0.12  # 갈 길을 이만큼 앞까지 보고 몸이 물체에 닿으면 선다(제동 거리)
 OBJECT_STOP_GAP_M = 0.005  # 물체 앞에 서는 틈
+OBJECT_SEEN_M = 0.5  # 이만큼 안의 물체를 막힘 물체로 보고한다(핑키 계약 4절의 0.5 m)
 
 DEFAULT_ROBOTS = {
     "pinky1": {"start": "P-6", "speed_mps": 0.20, "pose_noise_m": 0.03},
@@ -184,6 +185,7 @@ class SimWorld:
     gaussian_noise: bool = False  # 한계 없는 잡음. 실제 위치추정과 ROS 가짜 노드가 그렇다
     site: object = None  # 예전 테스트는 셀 배치를 쓴다
     report_heading: bool = False  # 보고 yaw가 실제 진행 방향이다. 끄면 예전처럼 0
+    report_obstacle: bool = True  # BLOCKED, RECOVERING에 본 물체 자리를 같이 보낸다(제안). 끄면 옛 로봇
 
     def __post_init__(self):
         self.t = 0.0
@@ -419,9 +421,13 @@ class SimWorld:
         """갈 길 한 걸음 + OBJECT_LOOK_M 안에서 몸이 지금 있는 물체에 닿고,
         그 길이 물체에 가까워진다. 이동 목표가 없으면 보는 방향으로 같은 거리를 본다. 지나온
         물체(뒤나 옆)는 막지 않는다."""
+        return bool(self._objects_ahead(r))
+
+    def _objects_ahead(self, r) -> list:
+        """_object_ahead가 보는 물체들 (x, y, 반지름)."""
         objects = self.objects_now()
         if not objects:
-            return False
+            return []
         look = OBJECT_LOOK_M + r.speed * DT  # 다음 걸음이 물체를 건너뛰지 않는다
         if r.goal_kind == "move" and r.target is not None:
             line = [(r.x, r.y), *r.via, r.target]
@@ -438,11 +444,9 @@ class SimWorld:
             ahead.append(b)
             left -= span
         reach = self.params.robot_radius_m + OBJECT_STOP_GAP_M
-        for ox, oy, radius in objects:
-            gap = path_gap(ox, oy, ahead)
-            if gap <= reach + radius and gap < math.dist((ox, oy), (r.x, r.y)) - 1e-9:
-                return True
-        return False
+        return [(ox, oy, radius) for ox, oy, radius in objects
+                if (gap := path_gap(ox, oy, ahead)) <= reach + radius
+                and gap < math.dist((ox, oy), (r.x, r.y)) - 1e-9]
 
     # ---- central stand-in ----------------------------------------------------------------
 
@@ -662,12 +666,28 @@ class SimWorld:
                 state = "MOVING" if r.goal_id else "IDLE"
             yaw = r.heading if self.report_heading else 0.0
             battery = self.batteries.get(r.name)
+            # 막힘 물체 자리(제안): BLOCKED, RECOVERING일 때 핑키처럼 본 물체를 같이 보낸다
+            seen = self._object_seen(r) if state in ("BLOCKED", "RECOVERING") else None
+            extra = {} if seen is None else {"obstacle": seen}
             if battery is None:
-                self.core.on_robot_state(r.name, x, y, yaw, state)
+                self.core.on_robot_state(r.name, x, y, yaw, state, **extra)
             else:
                 # 실제 자세와 서 있는지로 충전한다
                 level = battery.percent(self.t, r.x, r.y, r.goal_kind != "move")
-                self.core.on_robot_state(r.name, x, y, yaw, state, battery=level)
+                self.core.on_robot_state(r.name, x, y, yaw, state, battery=level, **extra)
+
+    def _object_seen(self, r):
+        """로봇이 본 물체 (x, y, 반지름): 갈 길 앞을 막는 물체(_objects_ahead), 없으면(후진 중)
+        몸에서 OBJECT_SEEN_M 안의 가장 가까운 지금 물체. 자리가 없는 막힘(blocked 고장)이나 끈
+        세계(report_obstacle)는 None(옛 로봇)."""
+        if not self.report_obstacle:
+            return None
+        best = None
+        for ox, oy, radius in self._objects_ahead(r) or self.objects_now():
+            gap = math.dist((ox, oy), (r.x, r.y)) - radius - self.params.robot_radius_m
+            if gap <= OBJECT_SEEN_M and (best is None or gap < best[0]):
+                best = (gap, (ox, oy, radius))
+        return best and best[1]
 
     # ---- commands -----------------------------------------------------------------------
 

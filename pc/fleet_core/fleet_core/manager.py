@@ -13,6 +13,7 @@ ROS 없이 재생할 수 있다(형식은 tools/replay.py).
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, is_dataclass
 
 from fleet_core.arm.jobs import ArmJobs
@@ -54,6 +55,17 @@ from fleet_core.traffic.mission import (
     TO_WORK,
 )
 from fleet_core.traffic.modes import LANES, build_traffic
+
+
+def _obstacle(value):
+    """보고된 막힘 물체 -> (x, y, 반지름). 숫자 셋이 아니거나 유한하지 않으면 None(옛 로봇처럼)."""
+    try:
+        x, y, r = (float(v) for v in value)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x, y, r)) or r < 0:
+        return None
+    return (x, y, r)
 
 
 def _recordable(value):
@@ -141,12 +153,18 @@ class FleetManager:
 
     # ---- inputs -------------------------------------------------------------------------
 
-    def on_robot_state(self, robot, x, y, yaw, state, battery=0.0, robot_id="") -> None:
-        """robot은 토픽의 로봇, robot_id는 메시지에 적힌 이름(빈 값 가능)."""
+    def on_robot_state(self, robot, x, y, yaw, state, battery=0.0, robot_id="",
+                       obstacle=None) -> None:
+        """robot은 토픽의 로봇, robot_id는 메시지에 적힌 이름(빈 값 가능).
+        obstacle: 로봇이 본 막힘 물체 (x, y, 반지름) 또는 None(제안, 팀 합의 전)."""
         # 받은 그대로 기록한다. robot_id가 없던 기록도 똑같이 읽힌다.
         no_id = isinstance(robot_id, str) and text(robot_id) == ""
-        self._input("on_robot_state", robot, x, y, yaw, state, battery,
-                    *([] if no_id else [robot_id]))
+        if obstacle is not None:
+            self._input("on_robot_state", robot, x, y, yaw, state, battery, robot_id,
+                        list(obstacle))
+        else:
+            self._input("on_robot_state", robot, x, y, yaw, state, battery,
+                        *([] if no_id else [robot_id]))
         # 위치를 못 잡은 보고의 자세는 쓰지 않으니 검사하지 않는다.
         localizing = isinstance(state, str) and text(state) == LOCALIZING
         problem = checked(lambda: robot_problem(robot, self.traffic.robots)
@@ -157,7 +175,11 @@ class FleetManager:
                                 robot):
             return
         # state는 판단에 쓰므로 글자로 바꿔 둔다. 비교가 실패하는 값이 tick까지 가면 안 된다.
-        self.traffic.on_robot_state(robot, x, y, yaw, text(state), battery)
+        if obstacle is None:
+            self.traffic.on_robot_state(robot, x, y, yaw, text(state), battery)
+        else:
+            self.traffic.on_robot_state(robot, x, y, yaw, text(state), battery,
+                                        obstacle=_obstacle(obstacle))
         self._pump()
 
     def on_order_board(self, run_mode, orders) -> None:

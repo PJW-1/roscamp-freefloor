@@ -113,6 +113,11 @@ class FleetParams:
     floor_retreat_after_s: float = 10.0  # 이만큼 막혀 서 있으면 물러난다
     floor_retreat_speed_mps: float = 0.05  # 물러나는 속도
     floor_retreat_max_m: float = 1.0  # 한 번에 물러나는 가장 긴 거리
+    # 막힘 물체 자리 보고(RobotState obstacle_*, 제안, 팀 합의 전). 끄면 보고된 자리를 무시한다
+    floor_obstacle_report: bool = False
+    floor_obstacle_keep_s: float = 30.0  # 마지막 보고 뒤 표시를 지키는 시간
+    floor_obstacle_margin_m: float = 0.02  # 물체 반지름에 더해 막는 여유
+    floor_obstacle_radius_m: float = 0.05  # 반지름을 보내지 않은(0) 물체의 반지름
 
 
 def load_params(path=None) -> FleetParams:
