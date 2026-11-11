@@ -29,7 +29,7 @@ def dim(p, q, text, off=(0, 0), color="#c0392b", fs=11.5):
 # 놓는 자리 치수 (벽에서)
 dim((0, 0.495), (0.52, 0.495), "52", off=(0.08, 0.035))
 dim((0.605, 0), (0.605, 0.42), "42", off=(-0.06, 0))
-dim((0.69, 0.495), (1.03, 0.495), "34", off=(0, 0.035))
+dim((0.69, 0.575), (1.03, 0.575), "34", off=(0, 0.03))
 dim((1.165, 0), (1.165, 0.43), "43", off=(0.05, 0))
 dim((1.165, 0.56), (1.165, 0.99), "43", off=(0.05, 0))
 dim((0.605, 0.58), (0.605, 0.99), "41", off=(0.06, 0.06))
@@ -47,9 +47,14 @@ for line in fl["fixed_lines"].values():
 for p in fl["parking"]:
     ax.add_patch(plt.Circle((p["x"], p["y"]), 0.083, fc="#7dbb5c", ec="#2e6b1e", alpha=0.45, lw=1.5, zorder=4))
     ax.text(p["x"], p["y"], p["id"], ha="center", va="center", fontsize=10.5, weight="bold", zorder=5)
-ax.text(0.89, 0.88, "북쪽 통로 41-43 cm  (양쪽 방향)", ha="center", fontsize=12, color="#1f6f8b", weight="bold")
-ax.text(0.89, 0.07, "남쪽 통로 42-43 cm  (양쪽 방향)", ha="center", fontsize=12, color="#1f6f8b", weight="bold")
-ax.text(0.86, 0.66, "건너는 통로", ha="center", va="center", fontsize=11, color="#1f6f8b", weight="bold")
+ax.text(0.89, 0.88, "북쪽 통로 41-43 cm  (어느 방향으로든)", ha="center", fontsize=12, color="#1f6f8b", weight="bold")
+ax.text(0.89, 0.07, "남쪽 통로 42-43 cm  (어느 방향으로든)", ha="center", fontsize=12, color="#1f6f8b", weight="bold")
+for line, spots in (fl.get("wait_spots") or {}).items():
+    if line == "outbound_in":
+        x, y = spots[0]
+        ax.add_patch(plt.Circle((x, y), 0.083, fc="none", ec="#8e44ad", lw=1.8, ls="--", zorder=4))
+        ax.text(x, y, "출고 차례\n대기", ha="center", va="center", fontsize=9.5, color="#8e44ad", zorder=5)
+ax.text(0.86, 0.64, "건너는 통로", ha="center", va="center", fontsize=11, color="#1f6f8b", weight="bold")
 ax.text(0.30, 0.30, "출고 앞 마당", ha="center", fontsize=11, color="#555")
 ax.text(1.55, 0.66, "동쪽 마당\n(대기 · 작업)", ha="center", va="center", fontsize=11, color="#555")
 ax.text(-0.075, 0.52, "서쪽 벽\n(로봇팔 3)", ha="center", va="center", fontsize=10.5, rotation=90)

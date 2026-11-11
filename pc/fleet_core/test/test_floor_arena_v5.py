@@ -432,7 +432,7 @@ def test_a_robot_on_a_wait_spot_holds_no_cell_of_a_dock_line_and_its_body_no_oth
         assert not one & other, (a, b)
 
 
-def test_a_robot_between_the_islands_leaves_three_clear_rows_of_both_passages():
+def test_a_robot_between_the_islands_leaves_three_clear_rows_beside_it_north_and_south():
     radius = max(BODY, LOCKS["release_distance_m"])
     taken = set(disk_cells(FLOOR, *CROSS, radius))
     free = {c for c in FLOOR.clear if not disk_cells(FLOOR, *FLOOR.centre(c), BODY) & taken}
