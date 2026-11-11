@@ -1,0 +1,12 @@
+{
+  "early": 2,
+  "near": 0,
+  "releases": 9037,
+  "min_gap_m": 0.2862071794381341,
+  "min_release_m": 0.07633146304510498,
+  "radius_m": 0.08,
+  "log": [
+    "t=142.1 pinky2 released c64_26 0.079 m from it",
+    "t=188.6 pinky3 released c12_12 0.076 m from it"
+  ]
+}

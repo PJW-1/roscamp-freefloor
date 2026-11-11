@@ -1,0 +1,42 @@
+{
+  "min_distance_m": 0.286,
+  "min_distance_pair": [
+    "pinky2",
+    "pinky3"
+  ],
+  "min_distance_at_s": 36.07,
+  "stops": 30,
+  "stops_while_moving": 14,
+  "outside_held_samples": 0,
+  "no_zone_held_samples": 0,
+  "zone_samples": 18159,
+  "sim_span_s": 221.15,
+  "wall_span_s": 224.88,
+  "real_time_factor": 0.983,
+  "robots": {
+    "pinky1": {
+      "stops": 10,
+      "stops_while_moving": 5,
+      "outside_held_samples": 0,
+      "no_zone_held_samples": 0,
+      "zone_samples": 6053,
+      "worst_outside_m": 0.0
+    },
+    "pinky2": {
+      "stops": 11,
+      "stops_while_moving": 4,
+      "outside_held_samples": 0,
+      "no_zone_held_samples": 0,
+      "zone_samples": 6053,
+      "worst_outside_m": 0.0
+    },
+    "pinky3": {
+      "stops": 9,
+      "stops_while_moving": 5,
+      "outside_held_samples": 0,
+      "no_zone_held_samples": 0,
+      "zone_samples": 6053,
+      "worst_outside_m": 0.0
+    }
+  }
+}
