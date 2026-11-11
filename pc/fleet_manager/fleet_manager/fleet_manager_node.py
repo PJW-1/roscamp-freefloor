@@ -139,8 +139,13 @@ class FleetManagerNode(Node):
     # ------------------------------------------------------------------ inputs
     def _on_robot_state(self, robot, msg: RobotState) -> None:
         if not self.silent() and self._reachable(robot):
-            self.core.on_robot_state(robot, *adapters.robot_report(msg),
-                                     adapters.robot_report_id(msg))
+            obstacle = adapters.robot_obstacle(msg)
+            if obstacle is None:
+                self.core.on_robot_state(robot, *adapters.robot_report(msg),
+                                         adapters.robot_report_id(msg))
+            else:
+                self.core.on_robot_state(robot, *adapters.robot_report(msg),
+                                         adapters.robot_report_id(msg), obstacle=obstacle)
 
     def _reachable(self, robot) -> bool:
         """goal이 닿을 수 있어야 로봇으로 친다. 새 FMS는 액션 서버를 찾기 전에 보고를 먼저

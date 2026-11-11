@@ -95,6 +95,13 @@ def robot_report_id(msg) -> str:
     return msg.robot_id
 
 
+def robot_obstacle(msg):
+    """막힘 물체 (x, y, 반지름)(제안, 팀 합의 전). 보이지 않거나 필드가 없는 옛 메시지면 None."""
+    if not getattr(msg, "obstacle_seen", False):
+        return None
+    return msg.obstacle_x, msg.obstacle_y, msg.obstacle_radius
+
+
 def goal_result(response):
     """끝난 goal의 결과. 서버가 상태만으로 종료 사유를 알릴 수 있다."""
     result = response.result

@@ -119,6 +119,7 @@ class _Mission:
     queue_since: float | None = None  # BLOCKED로 줄 서기를 시작한 시각
     self_recovery_since: float | None = None  # 로봇이 RECOVERING을 보고하기 시작한 시각
     self_recovery_long: bool = False  # 이번 RECOVERING이 self_recovery_limit_s를 넘었다
+    obstacle: tuple | None = None  # 마지막 보고의 막힘 물체 (x, y, 반지름), 없으면 None(제안)
     detour_at: object = None  # 우회를 고른 지점. 여기를 떠나면 detour_avoid는 뜻이 없다
     detour_avoid: tuple = ()  # 그 지점에서 포기한 다음 구역들. 되돌아가지 않는다
     lane_ref: tuple | None = None  # off_lane을 센 레인(a, b)

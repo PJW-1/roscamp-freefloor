@@ -455,11 +455,17 @@ class FakePinkyNode(Node):
             state = self._rest
         x, y = noisy_pose(self._motion.x, self._motion.y, self._cfg.pose_noise_m, self._rng)
         x, y = drifted(x, y, self._motion.yaw, self._faults.drift(t))  # 진실 토픽은 그대로
-        self._reports.push(t, RobotState(
+        msg = RobotState(
             robot_id=self.robot_id, pose=Pose2D(x=x, y=y, theta=self._motion.yaw),
             battery=battery, state=state,
             current_goal=goal.target_id if busy else "",  # Pinky contract section 2
-            stamp=self.get_clock().now().to_msg()))
+            stamp=self.get_clock().now().to_msg())
+        if state in (RobotState.STATE_BLOCKED, RobotState.STATE_RECOVERING):
+            seen = self._recovery.obstacle_ahead(self._motion)
+            if seen is not None:
+                msg.obstacle_seen = True
+                msg.obstacle_x, msg.obstacle_y, msg.obstacle_radius = seen
+        self._reports.push(t, msg)
 
 
 def main(args=None):

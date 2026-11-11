@@ -36,6 +36,12 @@ m.path는 [출발할 때 가까운 지점, 목적지 지점] 두 개다. 선택�
     고정 선 칸에 닿지 않는 빈 자리에서 기다리고, 선이 비면 먼저 온 로봇부터 들어간다.
   - BLOCKED가 blocked_mark_s 이어지면 앞 칸을 막힘(주인 BLOCK_OWNER)으로 표시하고 목표를 거둔다.
     BLOCKED가 아닌 보고가 release_confirm_samples번 오면 표시를 지우고 다시 계획한다.
+    표시는 어느 로봇의 몸 칸(보고 자리와 평균 자리 둘레)도 가져가지 않는다(_protected).
+  - 물체 자리 보고(floor_obstacle_report, 제안): BLOCKED가 blocked_mark_s 이어진 로봇이 물체 자리를
+    보냈으면 앞 칸 대신 물체 둘레(반지름 + floor_obstacle_margin_m)만 막고(_mark_object), 취소 결과가
+    오면 그 밖으로 다시 계획한다. 다른 로봇의 계획도 그 칸을 벽으로 본다. 표시는 보고가 끊긴 뒤
+    floor_obstacle_keep_s 지나면, 또는 다시 계획하기 전의 막힌 로봇이 BLOCKED 아닌 보고를
+    release_confirm_samples번 하면(물체가 그 앞에서 사라졌다) 지운다. 끄면 보고된 자리를 무시한다.
   - 지름길(지도 shortcuts): 로봇은 원래 접근선으로 출발하고, 잠금이 갈림목 TURN_LEAD_M 앞에
     닿을 때 한 번 고른다(_take_shortcut). 같은 도크로 그 선을 앞서 가는 로봇이 없고, 다른 로봇이
     지름길에서 다른 선과 겹치는 구간에 닿기(도크에서 일하는 로봇은 일이 끝나는 것부터)
@@ -63,6 +69,7 @@ from fleet_core.traffic.floor.planner import (
     rest_of_exit,
 )
 from fleet_core.traffic.mission import (
+    SELF_RECOVERING,
     AT_STATION,
     BLOCKED,
     DOCKING,
@@ -95,6 +102,7 @@ FIRST_MOVE_WAIT_S = 5.0  # 자리가 가라앉지 않아도 이만큼 기다렸�
 STAND_REPORTS = 50  # 서 있는 로봇의 자리로 평균 낼 최근 보고 수(10 Hz면 5 s): 조금씩 밀린 로봇을 따라간다
 STAND_STILL_M = 0.001  # 서 있는 보고가 모두 이 안에 모이면 잡음이 없다: 모으지 않고 떠난다
 STAND_JUMP_M = 0.12  # 보고가 평균에서 이보다 멀면 로봇이 옮겨진 것으로 보고 평균을 다시 시작한다
+RAW_REPORTS = 10  # 막힘 표시가 비킬 몸: 최근 보고 이만큼(10 Hz면 1 s)
 MOVING_REPORTS = 5  # 달리는 로봇의 자리로 평균 낼 최근 보고 수(10 Hz, 0.15 m/s면 3 cm 뒤처진다)
 LAG_M = 0.15  # 평균 낸 자리가 진행점보다 이만큼까지 뒤처질 수 있다고 본다(진행점은 튄 보고로 앞서고 평균은 늦다)
 MOVING_JUMP_M = 0.2  # 달리는 로봇의 보고가 평균에서 이보다 멀면 평균을 다시 시작한다
@@ -220,6 +228,16 @@ class _Yield:
     passages: tuple
 
 
+@dataclass
+class _Obstacle:
+    """로봇이 보고한 막힘 물체 하나(floor_obstacle_report, 제안)."""
+    xy: tuple
+    r: float  # 막는 반지름(보고 반지름 + 여유)
+    want: frozenset  # 막을 칸 이름
+    seen: float  # 마지막으로 보고된 때
+    cells: set = field(default_factory=set)  # 지금 막힘 표시로 쥔 칸
+
+
 def _along(points, xy) -> tuple[float, float]:
     """꺾은선 위로 xy를 투영한 거리(처음부터, 0~길이)와 꺾은선 길이."""
     best, base, total = (math.inf, 0.0), 0.0, 0.0
@@ -304,6 +322,8 @@ class FloorController(TrafficController):
         self._unsettled: dict[str, float | None] = {}
         self._started: set[str] = set()  # 자리 잡은 뒤 MoveTo를 한 번이라도 받은 로봇
         self._recent: dict[str, deque] = {}  # 로봇 -> 달리는 동안의 최근 보고 자리
+        # 로봇 -> 최근 보고 자리 RAW_REPORTS개(튀어도 다시 시작하지 않는다): 막힘 표시가 몸을 비킨다
+        self._raw: dict[str, deque] = {}
         self._span_cache: dict[str, tuple] = {}  # 로봇 -> (경로, 나아간 칸 수, 칸별 시각표)
         self._cross_cache: dict = {}  # (로봇, 로봇) -> 엇갈림(시각표가 바뀌면 다시 구한다)
         # 물러나기(제안). 둘 다 꺼져 있으면 아래 것은 비어 있고 아무 데서도 쓰지 않는다
@@ -331,6 +351,14 @@ class FloorController(TrafficController):
                 for c in passage.cells:
                     self._passage_of[passage.axis][c] = k
             self.metrics.update(keep_right=0, narrow_waits=0)
+        # 물체 자리 보고(제안). 꺼져 있으면 아래 것은 비어 있고 아무 데서도 쓰지 않는다
+        self._obj_on = bool(params.floor_obstacle_report)
+        self._objects: dict[int, _Obstacle] = {}  # 번호 -> 보고된 물체
+        self._obj_n = 0
+        self._obj_of: dict[str, int] = {}  # 로봇 -> 이번 막힘에서 표시한 물체
+        self._obj_wait: set[str] = set()  # 물체를 표시하고 취소 결과를 기다려 다시 계획할 로봇
+        self._obj_replan: dict[str, float] = {}  # 로봇 -> 물체를 피해 다시 계획한 때
+        self._obj_walls: frozenset = frozenset()  # 모든 물체가 막을 칸 (i, j): 계획이 벽으로 본다
 
     # ---- cells --------------------------------------------------------------------------
 
@@ -474,6 +502,7 @@ class FloorController(TrafficController):
     def _note_standing(self, m: _Mission) -> None:
         """보고 자리를 모은다. 서 있는 동안은 모두(평균에서 STAND_JUMP_M 넘게 튀면 다시),
         달리는 동안은 최근 MOVING_REPORTS개(MOVING_JUMP_M 넘게 튀면 다시)."""
+        self._raw.setdefault(m.name, deque(maxlen=RAW_REPORTS)).append((m.x, m.y))
         recent = self._recent.setdefault(m.name, deque(maxlen=MOVING_REPORTS))
         if not self._stands(m):
             self._stand.pop(m.name, None)
@@ -605,7 +634,7 @@ class FloorController(TrafficController):
         if m.robot_state in NOT_PLACEABLE:
             return
         # 새로 올린 로봇: 예전에 서 있던 자리와 달린 적을 잊는다(첫 출발을 다시 기다린다)
-        for memory in (self._stand, self._recent, self._unsettled):
+        for memory in (self._stand, self._recent, self._unsettled, self._raw):
             memory.pop(m.name, None)
         self._started.discard(m.name)
         cells = self._body_cells(m.x, m.y)
@@ -693,12 +722,26 @@ class FloorController(TrafficController):
         """BLOCKED가 blocked_mark_s 이어지면 앞 칸을 막힘으로 표시한다. 풀리면 지운다."""
         now = self._clock()
         name = m.name
+        if self._obj_on:
+            self._refresh_object(m, now)
         if m.robot_state == "BLOCKED":
             self._clear_n[name] = 0
             since = self._block_since.setdefault(name, now)
             self._take_ahead(m)
+            if name in self._obj_of:
+                # 이번 막힘은 물체 자리로 표시했다: 짐작 표시는 하지 않는다. 새 길에서도
+                # blocked_mark_s 넘게 BLOCKED면(다른 물체이거나 덜 막았다) 본 물체를 다시 표시한다
+                if now - since >= self.params.blocked_timeout_s and not m.fault:
+                    self._fail(m, "BLOCKED")
+                elif (name not in self._obj_wait and m.obstacle is not None
+                      and now - self._obj_replan.get(name, now) >= self.params.blocked_mark_s):
+                    self._mark_object(m)
+                return
             if name not in self._marks and now - since >= self.params.blocked_mark_s:
-                self._mark_blocked(m)
+                if self._obj_on and m.obstacle is not None:
+                    self._mark_object(m)
+                else:
+                    self._mark_blocked(m)
             elif self._blocked_again(m, since, now):
                 self._mark_blocked(m)  # 새 길에서 또 막혔다: 표시를 더하고 처음부터 기다린다
                 self._hold_back(self._back[name], now)
@@ -706,6 +749,9 @@ class FloorController(TrafficController):
                 self._fail(m, "BLOCKED")
             return
         self._block_since.pop(name, None)
+        if name in self._obj_of:
+            self._object_unblocked(m)
+            return
         if name in self._marks and not self._keeps_mark(name):
             self._clear_n[name] = self._clear_n.get(name, 0) + 1
             if self._clear_n[name] >= self.params.release_confirm_samples:
@@ -721,12 +767,149 @@ class FloorController(TrafficController):
                 if leg is not None and leg.route is not None:
                     self._plan(m, leg)
 
+    def _protected(self) -> set[str]:
+        """막힘 표시가 가져가지 않을 칸: 지도에 오른 모든 로봇의 몸. 마지막 보고 자리 둘레 몸 반지름과,
+        평균 자리(_here)와 최근 보고 RAW_REPORTS개의 평균 둘레로 몸 반지름 + 그 보고들이 평균에서
+        가장 멀리 벗어난 거리(잡음이 없고 서 있으면 0). 튄 보고 하나로 평균이 다시 시작해도 몸을
+        비킨다."""
+        out = set()
+        for r in self._missions.values():
+            if not r.placed:
+                continue
+            out |= self._body_cells(r.x, r.y)
+            for seen in (self._stand.get(r.name) or self._recent.get(r.name),
+                         self._raw.get(r.name)):
+                if not seen:
+                    continue
+                mean = self._mean(seen)
+                spread = max(math.dist(mean, p) for p in seen)
+                out |= self._ids(disk_cells(self.floor, *mean, self._body + spread))
+        return out
+
+    # ---- 물체 자리 보고(floor_obstacle_report, 제안) ----------------------------------------
+
+    def _object_near(self, xy, r: float) -> int | None:
+        """xy 둘레 r과 겹치는 표시된 물체 번호."""
+        for key, ob in self._objects.items():
+            if math.dist(ob.xy, xy) <= ob.r + r:
+                return key
+        return None
+
+    def _reported(self, m: _Mission) -> tuple[float, float, float]:
+        """보고된 물체 (x, y, 막는 반지름)."""
+        x, y, r = m.obstacle
+        r = r if r > 0 else self.params.floor_obstacle_radius_m
+        return x, y, r + self.params.floor_obstacle_margin_m
+
+    def _refresh_object(self, m: _Mission, now: float) -> None:
+        """BLOCKED, RECOVERING 보고에 실린 물체가 이미 표시한 물체면 그 시각을 늘린다."""
+        if m.obstacle is None or m.robot_state not in (BLOCKED, SELF_RECOVERING):
+            return
+        x, y, r = self._reported(m)
+        key = self._object_near((x, y), r)
+        if key is not None:
+            self._objects[key].seen = now
+
+    def _mark_object(self, m: _Mission) -> None:
+        """보고된 물체 둘레만 막고 목표를 거둔다. 취소 결과가 오면 다시 계획한다(_object_tick)."""
+        x, y, r = self._reported(m)
+        want = frozenset(self._ids(disk_cells(self.floor, x, y, r)))
+        key = self._object_near((x, y), r)
+        now = self._clock()
+        if key is None:
+            self._obj_n += 1
+            key = self._obj_n
+            self._objects[key] = _Obstacle((x, y), r, want, now)
+        else:
+            ob = self._objects[key]
+            ob.want, ob.seen = ob.want | want, now  # 같은 물체: 칸을 더한다
+        self._obj_walls = frozenset(self.floor.cell_at(c) for ob in self._objects.values()
+                                    for c in ob.want)
+        if m.goal:
+            self._cancel_goal(m)
+        leg = self._legs.get(m.name)
+        if leg and leg.route:
+            leg.s_lock = leg.s_sent = leg.s
+        self._obj_of[m.name] = key
+        self._obj_wait.add(m.name)
+        taken = self._grab_object(self._objects[key])
+        self._event("WARN", "FLOOR_OBSTACLE",
+                    f"object at ({x:.2f}, {y:.2f}) r {r:.2f} m, {taken} cells marked blocked",
+                    m.name)
+
+    def _grab_object(self, ob: _Obstacle) -> int:
+        """물체가 막을 칸 중 빈 칸과, 목표가 끝난 로봇이 몸 밖에 쥔 칸을 막힘 표시로 쥔다.
+        로봇 몸 칸(_protected)은 가져가지 않는다. 쥔 칸 수를 돌려준다."""
+        left = ob.want - ob.cells
+        if not left:
+            return len(ob.cells)
+        guard = self._protected()
+        for cell in sorted(left - guard):
+            holder = self.zones.holder(cell)
+            if holder is not None:
+                r = self._missions.get(holder)
+                if r is None or r.goal is not None or self._active[holder]:
+                    continue  # 남의 칸이나 아직 따라갈 수 있는 길의 칸: 나중에 다시 본다
+                self.zones.release(holder, cell)
+            if self.zones.acquire_all(BLOCK_OWNER, {cell}):
+                ob.cells.add(cell)
+        return len(ob.cells)
+
+    def _object_tick(self, now: float) -> None:
+        """물체 표시를 채우고, 취소 결과가 온 로봇을 다시 계획하고, 오래된 표시를 지운다."""
+        for ob in self._objects.values():
+            self._grab_object(ob)
+        for name in sorted(self._obj_wait):
+            m = self._missions[name]
+            if m.goal is not None or self._active[name]:
+                continue
+            self._obj_wait.discard(name)
+            self._obj_replan[name] = now
+            leg = self._legs.get(name)
+            if leg is not None and leg.route is not None:
+                self._plan(m, leg)  # 물체 둘레를 벽으로 본 새 길
+        waiting = {self._obj_of.get(n) for n in self._obj_wait}
+        for key in [k for k, ob in self._objects.items()
+                    if k not in waiting and now - ob.seen >= self.params.floor_obstacle_keep_s]:
+            self._drop_object(key, f"no report for {self.params.floor_obstacle_keep_s:.0f} s")
+
+    def _drop_object(self, key: int, why: str) -> None:
+        ob = self._objects.pop(key)
+        for cell in ob.cells:
+            self.zones.release(BLOCK_OWNER, cell)
+        for name in [n for n, k in self._obj_of.items() if k == key]:
+            del self._obj_of[name]
+        self._obj_walls = frozenset(self.floor.cell_at(c) for o in self._objects.values()
+                                    for c in o.want)
+        self._event("INFO", "FLOOR_OBSTACLE_CLEARED",
+                    f"object at ({ob.xy[0]:.2f}, {ob.xy[1]:.2f}) unmarked: {why}")
+
+    def _object_unblocked(self, m: _Mission) -> None:
+        """물체를 표시한 로봇의 BLOCKED 아닌 보고. 다시 계획하기 전(그 앞에 서 있다)이면 물체가
+        사라진 것이니 release_confirm_samples번에 지운다. 이미 새 길을 받았으면 이 막힘만 끝낸다."""
+        name = m.name
+        if name not in self._obj_wait:
+            del self._obj_of[name]
+            return
+        if m.robot_state == SELF_RECOVERING:
+            self._clear_n[name] = 0
+            return
+        self._clear_n[name] = self._clear_n.get(name, 0) + 1
+        if self._clear_n[name] < self.params.release_confirm_samples:
+            return
+        key = self._obj_of.pop(name)
+        self._obj_wait.discard(name)
+        self._drop_object(key, f"{name} sees it no more")
+        leg = self._legs.get(name)
+        if leg is not None and leg.route is not None and m.goal is None:
+            self._plan(m, leg)
+
     def _mark_blocked(self, m: _Mission) -> None:
         leg = self._legs.get(m.name)
         ahead = set()
         if leg and leg.route:
             ahead = self._swept(leg.route.between(leg.s, leg.s + 0.3))
-        ahead -= self._body_cells(m.x, m.y)
+        ahead -= self._protected()
         if m.goal:
             self._cancel_goal(m)
         # cells the robot holds stay its own until the cancelled goal has ended (it may still
@@ -748,7 +931,7 @@ class FloorController(TrafficController):
         ahead = self._ahead.get(m.name)
         if not ahead or m.goal is not None or self._active[m.name]:
             return
-        body = self._body_cells(m.x, m.y)
+        body = self._protected()
         for cell in sorted(ahead):
             holder = self.zones.holder(cell)
             if cell in body or holder not in (None, m.name):
@@ -768,6 +951,8 @@ class FloorController(TrafficController):
         back = self._back.get(m.name)
         if back is not None:
             return back.state != REROUTED
+        if m.name in self._obj_of:
+            return m.name in self._obj_wait  # 물체 둘레만 막았다: 다시 계획하면 달린다
         return m.name in self._block_since or m.name in self._marks
 
     def _queue_rests(self, m: _Mission, lane=None) -> bool:
@@ -792,6 +977,8 @@ class FloorController(TrafficController):
             self._back_tick(now)
         if self._keep_right:
             self._tidy_keep_right()
+        if self._objects or self._obj_wait:
+            self._object_tick(now)
         return self._check_deadlock(now)
 
     def _follow(self, m: _Mission) -> None:
@@ -810,6 +997,11 @@ class FloorController(TrafficController):
         if not (seen and seen[0] == (m.last_seen, m.x, m.y) and seen[1] is leg.route):
             seen = leg.followed = ((m.last_seen, m.x, m.y), leg.route, leg.s)
         ahead = min(max(leg.s, leg.s_sent), max(leg.s, seen[2] + FOLLOW_AHEAD_M))
+        # 되접히는 꼭짓점(90°보다 꺾임)은 넘겨 투영하지 않는다: 돌아오는 구간이 가까워 튄 보고가
+        # 진행점을 꼭짓점 너머로 넘기면 꼭짓점 둘레 칸을 놓는다. 꼭짓점에 닿으면 넘어간다
+        fold = next((f for f in self._folds(leg.route) if f > leg.s + 1e-9), None)
+        if fold is not None:
+            ahead = min(ahead, fold)
         s, _ = leg.route.project(m.x, m.y, leg.s, ahead)
         leg.s = max(leg.s, s)
         if self._back_on:
@@ -819,6 +1011,19 @@ class FloorController(TrafficController):
         if short and m.goal and not leg.slowed:
             self.metrics["slowdowns"] += 1
         leg.slowed = short and (leg.slowed or m.goal is not None)
+
+    @staticmethod
+    def _folds(route) -> list[float]:
+        """경로가 90°보다 꺾이는 꼭짓점의 진행 거리들(앞에서부터)."""
+        folds = getattr(route, "folds", None)
+        if folds is None:
+            pts, folds = route.points, []
+            for k in range(1, len(pts) - 1):
+                a, b, c = pts[k - 1], pts[k], pts[k + 1]
+                if (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0:
+                    folds.append(route.cum[k])
+            route.folds = folds
+        return folds
 
     def _release_cells(self, m: _Mission) -> None:
         if m.fault == ERROR or m.block_cancel is not None:
@@ -1482,6 +1687,7 @@ class FloorController(TrafficController):
         cautious(대기 자리로 가는 길): 급하지 않으니 남이 쥔 칸을 모두 피한다."""
         penalty = self._wait_for(m.name)
         walls = (self._others_cells(m.name) if cautious else self._wall_cells(m.name)) | keep
+        walls |= self._obj_walls  # 보고된 물체 둘레(스위치를 끄면 비어 있다)
         # 지금 몸이 있는 내 칸만: 멀리 쥔 칸(앞 잠금)은 금지(extra)를 그대로 따른다
         mine = {self.floor.cell_at(c)
                 for c in self.zones.held_set(m.name) & set(self._body_cells(*start))}
