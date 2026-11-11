@@ -1,0 +1,43 @@
+# Free-floor map for a trial layout with thin shelves ("v6", 2026-11-11): the user's concept
+# drawing in its own orientation, the two shelves on the left 0.10 m thick and the two long ones
+# on the right 0.05 m (the user's numbers). Never laid out in the real arena. arena_v6_fine.pgm is
+# the 1 cm map the site generator writes from sim/fleet_gz_sim/sites/arena_v6.yaml. Coordinates
+# are those of the lane map sim/fake_robots/maps/arena_v6.yaml, which names this file.
+image: arena_v6_fine.pgm
+resolution: 0.01
+origin: [-0.15, -0.15, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+# Robot, cells and margins as floor_map_arena_v5.yaml. The passage north of the long shelves is
+# eight clear cells wide (0.42 m), the others one to three.
+cell_m: 0.03
+robot_radius_m: 0.08
+cell_margin_m: 0.03
+robot_half_width_m: 0.06
+side_margin_m: 0.02
+wall_margin_m: 0.003
+# WORK in the north-west corner, OUTBOUND at the middle of the east wall, parking along the south
+# wall in the west (the last spot is the nearest to the way into WORK).
+docks:
+  WORK: [0.20, 0.88]
+  OUTBOUND: [1.85, 0.50]
+parking:
+  - {id: P-1, x: 0.73, y: 0.11}
+  - {id: P-2, x: 0.43, y: 0.11}
+  - {id: P-3, x: 0.14, y: 0.11}
+# The only lines are the last 0.17 m into each dock (the direction a robot comes in by; the
+# user asked for them to be shorter than the 0.23 m of v5, and arrival_tolerance_m is 0.15). WORK is
+# entered from the south as on the drawing. OUTBOUND is entered from the north, not from the
+# south as drawn: with free paths a robot coming by the north passage would drive past the dock
+# down the 0.26 m east strip and turn round to come in. So the robots go round clockwise: north
+# passage east, down through OUTBOUND, a south or the middle passage west, parking, up the west
+# passage into WORK. Both docks are driven through, none is a dead end.
+fixed_lines:
+  work_in: [[0.20, 0.71], [0.20, 0.88]]
+  outbound_in: [[1.85, 0.67], [1.85, 0.50]]
+# Where a robot waits for its turn on a dock line (first free place in this order). For WORK the
+# parking spots, nearest first. For OUTBOUND two places along the north wall in the wide passage.
+wait_spots:
+  work_in: [[0.14, 0.11], [0.43, 0.11], [0.73, 0.11]]
+  outbound_in: [[1.51, 0.885], [1.21, 0.885], [0.73, 0.11], [0.43, 0.11]]

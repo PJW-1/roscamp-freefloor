@@ -1,0 +1,34 @@
+# 얇은 진열대 배치 시험(arena_v6): 핑키 3대, 주문 8건이 20초마다 들어온다(gz_arena_v5와 같은 주문).
+# 사용자의 맵 개념도 방향 그대로, 왼쪽 진열대 둘은 두께 0.10 m, 오른쪽 둘은 0.05 m다
+# (sim/fleet_gz_sim/sites/arena_v6.yaml).
+#   export ROS_DOMAIN_ID=57 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_arena_v6 traffic_mode:=freefloor \
+#       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.15 \
+#       nav_collision_check:=false
+map: arena_v6
+seed: 65
+speed_factor: 5.0
+timeout_s: 1200
+stock: {arm1: {A: 20, B: 20}, arm2: {C: 20, D: 20}}
+orders:
+  - {at_s: 0, id: R-001, items: {A: 1, C: 1}}
+  - {at_s: 20, id: R-002, items: {B: 1}}
+  - {at_s: 40, id: R-003, items: {D: 1, A: 1}}
+  - {at_s: 60, id: R-004, items: {C: 1}}
+  - {at_s: 80, id: R-005, items: {B: 1, D: 1}}
+  - {at_s: 100, id: R-006, items: {A: 1}}
+  - {at_s: 120, id: R-007, items: {C: 1, B: 1}}
+  - {at_s: 140, id: R-008, items: {D: 1}}
+robots:
+  pinky1: {start: P-3}
+  pinky2: {start: P-2}
+  pinky3: {start: P-1}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 8
+  orders_partial: 0
+  orders_held: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED]

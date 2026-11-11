@@ -1,0 +1,61 @@
+# 얇은 진열대 배치 시험 v6 (2026-11-11, sim/fleet_gz_sim/sites/arena_v6.yaml). 사용자의 맵 개념도 방향
+# 그대로다: 작업 도크는 북서쪽 구석, 출고 도크는 동쪽 벽 가운데, 대기 자리는 남서쪽.
+#  - 관제는 자유바닥으로 돈다. 고정 선은 도크 앞 0.17 m뿐이다(들어가는 방향만 정한다). 작업 도크는
+#    남쪽에서(개념도와 같다), 출고 도크는 북쪽에서 들어간다(개념도는 남쪽에서다. 자유 경로에서는 북쪽
+#    통로로 온 로봇이 도크를 지나쳐 내려갔다가 되돌아 들어오게 되어 바꿨다)
+#  - 아래 레인은 표시와 거리 계산용이다. 시계 방향 한 바퀴와 가운데 통로를 그렸지만 로봇은 이 선을
+#    따르지 않는다
+#
+#   y
+#  0.88   W ------> NA ------> NC ---------> NE ----> QO
+#  0.65   QW   [A]      [B]    |    [긴 진열대 북]      |
+#  0.50   ^                    |                       O
+#  0.38   WS <----- SM         |    [긴 진열대 남]      |
+#  0.12        P-3  P-2  P-1 - SC <------------------- SE
+#        0.20      0.60      0.98          1.50      1.85  x
+floor_map: floor_map_arena_v6.yaml  # free-floor map (traffic_mode freefloor), in fleet_core/data
+half_width_m: 0.05
+lane_entry_m: 0.25
+origin_m: [0.0, 0.0]
+bundle_two_way: false
+waypoints:
+  - {id: QW, x: 0.20, y: 0.71}      # WORK 도크 앞 (고정 선의 시작)
+  - {id: W, x: 0.20, y: 0.88}       # WORK 도크 (북서쪽 구석)
+  - {id: NA, x: 0.60, y: 0.885}     # 왼쪽 진열대 위
+  - {id: NC, x: 0.98, y: 0.84}      # 가운데 통로 북쪽 끝
+  - {id: NE, x: 1.50, y: 0.88}      # 북쪽 통로 동쪽
+  - {id: QO, x: 1.85, y: 0.67}      # OUTBOUND 도크 앞 (고정 선의 시작)
+  - {id: O, x: 1.85, y: 0.50}       # OUTBOUND 도크 (동쪽 벽 가운데)
+  - {id: SE, x: 1.85, y: 0.12}      # 남동쪽 구석
+  - {id: SC, x: 0.98, y: 0.12}      # 가운데 통로 남쪽 끝
+  - {id: SM, x: 0.60, y: 0.38}      # 왼쪽 진열대 아래
+  - {id: WS, x: 0.20, y: 0.38}      # 서쪽 통로 남쪽 끝
+  - {id: MC, x: 0.98, y: 0.405}     # 가운데 통로, 긴 진열대 사이 통로 앞
+  - {id: MB, x: 1.65, y: 0.405}     # 긴 진열대 사이 통로 동쪽
+  - {id: P-1, x: 0.73, y: 0.11}     # 남쪽 벽 앞, 동쪽
+  - {id: P-2, x: 0.43, y: 0.11}     # 남쪽 벽 앞, 가운데
+  - {id: P-3, x: 0.14, y: 0.11}     # 남서쪽 구석 (작업 도크에 가장 가깝다)
+lanes:
+  - {from: QW, to: W}
+  - {from: W, to: NA}
+  - {from: NA, to: NC}
+  - {from: NC, to: NE}
+  - {from: NE, to: QO}
+  - {from: QO, to: O}
+  - {from: O, to: SE}
+  - {from: SE, to: SC}
+  - {from: SC, to: SM}
+  - {from: SM, to: WS}
+  - {from: WS, to: QW}
+  - {from: NC, to: MC}              # 가운데 통로
+  - {from: MC, to: SC}
+two_way:  # 대기 자리는 남쪽 벽을 따라 한 줄로 있다
+  BAY1: [SC, P-1]
+  BAY2: [P-1, P-2]
+  BAY3: [P-2, P-3]
+  WEST: [P-3, WS]
+  MID: [MC, MB]                     # 긴 진열대 사이 통로
+stations:
+  WORK: {dock: W, queue: [[QW, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[QO, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+parking: [P-1, P-2, P-3]
