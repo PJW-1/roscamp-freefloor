@@ -1,0 +1,53 @@
+# 실물 경기장 지도 v4의 양방향판(2026-11-11). 자리와 좌표는 arena_v4.yaml 그대로이고 바닥 지도가 다르다
+# (pc/fleet_core/fleet_core/data/floor_map_arena_v4_twoway.yaml): 한 방향 선은 도킹 구간만 남고, 가운데
+# 통로, 물체 4 남쪽과 북쪽, 서쪽으로 가는 두 문(물체 2와 3 사이, 물체 3 북쪽)은 양방향이다. 관제가 통로마다
+# 방향 표시로 마주 들어가지 않게 한다. 아래 레인은 표시와 거리 계산용이다(arena_v4.yaml의 레인 가운데
+# 양방향 통로의 레인을 two_way로 바꿨다. 도킹 구간 QO -> O -> X1은 한 방향 그대로).
+floor_map: floor_map_arena_v4_twoway.yaml  # free-floor map (traffic_mode freefloor), in fleet_core/data
+half_width_m: 0.05
+lane_entry_m: 0.25
+origin_m: [0.0, 0.0]
+bundle_two_way: false
+waypoints:
+  - {id: QW, x: 1.50, y: 0.45}      # WORK 대기 지점 (동쪽 빈 곳의 가운데)
+  - {id: W, x: 1.78, y: 0.17}       # WORK 도크 (남동쪽 구석)
+  - {id: S1, x: 1.32, y: 0.125}     # 남쪽 통로 동쪽 입구: 출고로 가는 선의 시작
+  - {id: S2, x: 0.97, y: 0.125}     # 가운데 통로 남쪽 끝
+  - {id: M1, x: 0.97, y: 0.445}     # 가운데 통로, 물체 2와 3 사이 틈 앞: 두 고리가 만나는 곳
+  - {id: M2, x: 0.97, y: 0.905}     # 가운데 통로 북쪽 끝: 두 고리가 갈라지는 곳
+  - {id: N1, x: 0.60, y: 0.905}     # 물체 3 북쪽 통로를 지난 곳
+  - {id: QO, x: 0.17, y: 0.80}      # OUTBOUND 대기 지점 (북서쪽 구석)
+  - {id: O, x: 0.17, y: 0.52}       # OUTBOUND 도크 (서쪽 벽 가운데)
+  - {id: X1, x: 0.20, y: 0.25}      # 출고를 남쪽으로 나온 곳
+  - {id: X2, x: 0.571, y: 0.237}    # 물체 1과 2 사이 틈 앞 (틈의 가운데 선 위, X3까지 0.21 m)
+  - {id: X3, x: 0.649, y: 0.432}    # 그 틈을 지난 곳 (물체 2와 3 사이 틈의 서쪽 끝)
+  - {id: E1, x: 1.30, y: 0.875}     # 물체 4 북쪽 통로의 동쪽 출구
+  - {id: P-1, x: 1.57, y: 0.87}     # 북쪽 벽 앞
+  - {id: P-2, x: 1.86, y: 0.87}     # 북동쪽 구석
+  - {id: P-3, x: 1.86, y: 0.58}     # 동쪽 벽 앞
+lanes:
+  - {from: QW, to: W}
+  - {from: W, to: S1}
+  - {from: QO, to: O}               # 도킹 구간: 출고에 북쪽에서 들어가 남쪽으로 나온다
+  - {from: O, to: X1}
+  - {from: E1, to: QW}
+two_way:
+  # 양방향 통로(바닥 지도 passages)
+  SOUTH4: [S1, S2]
+  MID_S: [S2, M1]
+  MID_N: [M1, M2]
+  NORTH3: [M2, N1]
+  WEST_N: [N1, QO]
+  WEST_S: [X1, X2]
+  GAP12: [X2, X3]
+  GAP23: [X3, M1]
+  NORTH4: [M2, E1]
+  # 대기 자리는 북쪽과 동쪽 벽을 따라 한 줄로 있다
+  BAY1: [E1, P-1]
+  BAY2: [P-1, P-2]
+  BAY3: [P-2, P-3]
+  EAST: [P-3, QW]
+stations:
+  WORK: {dock: W, queue: [[QW, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[QO, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+parking: [P-1, P-2, P-3]

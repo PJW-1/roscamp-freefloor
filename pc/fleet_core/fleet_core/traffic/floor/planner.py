@@ -8,6 +8,9 @@ penalty(cell, s)는 다른 로봇의 예약 벌점이다(P3). s는 출발점에�
 wait(cell, s, (di, dj))는 (기다림 m, 벌점 m)을 준다: 남이 쓰는 칸이 빌 때까지 서 있는 값이다.
 기다림은 그 뒤 칸의 s에 더하고(그만큼 늦게 닿는다) 비용에는 WAIT_COST배로 더한다. 벌점은
 비용에만 더한다.
+line 통로(지도 passages, line: true)는 양 끝 칸을 잇는 길이다: A*가 한쪽 끝 칸에서 다른 끝 칸으로 건너가고
+(비용은 선 길이), 경로의 그 구간은 가운데 선 위다(Route.fixed에 통로 이름으로 든다). 선이 지나는 칸이
+피할 칸(avoid)에 닿으면 그 통로는 막힌 것이다. 통로 안에서 출발하면 선을 따라 한쪽 끝으로 나간다.
 """
 from __future__ import annotations
 
@@ -26,11 +29,20 @@ MERGE_M = 0.05  # a report off a narrow line joins the line this far ahead of it
 JOIN_M = 0.12  # 이만큼 안에 있으면 들어가는 고정 선 위에 선 것으로 보고 그 자리에서 잇는다
 STEP_ONTO_CLEAR_M = 0.2  # a start stopped this close to clear floor steps onto it first
 STRAIGHT = 1e-3  # 이보다 덜 꺾이면 곧은 것으로 친다(rad)
+PASSAGE_END_M = 0.05  # line 통로 끝에서 이만큼 안이면 통로 안이 아니라 입구다(보통처럼 계획)
 NEIGHBOURS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
 
 def polyline_length(points) -> float:
     return sum(math.dist(a, b) for a, b in zip(points, points[1:], strict=False))
+
+
+@dataclass(frozen=True)
+class Crossing:
+    """A* 칸 길에서 line 통로를 건너간 자리: 통로 이름, 방향(+1: 점 순서대로), 가는 순서의 점들."""
+    name: str
+    way: int
+    points: tuple
 
 
 @dataclass
@@ -101,13 +113,26 @@ class FloorPlanner:
         self.line_cells = set()
         for line in floor.fixed_lines.values():
             self.line_cells |= swept_cells(floor, list(line.points), body) & floor.clear
+        # line 통로: 끝 칸 -> [(다른 끝 칸, 이름, 방향, 점들, 길이)], 이름 -> 가운데 선이 지나는 칸
+        self.portals: dict = {}
+        self.portal_cells: dict = {}
+        for name, p in sorted(getattr(floor, "passages", {}).items()):
+            if not p.line:
+                continue
+            pts = [tuple(q) for q in p.points]
+            a, b = floor.cell_of(*pts[0]), floor.cell_of(*pts[-1])
+            length = polyline_length(pts)
+            self.portals.setdefault(a, []).append((b, name, 1, pts, length))
+            self.portals.setdefault(b, []).append((a, name, -1, pts[::-1], length))
+            self.portal_cells[name] = frozenset(line_cells(floor, pts))
 
     # ---- whole legs ---------------------------------------------------------------------
 
     def leg(self, start, goal, out_line=None, in_line=None, avoid=frozenset(), penalty=None,
-            wait=None):
+            wait=None, ways=None):
         """출발 (x, y)에서 goal까지. out_line: 먼저 따를 고정 선(도크에서 나감),
-        in_line: 마지막에 따를 고정 선(도크로 들어감). 길이 없으면 None."""
+        in_line: 마지막에 따를 고정 선(도크로 들어감). 길이 없으면 None.
+        ways {통로: 방향}: line 통로 안에서 출발하면 그 방향으로만 나간다(쥔 방향 표시)."""
         lines = self.floor.fixed_lines
         narrow = self.floor.narrow_lines
         if out_line in narrow and rest_of_exit(start, lines[out_line].points) is None:
@@ -146,9 +171,16 @@ class FloorPlanner:
             if way is None:
                 return None
             head, fixed = way
-        middle = self.plan(head[-1], tail[0], avoid, penalty, polyline_length(head), wait)
-        if middle is None:
+        inside = None if (out_line or gap) else self._passage_at(start)
+        if inside is not None:
+            return self._leg_from_passage(start, inside, tail, in_line, avoid, penalty, wait,
+                                          ways or {})
+        found = self._plan_spans(head[-1], tail[0], avoid, penalty, polyline_length(head), wait)
+        if found is None:
             return None
+        middle, spans = found
+        base = polyline_length(head)
+        fixed = fixed + [(a + base, b + base, name) for a, b, name in spans]
         points = head[:-1] + middle + tail[1:]
         points = [p for k, p in enumerate(points) if k == 0 or math.dist(p, points[k - 1]) > 1e-9]
         route = Route(points)
@@ -224,10 +256,81 @@ class FloorPlanner:
                 floor.fixed_lines[other].points[0], head[-1]) <= 1e-6), None)
         return None
 
+    # ---- line 통로(양방향) ----------------------------------------------------------------
+
+    def _passage_at(self, start):
+        """start가 line 통로 안이면 (이름, 선 위 거리): 가운데 선에서 JOIN_M 안이고 양 끝에서
+        PASSAGE_END_M보다 안쪽. 아니면 None(입구나 바깥은 보통처럼 계획한다)."""
+        for name, p in sorted(getattr(self.floor, "passages", {}).items()):
+            if not p.line:
+                continue
+            pts = list(p.points)
+            near = _nearest_on(start, pts)
+            if near is None or near[0] > JOIN_M:
+                continue
+            _, k, u, _ = near
+            along = polyline_length(pts[:k + 1]) + min(1.0, max(0.0, u)) * math.dist(
+                pts[k], pts[k + 1])
+            if PASSAGE_END_M < along < polyline_length(pts) - PASSAGE_END_M:
+                return name, along
+        return None
+
+    def _leg_from_passage(self, start, inside, tail, in_line, avoid, penalty, wait, ways):
+        """line 통로 안의 start에서: 선을 따라 한쪽 끝까지 나가 goal로. 두 쪽(ways가 정하면 그쪽만)
+        가운데 짧은 길. 나간 통로로 곧장 되돌아 들어가지 않는다."""
+        name, along = inside
+        pts = list(self.floor.passages[name].points)
+        best = None
+        for way in (1, -1):
+            if ways.get(name, way) != way:
+                continue
+            line = pts if way == 1 else pts[::-1]
+            here = along if way == 1 else polyline_length(pts) - along
+            rest = Route(line).between(here, polyline_length(line))
+            head = [tuple(start)] + [q for q in rest[1:] if math.dist(q, start) > 1e-9]
+            if len(head) < 2:
+                continue
+            own = {self.floor.cell_of(*start)}
+            if (line_cells(self.floor, head) - own) & avoid:
+                continue  # 나가는 쪽 선 위에 남이 있다
+            s_head = polyline_length(head)
+            found = self._plan_spans(head[-1], tail[0], avoid, penalty, s_head, wait,
+                                     skip=(name,))
+            if found is None:
+                continue
+            middle, spans = found
+            points = head[:-1] + middle + tail[1:]
+            points = [q for k, q in enumerate(points)
+                      if k == 0 or math.dist(q, points[k - 1]) > 1e-9]
+            route = Route(points)
+            fixed = [(0.0, s_head, name)] + [(a + s_head, b + s_head, n) for a, b, n in spans]
+            if in_line:
+                lines = self.floor.fixed_lines
+                fixed.append((route.length - lines[in_line].length(), route.length, in_line))
+            route.fixed = fixed
+            if best is None or route.length < best.length - 1e-9:
+                best = route
+        return best
+
+    def _open_portals(self, avoid, skip=()) -> dict:
+        """지날 수 있는 line 통로 끝 칸 -> 건너감들: 가운데 선이 피할 칸에 닿지 않는 통로만."""
+        if not self.portals:
+            return {}
+        shut = {name for name, cells in self.portal_cells.items()
+                if name in skip or not cells.isdisjoint(avoid)}
+        return {cell: [e for e in ends if e[1] not in shut]
+                for cell, ends in self.portals.items()}
+
     # ---- free part ----------------------------------------------------------------------
 
     def plan(self, start, goal, avoid=frozenset(), penalty=None, s0=0.0, wait=None):
         """자유 바닥 위 start에서 goal까지 둥글린 꺾은선, 없으면 None."""
+        found = self._plan_spans(start, goal, avoid, penalty, s0, wait)
+        return None if found is None else found[0]
+
+    def _plan_spans(self, start, goal, avoid=frozenset(), penalty=None, s0=0.0, wait=None,
+                    skip=()):
+        """plan과 같고 (점들, line 통로 구간 [(s0, s1, 이름)])을 준다(s는 start부터)."""
         floor = self.floor
         a, b = floor.cell_of(*start), floor.cell_of(*goal)
         if b not in floor.clear:
@@ -237,19 +340,45 @@ class FloorPlanner:
         if a not in floor.clear:
             # stopped a few cm into a wall margin: one straight step back onto clear floor first
             for step in self._steps_onto_clear(start, avoid):
-                rest = self.plan(step, goal, avoid, penalty, s0 + math.dist(start, step), wait)
+                off = math.dist(start, step)
+                rest = self._plan_spans(step, goal, avoid, penalty, s0 + off, wait, skip)
                 if rest is not None:
-                    return [tuple(start), *rest]
+                    return ([tuple(start), *rest[0]],
+                            [(x + off, y + off, n) for x, y, n in rest[1]])
             return None
         allowed = (floor.clear - avoid) | {a, b}
         if math.dist(start, goal) < 1e-9:
-            return [tuple(start)]
-        cells = self.astar(a, b, allowed, penalty, s0, wait)
+            return [tuple(start)], []
+        portals = self._open_portals(avoid, skip)
+        cells = self.astar(a, b, allowed, penalty, s0, wait, portals)
         if cells is None:
             return None
-        raw = [tuple(start)] + [floor.centre(c) for c in cells[1:-1]] + [tuple(goal)]
-        short = self.shortcut(raw, allowed)
-        return self.round_corners(short, allowed)
+        if not any(isinstance(c, Crossing) for c in cells):
+            raw = [tuple(start)] + [floor.centre(c) for c in cells[1:-1]] + [tuple(goal)]
+            short = self.shortcut(raw, allowed)
+            return self.round_corners(short, allowed), []
+        # line 통로마다 끊어 조각마다 펴고 둥글린다. 통로 구간은 가운데 선 그대로
+        pieces, crossings, run = [], [], []
+        for c in cells:
+            if isinstance(c, Crossing):
+                pieces.append(run)
+                crossings.append(c)
+                run = []
+            else:
+                run.append(c)
+        pieces.append(run)
+        points, spans = [], []
+        for k, run in enumerate(pieces):
+            first = tuple(start) if k == 0 else crossings[k - 1].points[-1]
+            last = tuple(goal) if k == len(pieces) - 1 else crossings[k].points[0]
+            raw = [first] + [floor.centre(c) for c in run[1:-1]] + [last]
+            part = self.round_corners(self.shortcut(raw, allowed), allowed)
+            points += [q for q in part if not points or math.dist(q, points[-1]) > 1e-9]
+            if k < len(crossings):
+                s_in = polyline_length(points)
+                points += [q for q in crossings[k].points if math.dist(q, points[-1]) > 1e-9]
+                spans.append((s_in, polyline_length(points), crossings[k].name))
+        return points, spans
 
     def _steps_onto_clear(self, start, avoid=frozenset()) -> list:
         """Centres of the clear cells within STEP_ONTO_CLEAR_M that a straight step over free
@@ -278,18 +407,22 @@ class FloorPlanner:
                     steps.append((d, xy))
         return [xy for _, xy in sorted(steps)]
 
-    def astar(self, a, b, allowed, penalty=None, s0=0.0, wait=None):
+    def astar(self, a, b, allowed, penalty=None, s0=0.0, wait=None, portals=None):
+        """칸 길. portals(_open_portals)가 있으면 line 통로를 건너간 자리에 Crossing이 든다."""
         floor = self.floor
         step = floor.cell_m
         goal_xy = floor.centre(b)
         best = {a: 0.0}
         came = {}
+        via = {}  # 칸 -> 그 칸에 line 통로로 건너왔으면 Crossing
         heap = [(math.dist(floor.centre(a), goal_xy), 0.0, 0.0, 0.0, a)]
         while heap:
             _, g, dist, late, cell = heapq.heappop(heap)  # late: 여기까지 기다린 값(m)
             if cell == b:
                 path = [cell]
                 while cell in came:
+                    if cell in via:
+                        path.append(via[cell])
                     cell = came[cell]
                     path.append(cell)
                 return path[::-1]
@@ -313,6 +446,26 @@ class FloorPlanner:
                 if cost < best.get(nxt, math.inf) - 1e-12:
                     best[nxt] = cost
                     came[nxt] = cell
+                    via.pop(nxt, None)
+                    heapq.heappush(heap, (cost + math.dist(floor.centre(nxt), goal_xy), cost,
+                                          dist + d, late + held, nxt))
+            for nxt, name, way, pts, d in (portals.get(cell, ()) if portals else ()):
+                if nxt not in allowed:
+                    continue
+                cost = g + d
+                if penalty is not None:
+                    cost += penalty(nxt, s0 + dist + d)
+                held = 0.0
+                if wait is not None:
+                    (px, py), (qx, qy) = pts[-2], pts[-1]
+                    seg = math.dist(pts[-2], pts[-1])
+                    held, flat = wait(nxt, s0 + dist + late + d,
+                                      ((qx - px) / seg, (qy - py) / seg))
+                    cost += held * WAIT_COST + flat
+                if cost < best.get(nxt, math.inf) - 1e-12:
+                    best[nxt] = cost
+                    came[nxt] = cell
+                    via[nxt] = Crossing(name, way, tuple(pts))
                     heapq.heappush(heap, (cost + math.dist(floor.centre(nxt), goal_xy), cost,
                                           dist + d, late + held, nxt))
         return None

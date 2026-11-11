@@ -1,0 +1,35 @@
+# arena_v4 리허설(gz_arena_v4.yaml)을 양방향 지도에서 돈다: 주문, 로봇, 팔, 도킹이 같고 지도만 다르다.
+# 도킹 구간(작업대 진입, 출고 앞뒤)만 한 방향 선이고 나머지 통로는 두 방향으로 다닌다. 한 줄로만
+# 지나는 통로는 방향 표시(관제_동작.md)로 마주 들어가지 않는다(sites/arena_v4_twoway.yaml).
+# 자유바닥 전용이고, 도킹은 sim_dock_stub:=true가 있어야 끝까지 돈다.
+#   export ROS_DOMAIN_ID=58 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+#   ros2 launch fleet_gz_sim gz.launch.py scenario:=gz_arena_v4_twoway traffic_mode:=freefloor \
+#       sim_dock_stub:=true fleet_params_file:=fleet_params_real_arena nav_max_speed:=0.15 \
+#       nav_collision_check:=false
+map: arena_v4_twoway
+seed: 64
+speed_factor: 5.0
+timeout_s: 1200
+stock: {arm1: {A: 20, B: 20}, arm2: {C: 20, D: 20}}
+orders:
+  - {at_s: 0, id: R-001, items: {A: 1, C: 1}}
+  - {at_s: 20, id: R-002, items: {B: 1}}
+  - {at_s: 40, id: R-003, items: {D: 1, A: 1}}
+  - {at_s: 60, id: R-004, items: {C: 1}}
+  - {at_s: 80, id: R-005, items: {B: 1, D: 1}}
+  - {at_s: 100, id: R-006, items: {A: 1}}
+  - {at_s: 120, id: R-007, items: {C: 1, B: 1}}
+  - {at_s: 140, id: R-008, items: {D: 1}}
+robots:
+  pinky1: {start: P-3}
+  pinky2: {start: P-2}
+  pinky3: {start: P-1}
+arm: {seconds_per_item: 4.0, swap_seconds: 8.0, fail_rate: 0.0}
+dock: {duration_s: 3.0, error_cm: 1.0}
+faults: []
+expect:
+  all_orders_finished: true
+  orders_shipped: 8
+  orders_partial: 0
+  orders_held: 0
+  events_include: [ORDER_BOUND, ORDER_SHIPPED]
