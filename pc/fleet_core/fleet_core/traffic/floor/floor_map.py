@@ -17,6 +17,8 @@ shortcuts(있으면) {지름길: 선}: 같은 도크로 가는 선 대신 탈 �
 갈림목 앞에서 고른다(관제).
 robot_half_width_m(있으면): 차동구동 로봇은 옆으로 가지 않으니 곧게 달리는 동안은 반폭 + cell_margin_m만
 잠그고, 제자리에서 돌 수 있는 곳(출발점, 끝점, 크게 꺾이는 점 앞)만 반지름 + cell_margin_m 원으로 잠근다.
+wait_spots(있으면) {접근선: [[x, y], ...]}: 그 선의 차례를 기다리는 로봇이 설 자리(적은 차례대로 첫 빈 자리).
+없으면 관제가 선 시작 근처에서 찾는다. 통로가 모두 빈 바닥이면 그 자리가 통로 입구가 될 수 있다.
 """
 from __future__ import annotations
 
@@ -114,6 +116,8 @@ class FloorMap:
                             for name, points in (data.get("fixed_lines") or {}).items()}
         self.rolling_lines = self._read_rolling(data.get("rolling_lines") or [])
         self.narrow_lines = self._read_narrow(data.get("narrow_lines") or [])
+        # 접근선 -> 그 선의 차례를 기다릴 자리들(적은 차례대로). 없으면 관제가 찾는다
+        self.wait_spots = self._read_wait_spots(data.get("wait_spots"))
         # shortcut -> the line into the same dock it may be taken instead of, and where along the
         # shortcut it leaves that line and joins it again (m)
         shortcuts = data.get("shortcuts")
@@ -233,6 +237,25 @@ class FloorMap:
             raise FloorMapError(f"rolling_lines {names!r} must list fixed line names")
         return frozenset(names)
 
+    def _read_wait_spots(self, spots) -> dict:
+        """wait_spots {접근선: [[x, y], ...]}: 그 선의 차례를 기다리는 로봇이 설 자리."""
+        if spots is None:
+            return {}
+        bad = FloorMapError(f"wait_spots {spots!r} must give [x, y] places for fixed line names")
+        if not isinstance(spots, dict):
+            raise bad
+        found = {}
+        for line, places in spots.items():
+            if line not in self.fixed_lines or not isinstance(places, list):
+                raise bad
+            for place in places:
+                if (not isinstance(place, list | tuple) or len(place) != 2
+                        or any(isinstance(v, bool) or not isinstance(v, int | float)
+                               for v in place)):
+                    raise bad
+            found[line] = tuple((float(x), float(y)) for x, y in places)
+        return found
+
     def _read_half_width(self, value) -> float | None:
         """차동구동 로봇의 반폭. 없으면 None: 늘 반지름 원으로 잠근다."""
         if value is None:
@@ -308,6 +331,10 @@ class FloorMap:
         for name, pose in self.parking:
             if self.cell_of(*pose) not in self.clear:
                 raise FloorMapError(f"{name} at {pose} is not on clear floor")
+        for line, places in self.wait_spots.items():
+            for pose in places:
+                if self.cell_of(*pose) not in self.clear:
+                    raise FloorMapError(f"wait spot {pose} of {line} is not on clear floor")
         for line in self.fixed_lines.values():
             if len(line.points) < 2:
                 raise FloorMapError(f"fixed line {line.name} needs two points")

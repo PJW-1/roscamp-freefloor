@@ -30,15 +30,25 @@ parking:
 # any of them, in either direction. The only lines are the last 0.23 m into each dock: no point
 # to go to before docking, only the direction a robot comes in by (the user, 2026-11-11). They
 # are longer than arrival_tolerance_m (0.15 m): with 0.14 m lines a robot driving past a dock was
-# taken to have arrived and docked the wrong way round (Gazebo, 2026-11-11). Each comes from the
-# open floor at 45 degrees to the walls: WORK from the north-west, OUTBOUND from the north-east,
-# so the usual ways to a line start keep 0.2 m or more from the dock. Nothing enforces this: a
-# robot planned again within arrival_tolerance_m of a dock still arrives without its line. The start of the OUTBOUND line
+# taken to have arrived and docked the wrong way round (Gazebo, 2026-11-11). WORK is entered
+# from the west along the south wall (0.4 m from P-3: a robot standing there holds no cell of
+# the line), OUTBOUND from the north-east at 45 degrees, so the usual ways to a line start keep
+# 0.2 m or more from the dock. Nothing enforces this: a robot planned again within
+# arrival_tolerance_m of a dock still arrives without its line. The start of the OUTBOUND line
 # is as far from WORK through the south passage as through the way between the islands, and a
 # robot leaving OUTBOUND has about as far to the waiting spots by either passage: which way a
 # robot takes depends on where the others are (straight from the east every robot went the same
 # way round, headless 2026-11-11). The lines are locked whole, so one robot at a time is on the
-# way into a dock and the next one waits on the floor. A robot leaves a dock on a planned path.
+# way into a dock. A robot leaves a dock on a planned path.
 fixed_lines:
-  work_in: [[1.62, 0.33], [1.78, 0.17]]
+  work_in: [[1.55, 0.17], [1.78, 0.17]]
   outbound_in: [[0.33, 0.68], [0.17, 0.52]]
+# Where a robot waits for its turn on a dock line: the first free place in this order. Without
+# these the traffic control takes the nearest clear place 0.3 m or more from the line start,
+# which on this floor is the mouth of a passage: robots waiting there shut the robot leaving
+# the dock in twice in Gazebo (2026-11-11). For WORK the parking spots (a parked robot that is
+# called stays where it is). For OUTBOUND the place between the two islands first (a robot
+# there leaves three clear rows of the passage north and south of it), then the parking spots.
+wait_spots:
+  work_in: [[1.86, 0.58], [1.86, 0.87], [1.57, 0.87]]
+  outbound_in: [[0.86, 0.495], [1.57, 0.87], [1.86, 0.87], [1.86, 0.58]]

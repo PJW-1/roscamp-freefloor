@@ -59,7 +59,7 @@
       <visual name="object4_visual"><pose>0.255 0.92 0.15 0 0 0</pose><geometry><box><size>0.51 0.14 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
       <collision name="object2"><pose>0.145 0.085 0.15 0 0 0</pose><geometry><box><size>0.29 0.17 0.3</size></box></geometry></collision>
       <visual name="object2_visual"><pose>0.145 0.085 0.15 0 0 0</pose><geometry><box><size>0.29 0.17 0.3</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
-      <visual name="lane_QW-W"><pose>1.7 0.25 0.0005 0 0 -0.7854</pose><geometry><box><size>0.2263 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_QW-W"><pose>1.665 0.17 0.0005 0 0 0</pose><geometry><box><size>0.23 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_W-SE"><pose>1.59 0.19 0.0005 0 0 3.0367</pose><geometry><box><size>0.3821 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_SE-SM"><pose>1.13 0.21 0.0005 0 0 3.1416</pose><geometry><box><size>0.54 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_SM-SW"><pose>0.635 0.225 0.0005 0 0 3.075</pose><geometry><box><size>0.451 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
@@ -70,12 +70,13 @@
       <visual name="lane_OS-SW"><pose>0.29 0.27 0.0005 0 0 -0.245</pose><geometry><box><size>0.2474 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_QO-NM"><pose>0.595 0.73 0.0005 0 0 0.1865</pose><geometry><box><size>0.5394 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_NM-NE"><pose>1.11 0.78 0.0005 0 0 0</pose><geometry><box><size>0.5 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_NE-QW"><pose>1.49 0.555 0.0005 0 0 -1.0469</pose><geometry><box><size>0.5197 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_NE-EM"><pose>1.49 0.64 0.0005 0 0 -0.8224</pose><geometry><box><size>0.3821 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_EM-QW"><pose>1.585 0.335 0.0005 0 0 -1.7798</pose><geometry><box><size>0.3373 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_SM-NM"><pose>0.86 0.495 0.0005 0 0 1.5708</pose><geometry><box><size>0.57 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_NE-P-1"><pose>1.465 0.825 0.0005 0 0 0.4049</pose><geometry><box><size>0.2285 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_P-1-P-2"><pose>1.715 0.87 0.0005 0 0 0</pose><geometry><box><size>0.29 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       <visual name="lane_P-2-P-3"><pose>1.86 0.725 0.0005 0 0 -1.5708</pose><geometry><box><size>0.29 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
-      <visual name="lane_P-3-QW"><pose>1.74 0.455 0.0005 0 0 -2.3358</pose><geometry><box><size>0.3466 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
+      <visual name="lane_P-3-EM"><pose>1.74 0.54 0.0005 0 0 -2.8198</pose><geometry><box><size>0.253 0.02 0.001</size></box></geometry><material><ambient>0.2 0.3 0.8 1</ambient><diffuse>0.2 0.3 0.8 1</diffuse></material></visual>
       </link>
     </model>
   </world>
