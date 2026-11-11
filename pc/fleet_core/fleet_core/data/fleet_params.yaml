@@ -84,3 +84,4 @@ floor_corridor_clear: false   # 제안: 켜면 좁은 통로를 막고 선 로�
 floor_retreat_after_s: 10.0   # 제안: 이만큼 막혀 서 있으면 물러난다
 floor_retreat_speed_mps: 0.05 # 제안: 물러나는(후진) 속도
 floor_retreat_max_m: 1.0      # 제안: 한 번에 물러나는 가장 긴 거리
+floor_keep_right: false      # 제안(실측 전): 켜면 두 줄이 서는 통로에서 마주 오는 두 로봇을 각자 오른쪽 끝 줄로 보내 나란히 지나게 하고, 두 줄이 안 서는 통로에서는 한 대가 통로 밖에서 기다린다. 끄면 예전과 같다

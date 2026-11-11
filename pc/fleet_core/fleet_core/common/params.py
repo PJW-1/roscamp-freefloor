@@ -113,6 +113,10 @@ class FleetParams:
     floor_retreat_after_s: float = 10.0  # 이만큼 막혀 서 있으면 물러난다
     floor_retreat_speed_mps: float = 0.05  # 물러나는 속도
     floor_retreat_max_m: float = 1.0  # 한 번에 물러나는 가장 긴 거리
+    # 끔: 마주 오는 두 로봇은 예전처럼 한 대가 돌아가거나 기다린다. 켬(제안, 실측 전): 두 줄이
+    # 서는 통로를 마주 지나게 되면 각자 오른쪽 끝 줄로 보내 나란히 지나게 하고, 두 줄이 안 서는
+    # 통로에서는 한 대가 통로 밖에서 기다린다. 이 값이 없던 기록은 끈 채로 재생한다
+    floor_keep_right: bool = False
 
 
 def load_params(path=None) -> FleetParams:
