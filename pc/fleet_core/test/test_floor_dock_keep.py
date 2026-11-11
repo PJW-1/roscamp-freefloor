@@ -158,9 +158,9 @@ def test_a_robot_waits_for_the_line_on_the_side_the_line_starts_not_behind_the_d
     leg.waiting = True
     traffic._legs["a"] = leg
     traffic._plan_wait(m, leg, None)
-    if leg.route is not None:  # 지금 갈 자리가 없으면 None(다음 주기에 다시 찾는다)
-        x, y = leg.route.points[-1]
-        assert y > 0.6 or x < 1.0, leg.route.points[-1]  # 도크 남쪽이나 긴 진열대 사이로 가지 않는다
+    assert leg.route is not None  # 자리를 찾는다(북쪽 통로, b 뒤)
+    x, y = leg.route.points[-1]
+    assert y > 0.6 and 1.0 < x < 1.61, leg.route.points[-1]  # 도크 남쪽이나 긴 진열대 사이가 아니다
 
 
 def test_the_way_from_a_wait_spot_to_the_line_is_measured_around_the_dock():
