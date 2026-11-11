@@ -32,6 +32,8 @@ m.path는 [출발할 때 가까운 지점, 목적지 지점] 두 개다. 선택�
     같은 순서로 낮은 쪽만 상대의 앞길(YIELD_AHEAD_M)을 비켜 돌아가고, 높은 쪽은 제 길을 지킨다.
   - 대기 그래프에 순환이 deadlock_grace_s 이어지면 우선순위가 낮은 로봇이 옆 빈 칸으로 비켜 선다.
     비켜 설 곳이 없으면 DEADLOCK_UNRESOLVED, 그 뒤 deadlock_unresolved_s 이어지면 격리한다.
+    마주 오는 로봇의 칸에 막혀 잠금이 안 늘면 잠금 끝까지 가지 않고 그 자리에 선다(_halt_head_on):
+    끝까지 가면 둘이 코앞에 붙어 돌 자리가 없다. 마주 선 두 로봇의 순환은 유예 없이 비켜 선다.
   - 도크 접근선은 한 번에 한 대: 다른 로봇이 그 선으로 가는 중이거나 선 칸을 쥐고 있으면
     고정 선 칸에 닿지 않는 빈 자리에서 기다리고, 선이 비면 먼저 온 로봇부터 들어간다.
   - BLOCKED가 blocked_mark_s 이어지면 앞 칸을 막힘(주인 BLOCK_OWNER)으로 표시하고 목표를 거둔다.
@@ -179,6 +181,7 @@ class _Leg:
     yield_since: float | None = None
     no_yield: tuple = ()  # 너무 오래 기다려 이 다리에서는 더 비켜 주지 않는 로봇들
     short_decided: bool = False  # 지름길을 탈지 골랐다(다리마다 한 번)
+    halt_on: Route | None = None  # 마주 오는 로봇에 막혀 잠금 끝 전에 선 경로(잠금이 늘면 지운다)
 
 
 @dataclass
@@ -2053,8 +2056,24 @@ class FloorController(TrafficController):
                 self._send(m, leg)  # 서 있으면 마지막 몇 cm를 다시 보내지 않는다(줄이 지워진다)
             leg.stuck_since = None  # 선 앞에서 선이 비기를 기다린다: 다른 길이 없다
             return
+        self._halt_head_on(m, leg, grew)
         self._send(m, leg)
         self._replan_if_stuck(m, leg, grew)
+
+    def _halt_head_on(self, m: _Mission, leg: _Leg, grew: bool) -> None:
+        """잠금이 안 늘고 마주 오는 로봇의 칸에 막혔으면 잠금 끝까지 가지 않고 지금 선다. 끝까지 가면
+        둘이 중심 0.2 m 안으로 붙어 제자리에서 돌 원도 잠그지 못해 비켜 서지 못했다(arena_v6)."""
+        if grew:
+            leg.halt_on = None
+            return
+        if (leg.halt_on is leg.route or m.goal is None or m.goal.kind != MOVE
+                or leg.route.fixed_at(leg.s) is not None):
+            return
+        for other in sorted(self._blockers(m.name)):
+            if other in self._missions and self._facing(m.name, other, moving=False):
+                self._cancel_goal(m)
+                leg.halt_on = leg.route
+                return
 
     def _at_stop(self, m: _Mission, leg: _Leg, cap: float) -> bool:
         """설 자리로 가는 MoveTo가 끝났고 설 자리 floor_extend_step_m 안이다."""
@@ -2064,7 +2083,7 @@ class FloorController(TrafficController):
         """잠금이 floor_replan_s 동안 못 늘고 앞이 짧으면 남을 피해 다시 계획한다."""
         now = self._clock()
         route = leg.route
-        short = leg.s_lock - leg.s < self.params.floor_extend_step_m
+        short = leg.s_lock - leg.s < self.params.floor_extend_step_m or leg.halt_on is leg.route
         if grew or not short or leg.s_lock >= route.length - AT_END_M:
             leg.stuck_since = None
             leg.no_way_since = None
@@ -2214,11 +2233,17 @@ class FloorController(TrafficController):
         if len(set(cycle)) != 2:
             return False
         a, b = sorted(set(cycle))
+        return self._facing(a, b, moving=True)
+
+    def _facing(self, a: str, b: str, moving: bool) -> bool:
+        """a와 b가 길 위에서 서로 마주 본다(진행 방향이 120° 넘게 반대이고 서로를 향한다).
+        moving이면 둘 다 MoveTo를 따라가는 중이어야 한다(마주 오는 로봇 앞에서 일찍 선 것은 든다)."""
         ways = {}
         for name in (a, b):
             leg, m = self._legs.get(name), self._missions[name]
             if (leg is None or leg.route is None or leg.done or leg.waiting
-                    or leg.resume is not None or m.goal is None or leg.s >= leg.route.length - 0.02):
+                    or leg.resume is not None or leg.s >= leg.route.length - 0.02
+                    or (moving and m.goal is None and leg.halt_on is not leg.route)):
                 return False
             p, q = leg.route.at(leg.s), leg.route.at(min(leg.route.length, leg.s + 0.05))
             d = math.dist(p, q)
@@ -2410,6 +2435,8 @@ class FloorController(TrafficController):
         end = leg.s_lock
         final = end >= route.length - AT_END_M
         if m.goal is None:
+            if leg.halt_on is leg.route:
+                return  # 마주 오는 로봇 앞에서 일찍 섰다: 잠금이 늘 때까지 보내지 않는다
             if not self._settled(m):
                 return  # 첫 출발: 보고 자리가 가라앉을 때까지 기다린다
             if end - leg.s <= 0.01 and not final:
