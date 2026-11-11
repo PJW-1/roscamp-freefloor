@@ -1,0 +1,42 @@
+[sim_stand_in-18] [INFO] [1794393516.207433121] [sim_stand_in]: sim stand-in: SIM DOCK STUB and truth for ['pinky1', 'pinky2', 'pinky3']
+[sim_obstacles-26] [INFO] [1794393522.669144788] [sim_obstacles]: 5 obstacles from <scratch>/v5/ws/install/fleet_gz_sim/share/fleet_gz_sim/obstacles/arena_v6.yaml, repeat every None s
+[sim_stand_in-18] [INFO] [1794393539.935319830] [sim_stand_in]: pinky1: dock WORK ok (1.7, -4.4) cm
+[fleet_manager_node-20] [INFO] [1794393540.054270837] [fleet_manager]: DOCKED WORK error x=1.6968536376953125 y=-4.366444110870361 yaw=0.0
+[fleet_manager_node-20] [INFO] [1794393540.054733918] [fleet_manager]: ORDER_BOUND R-001
+[sim_obstacles-26] [INFO] [1794393548.721977672] [sim_obstacles]: obstacle_1 on SC->SM waits for robots to move away
+[sim_obstacles-26] [INFO] [1794393554.709961130] [sim_obstacles]: obstacle_1 on SC->SM at (0.79, 0.25) placed for 55 s
+[sim_stand_in-18] [INFO] [1794393563.055555980] [sim_stand_in]: pinky2: dock WORK ok (1.9, -3.6) cm
+[fleet_manager_node-20] [INFO] [1794393563.145622565] [fleet_manager]: DOCKED WORK error x=1.9363009929656982 y=-3.551664352416992 yaw=0.0
+[fleet_manager_node-20] [INFO] [1794393563.146278151] [fleet_manager]: ORDER_BOUND R-002
+[sim_stand_in-18] [INFO] [1794393566.347348284] [sim_stand_in]: pinky1: dock OUTBOUND ok (-0.7, 5.2) cm
+[fleet_manager_node-20] [INFO] [1794393566.441811485] [fleet_manager]: DOCKED OUTBOUND error x=-0.6802449822425842 y=5.20180606842041 yaw=0.0
+[sim_obstacles-26] [INFO] [1794393578.840252907] [sim_obstacles]: obstacle_2 on MC->MB waits for robots to move away
+[sim_obstacles-26] [INFO] [1794393583.014566697] [sim_obstacles]: obstacle_2 on MC->MB at (1.24, 0.41) placed for 55 s
+[sim_stand_in-18] [INFO] [1794393584.109836719] [sim_stand_in]: pinky3: dock WORK ok (2.7, -4.2) cm
+[fleet_manager_node-20] [INFO] [1794393584.169179583] [fleet_manager]: DOCKED WORK error x=2.6632227897644043 y=-4.160530090332031 yaw=0.0
+[fleet_manager_node-20] [INFO] [1794393584.169870523] [fleet_manager]: ORDER_BOUND R-003
+[sim_stand_in-18] [INFO] [1794393589.379600506] [sim_stand_in]: pinky2: dock OUTBOUND ok (-0.7, 5.9) cm
+[fleet_manager_node-20] [INFO] [1794393589.464570263] [fleet_manager]: DOCKED OUTBOUND error x=-0.6762595772743225 y=5.933210372924805 yaw=0.0
+[sim_obstacles-26] [INFO] [1794393610.362957512] [sim_obstacles]: obstacle_1 on SC->SM removed
+[sim_stand_in-18] [INFO] [1794393612.490557952] [sim_stand_in]: pinky3: dock OUTBOUND ok (-0.9, 5.2) cm
+[fleet_manager_node-20] [INFO] [1794393612.569354499] [fleet_manager]: DOCKED OUTBOUND error x=-0.8562195897102356 y=5.231227874755859 yaw=0.0
+[sim_stand_in-18] [INFO] [1794393619.001027249] [sim_stand_in]: pinky1: dock WORK FAILED (69.9, -56.9) cm
+[fleet_manager_node-20] [WARN] [1794393619.070863269] [fleet_manager]: GOAL_RETRY attempt 1 failed: DOCK_FAILED
+[sim_stand_in-18] [INFO] [1794393624.074956385] [sim_stand_in]: pinky1: dock WORK FAILED (69.9, -56.9) cm
+[fleet_manager_node-20] [WARN] [1794393624.183457846] [fleet_manager]: GOAL_RETRY attempt 2 failed: DOCK_FAILED
+[sim_obstacles-26] [INFO] [1794393624.525740597] [sim_obstacles]: obstacle_3 on NC->NE at (1.29, 0.86) placed for 55 s
+[fleet_manager_node-20] [WARN] [1794393628.499459417] [fleet_manager]: FLOOR_OFF_CELLS reported at (0.76, 0.24) on cells held by others, stopped
+[fleet_manager_node-20] [WARN] [1794393628.910141945] [fleet_manager]: DEADLOCK_DETECTED wait cycle ['pinky2', 'pinky3']
+[sim_stand_in-18] [INFO] [1794393629.301163235] [sim_stand_in]: pinky1: dock WORK FAILED (69.9, -56.9) cm
+[fleet_manager_node-20] [ERROR] [1794393629.410718219] [fleet_manager]: ROBOT_ISOLATED DOCK_FAILED: stopped where it is, holding ['c10_30', 'c10_31', 'c10_32', 'c10_33', 'c10_34', 'c10_35', 'c10_36', 'c10_37', 'c10_38', 'c11_29', 'c11_30', 'c11_31', 'c11_32', 'c11_33', 'c11_34', 'c11_35', 'c11_36', 'c11_37', 'c11_38', 'c12_29', 'c12_30', 'c12_31', 'c12_32', 'c12_33', 'c12_34', 'c12_35', 'c12_36', 'c12_37', 'c12_38', 'c13_29', 'c13_30', 'c13_31', 'c13_32', 'c13_33', 'c13_34', 'c13_35', 'c13_36', 'c13_37', 'c13_38', 'c14_29', 'c14_30', 'c14_31', 'c14_32', 'c14_33', 'c14_34', 'c14_35', 'c14_36', 'c14_37', 'c14_38', 'c15_29', 'c15_30', 'c15_31', 'c15_32', 'c15_33', 'c15_34', 'c15_35', 'c15_36', 'c15_37', 'c15_38', 'c16_29', 'c16_30', 'c16_31', 'c16_32', 'c16_33', 'c16_34', 'c16_35', 'c16_36', 'c16_37', 'c16_38', 'c17_30', 'c17_31', 'c17_32', 'c17_33', 'c17_34', 'c17_35', 'c17_36', 'c17_37', 'c18_32', 'c18_33', 'c18_34', 'c18_35', 'c18_36', 'c8_32', 'c8_33', 'c8_34', 'c8_35', 'c8_36', 'c8_37', 'c9_31', 'c9_32', 'c9_33', 'c9_34', 'c9_35', 'c9_36', 'c9_37']
+[fleet_manager_node-20] [ERROR] [1794393629.412211319] [fleet_manager]: GOAL_FAILED gave up after 3 attempts: DOCK_FAILED
+[fleet_manager_node-20] [WARN] [1794393634.183672122] [fleet_manager]: FLOOR_SIDESTEP steps aside to (1.22, 0.40) to break ['pinky2', 'pinky3']
+[fleet_manager_node-20] [WARN] [1794393636.705375999] [fleet_manager]: DEADLOCK_DETECTED wait cycle ['pinky2', 'pinky3']
+[fleet_manager_node-20] [WARN] [1794393638.107886138] [fleet_manager]: FLOOR_OFF_CELLS reported at (0.76, 0.50) on cells held by others, stopped
+[sim_obstacles-26] [INFO] [1794393638.784626397] [sim_obstacles]: obstacle_2 on MC->MB removed
+[fleet_manager_node-20] [WARN] [1794393657.399517571] [fleet_manager]: GOAL_STALLED no progress for 6 s on a move, attempt 1
+[sim_obstacles-26] [INFO] [1794393669.357564178] [sim_obstacles]: obstacle_4 on MC->MB waits for robots to move away
+[sim_obstacles-26] [INFO] [1794393680.274241411] [sim_obstacles]: obstacle_3 on NC->NE removed
+[sim_obstacles-26] [WARN] [1794393689.805412478] [sim_obstacles]: obstacle_4 on MC->MB given up: a robot stayed within 0.35 m for 20.0 s
+[sim_obstacles-26] [INFO] [1794393704.637443493] [sim_obstacles]: obstacle_5 on SC->SM waits for robots to move away
+[sim_obstacles-26] [WARN] [1794393724.858730616] [sim_obstacles]: obstacle_5 on SC->SM given up: a robot stayed within 0.35 m for 20.0 s
