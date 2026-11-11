@@ -104,6 +104,9 @@ class FleetParams:
     floor_dock_aging_s: float = 30.0  # 이만큼 기다리면 다시 먼저 온 순서(굶김 방지)
     # 끔: 지도의 지름길(shortcuts)을 없는 것으로 본다. 켬: 접근선 대신 탈 수 있을 때 탄다
     floor_shortcut: bool = False
+    # 끔: 갈림길도 다른 곳처럼 굴려 잠근다. 켬: 한 방향 선이 만나는 갈림길(교차 상자) 구간을
+    # 통째로 잡거나 그 앞에 선다(갈림길 교착은 없어지지만 잠금이 0.6 m쯤으로 길어진다)
+    floor_junction_box: bool = False
     # 관제가 시키는 물러나기(Retreat, 제안, 실측 전). 끄면 전과 같다. 이 값이 없던 기록은 끈 채로
     floor_block_retreat: bool = False  # 막혀(BLOCKED) 오래 선 로봇을 물러나게 한다
     floor_corridor_clear: bool = False  # 좁은 통로를 막고 선 로봇을 물러나게 해 길을 연다

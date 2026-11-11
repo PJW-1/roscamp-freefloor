@@ -13,7 +13,7 @@
     release_confirm_samples번이 칸에서 release_distance_m보다 멀 때 놓는다.
   - 고정 선(도킹 접근, 도크에서 나감)은 들어가기 전에 선 끝까지 한꺼번에 잡는다. 지도의 rolling_lines
     (한 방향 선)는 바닥처럼 굴려 잠그고 접근선 한 대 규칙도 쓰지 않는다.
-  - 교차 상자(_junction_boxes): 한 방향 선이 꺾이는 점을 다른 한 방향 선이 다른 쪽에서 들어와
+  - 교차 상자(_junction_boxes, floor_junction_box를 켤 때만): 한 방향 선이 꺾이는 점을 다른 한 방향 선이 다른 쪽에서 들어와
     지나가면 그 점의 몸 원이 상자다. 한 방향 선을 가는 경로는 몸이 상자에 닿는 구간을 고정 선처럼
     한꺼번에 잡거나, 몸이 상자에 닿지 않는 그 앞에 선다(_box_spans, _candidates). 두 로봇이
     양쪽에서 굴려 와 상자의 칸을 나눠 쥐고 서로 기다리지 않게 한다(arena v4 가운데 통로 합류점).
@@ -249,7 +249,8 @@ class FloorController(TrafficController):
         self._line_ids = {name: self._swept(line.points)
                           for name, line in self.floor.fixed_lines.items()}
         self._all_line_ids = set().union(*self._line_ids.values()) if self._line_ids else set()
-        self._boxes = self._junction_boxes()
+        # 교차 상자는 스위치를 켤 때만 있다: 끄면 갈림길도 굴려 잠근다
+        self._boxes = self._junction_boxes() if params.floor_junction_box else []
         self._box_cells = frozenset().union(*self._boxes)
         # 지름길: 접근선 -> 지름길, 지름길 -> (갈림목에서 접근선 끝까지 m, 겹치는 구간 끝에서
         # 지름길 끝까지 m, 합류점에서 지름길 끝까지 m)

@@ -31,7 +31,7 @@ BODY = FLOOR.robot_radius_m + FLOOR.cell_margin_m
 SPEED = 0.15
 # floor_shortcut: the shortcut is off unless asked for; the tests here drive it
 LOCKS = {"floor_lock_ahead_m": 0.15, "floor_extend_step_m": 0.05, "release_distance_m": 0.17,
-         "floor_shortcut": True}
+         "floor_shortcut": True, "floor_junction_box": True}
 THREE = (("pinky1", "P-3"), ("pinky2", "P-2"), ("pinky3", "P-1"))
 KINDS = [{"A": 1, "C": 1}, {"B": 1}, {"D": 1, "A": 1}, {"C": 1}, {"B": 1, "D": 1}, {"A": 1}]
 MIDDLE_X = (0.85, 1.08)   # between objects 2 and 3 and object 4
@@ -824,6 +824,26 @@ def test_a_robot_keeps_the_junction_until_it_is_through_it():
     traffic._release_cells(a)
     held = traffic.zones.held_set("a")
     assert traffic._body_cells(*MERGE) <= held
+
+
+def test_the_junction_box_is_off_by_default():
+    """교차 상자는 스위치(floor_junction_box)를 켤 때만 있다. 끄면 갈림길도 0.15 m씩 굴려 잠근다:
+    가운데 통로를 올라가는 로봇의 첫 잠금이 갈림길 구간(0.57 m)을 통째로 잡지 않는다."""
+    assert load_params().floor_junction_box is False
+    off = fleet({"b": (1.20, 0.125, math.pi)}, floor_junction_box=False)
+    assert off._boxes == [] and not off._box_cells
+    leg = heads_in(off, "b")
+    assert off._box_spans(leg.route) == []
+    on = fleet({"b": (1.20, 0.125, math.pi)})
+    (s0, s1), = on._box_spans(heads_in(on, "b").route)
+    # 켠 로봇은 구간 앞에서 통째로 잡고, 끈 로봇은 그 자리에서도 lock_ahead만큼만 잡는다
+    for traffic in (off, on):
+        m, lg = traffic._missions["b"], traffic._legs["b"]
+        x, y = lg.route.at(s0 - 0.02)
+        moved(traffic, "b", x, y, math.pi / 2, reports=3)
+        traffic._drive(m)
+    assert on._legs["b"].s_lock >= s1 - 1e-6
+    assert off._legs["b"].s_lock <= off._legs["b"].s + off.params.floor_lock_ahead_m + 0.06
 
 
 def test_the_junction_is_the_only_box_on_this_map():
