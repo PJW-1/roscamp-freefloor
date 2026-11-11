@@ -64,9 +64,13 @@ def test_the_twoway_floor_is_arena_v4_with_passages_and_only_the_docking_stretch
     assert FLOOR.source_text.startswith("#")
     assert FLOOR.occupied_pixels() == V4.occupied_pixels() and FLOOR.clear == V4.clear
     assert FLOOR.docks == V4.docks and FLOOR.parking == V4.parking
-    assert sorted(FLOOR.fixed_lines) == ["outbound_in", "outbound_out", "work_in"]
+    assert sorted(FLOOR.fixed_lines) == ["outbound_in", "outbound_out", "work_in", "work_out"]
     assert FLOOR.fixed_lines["work_in"] == V4.fixed_lines["work_in"]
-    assert FLOOR.rolling_lines == {"outbound_in", "outbound_out"}
+    assert FLOOR.rolling_lines == {"work_out", "outbound_in", "outbound_out"}
+    # 작업대에서 나오는 선: 도크에서 남쪽 벽을 따라 물체 4 남쪽 통로 동쪽 입구(arena_v4의 출고 선이
+    # 시작하던 곳)까지. 나오는 로봇이 작업대 대기 자리(접근선 시작 근처) 사이로 지나가지 않는다
+    assert FLOOR.fixed_lines["work_out"].start == FLOOR.docks["WORK"]
+    assert FLOOR.fixed_lines["work_out"].end == V4.fixed_lines["outbound_in"].start
     assert not FLOOR.narrow_lines and not FLOOR.shortcuts
     # 들어가는 선은 도크 위에서 도크까지, 나오는 선은 도크에서 남서쪽 서쪽 넓은 곳까지
     assert FLOOR.fixed_lines["outbound_in"].end == FLOOR.docks["OUTBOUND"]
