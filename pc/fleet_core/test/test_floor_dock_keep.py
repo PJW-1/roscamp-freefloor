@@ -83,3 +83,55 @@ def test_a_way_into_and_out_of_the_dock_itself_is_still_planned():
     assert traffic._route(m, (0.45, 0.80), dock, in_line="work_in") is not None
     assert traffic._route(m, dock, traffic.floor.docks["OUTBOUND"], "work_out",
                           "outbound_in") is not None
+
+
+# ---- arena_v6: 갈 길이 있는 로봇이 통로에 서 있을 때 (Gazebo 2026-11-12) ----
+#
+# 북쪽 통로에서 OUTBOUND 차례를 기다리며 선 로봇을 벽으로 피하니, 뒤따르는 로봇의 길이 긴 진열대 사이
+# 통로(폭 0.23 m)를 동쪽으로 지나 도크 자리 옆 3 cm를 스쳐 접근선 시작점으로 갔다. Gazebo에서 그 로봇이
+# 통로 입구 모서리에 걸려 위치 추정이 0.2 m 밀렸고, 나가는 로봇과 반대로 돌아 두 대가 붙었다.
+
+def v6_core():
+    site = load_lane_map(REPO / "sim" / "fake_robots" / "maps" / "arena_v6.yaml")
+    params = replace(load_params(), traffic_mode="freefloor")
+    clock = [0.0]
+    core = FleetManager(site, params, ["a", "b"], lambda: clock[0])
+    core.on_robot_state("a", 0.98, 0.84, 0.0, "IDLE")  # 북쪽 통로 서쪽 입구
+    core.on_robot_state("b", 1.46, 0.72, 0.0, "IDLE")  # 북쪽 통로 안
+    for _ in range(5):
+        clock[0] += 0.1
+        core.tick()
+    return core
+
+
+def way_to_outbound(traffic):
+    m = traffic._missions["a"]
+    return traffic._route(m, (0.98, 0.84), traffic.floor.docks["OUTBOUND"], in_line="outbound_in")
+
+
+def free_part(traffic, route):
+    """접근선에 닿기 전까지의 길."""
+    line_at = min(s0 for s0, _, _ in route.fixed)
+    return [route.at(k * 0.01) for k in range(int(line_at / 0.01) + 1)]
+
+
+def test_a_robot_parked_in_the_passage_is_still_driven_around():
+    """갈 길이 없는(주차했거나 격리된) 로봇 뒤에는 줄 서지 않는다: 예전처럼 다른 길을 찾는다."""
+    traffic = v6_core().traffic
+    route = way_to_outbound(traffic)
+    assert route is not None
+    assert min(y for _, y in free_part(traffic, route)) < 0.5  # 북쪽 통로를 버리고 돌아간다
+
+
+def test_behind_a_robot_that_waits_its_turn_the_way_queues_instead_of_passing_the_dock():
+    core = v6_core()
+    traffic = core.traffic
+    b = traffic._missions["b"]
+    traffic._start_leg(b, "TO_PARK", None, "QO")  # b는 갈 길이 있다
+    leg = traffic._legs["b"]
+    assert leg.route is not None
+    leg.stuck_since = 0.0  # 앞이 막혀 서서 기다리는 중이다(지나가는 로봇이 아니다)
+    assert not traffic._passing("b")
+    route = way_to_outbound(traffic)
+    assert route is not None
+    assert min(y for _, y in free_part(traffic, route)) > 0.6  # 북쪽 통로로 간다: b 뒤에서 기다리게 된다

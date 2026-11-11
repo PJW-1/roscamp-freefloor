@@ -1727,9 +1727,29 @@ class FloorController(TrafficController):
                     if plain is not None and not self._oncoming(m.name, plain):
                         clear = plain
                 route = clear or route
+        if route is None and keep and not cautious:
+            # 도크 자리를 지나 돌아가느니 갈 길이 있는 로봇 뒤에 줄 선다. 서서 차례를 기다리는 로봇을
+            # 벽으로 피한 길은 좁은 통로를 거슬러 도크 옆을 스쳤다(arena_v6, Gazebo 2026-11-12)
+            queue = self._plan_around(start, goal, out_line, in_line,
+                                      self._stay_cells(m.name) | keep | self._obj_walls,
+                                      extra, penalty, mine)
+            if queue is not None and not self._oncoming(m.name, queue):
+                route = queue
         if route is None and not extra and not keep:
             route = self.planner.leg(start, goal, out_line, in_line)
         return route
+
+    def _stay_cells(self, robot: str) -> set:
+        """다른 로봇이 쥔 칸 (i, j) 중 갈 길이 없는 로봇의 것(주차, 도킹, 격리, 다 온 다리)과 막힘
+        표시. 뒤에 줄 서도 비지 않는 칸이다."""
+        out = set()
+        for c in self.zones.held_by_others(robot):
+            holder = self.zones.holder(c)
+            m, leg = self._missions.get(holder), self._legs.get(holder)
+            if (m is None or not m.available or leg is None or leg.route is None or leg.done
+                    or leg.resume is not None):
+                out.add(self.floor.cell_at(c))
+        return out
 
     def _plan_around(self, start, goal, out_line, in_line, walls, extra, penalty, mine=frozenset()):
         avoid = self._inflate(walls) | extra
