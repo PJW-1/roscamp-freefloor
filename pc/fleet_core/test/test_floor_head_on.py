@@ -140,3 +140,13 @@ def test_it_steps_aside_from_there_instead_of_finding_no_free_spot():
     assert route.points[0] == pytest.approx(here)
     others = traffic._others_cells("pinky1")
     assert traffic.floor.cell_of(*route.points[1]) not in traffic._inflate(others)
+
+
+def test_two_robots_that_wait_for_each_other_at_a_right_angle_stop_at_once():
+    """서로를 기다리게 된 두 로봇은 마주 보지 않아도(직각으로 만나도) 잠금 끝까지 달리지 않고 선다.
+    끝까지 달리면 0.18 m로 붙어 둘 다 제자리에서 돌 원을 잡지 못했고, 비켜 설 자리가 없다고
+    알렸다(ring QW>SC>WS>QW: WS로 오는 로봇과 서쪽 통로를 내려오는 로봇)."""
+    row = BENCH.run({"pinky1": "QW", "pinky2": "SC", "pinky3": "WS"},
+                    {"pinky1": "SC", "pinky2": "WS", "pinky3": "QW"}, 1, 90.0)
+    assert row["result"] == "ok", row
+    assert row["DEADLOCK_UNRESOLVED"] == 0 and row["ROBOT_ISOLATED"] == 0, row

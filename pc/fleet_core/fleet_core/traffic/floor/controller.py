@@ -2089,7 +2089,9 @@ class FloorController(TrafficController):
                 or leg.route.fixed_at(leg.s) is not None):
             return
         for other in sorted(self._blockers(m.name)):
-            if other in self._missions and self._facing(m.name, other, moving=False):
+            # 마주 오는 로봇, 또는 저도 나를 기다리는 로봇(직각으로 만나도): 기다려도 풀리지 않는다
+            if other in self._missions and (self._facing(m.name, other, moving=False)
+                                            or self._waits_on(other, m.name)):
                 self._cancel_goal(m)
                 leg.halt_on, leg.halt_lock = leg.route, leg.s_lock
                 return
