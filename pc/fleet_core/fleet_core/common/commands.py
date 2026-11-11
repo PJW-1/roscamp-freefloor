@@ -32,6 +32,18 @@ class MoveCmd:
 
 
 @dataclass(frozen=True)
+class RetreatCmd:
+    """관제가 시키는 물러나기(제안). 로봇의 retreat 액션으로 간다. path가 비면 보는 방향 그대로
+    곧게 distance_m 후진, 있으면 그 꺾은선 (x, y, yaw)들을 후진으로 따라간다(첫 점은 로봇 위치,
+    끝 점은 설 곳. distance_m은 그 길이)."""
+    robot: str
+    goal_id: int
+    distance_m: float
+    speed_mps: float
+    path: tuple = ()
+
+
+@dataclass(frozen=True)
 class DockCmd:
     robot: str
     goal_id: int

@@ -49,6 +49,7 @@ from fleet_core.traffic.mission import (
     PARKED,
     PLACEMENT_CONFLICT,
     RECOVERING,
+    RETREAT,
     RUN,
     SELF_RECOVERING,
     STALLED,
@@ -287,6 +288,9 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         goal = m.goal if m else None
         if goal is None or goal.id != goal_id:
             return
+        if goal.kind == RETREAT:
+            self.on_retreat_result(robot, goal_id, False, "REJECTED")  # 이동 재시도로 세지 않는다
+            return
         m.goal = None
         m.not_sent_warned = False
         if goal.kind == MOVE:
@@ -301,6 +305,9 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         goal = m.goal if m else None
         if goal is None or goal.id != goal_id:
             return
+        if goal.kind == RETREAT:
+            self.on_retreat_result(robot, goal_id, False, "NOT_SENT")  # 서버가 없다
+            return
         m.goal = None
         if goal.kind == MOVE:
             m.settle_idx = goal.target_idx
@@ -314,6 +321,16 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         m = self._missions.get(robot)
         if m:
             self._cancel_finished(m, goal_id)
+            if m.goal is not None and m.goal.id == goal_id and m.goal.kind == RETREAT:
+                self.on_retreat_result(robot, goal_id, False, "LOST")  # 섰는지 모른다
+
+    def on_retreat_result(self, robot, goal_id, success, reason="") -> None:
+        """관제가 시킨 Retreat(RetreatCmd)가 끝났다. reason: OBSTACLE_BEHIND, TIMEOUT, CANCELED,
+        FAILED, 그리고 코어가 붙이는 REJECTED, NOT_SENT, LOST(goal이 돌지 않았거나 결과를 잃음).
+
+        기본은 아무것도 하지 않는다. RetreatCmd를 내는 교통 층이 덮어쓴다. Retreat가 대신한
+        이동의 CANCELED는 goal id가 달라 on_move_result가 버리므로 실패로 세지 않는다.
+        """
 
     def on_dock_result(self, robot, goal_id, success, error_x_cm=0.0, error_y_cm=0.0,
                        error_yaw_deg=0.0) -> None:
@@ -611,7 +628,8 @@ class TrafficController(TrafficOffLane, TrafficRecovery, TrafficBlocking, Traffi
         """
         here = self._smoothed(m, now)
         idle = m.goal is None and not m.stall_hold
-        if (idle or self._run_mode != RUN or m.block or self._queue_rests(m)
+        retreating = m.goal is not None and m.goal.kind == RETREAT  # 느린 물러나기는 교통 층이 본다
+        if (idle or retreating or self._run_mode != RUN or m.block or self._queue_rests(m)
                 or m.robot_state == SELF_RECOVERING):
             m.stall_from = None
             return

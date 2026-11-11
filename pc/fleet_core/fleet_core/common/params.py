@@ -104,6 +104,12 @@ class FleetParams:
     floor_dock_aging_s: float = 30.0  # 이만큼 기다리면 다시 먼저 온 순서(굶김 방지)
     # 끔: 지도의 지름길(shortcuts)을 없는 것으로 본다. 켬: 접근선 대신 탈 수 있을 때 탄다
     floor_shortcut: bool = False
+    # 관제가 시키는 물러나기(Retreat, 제안, 실측 전). 끄면 전과 같다. 이 값이 없던 기록은 끈 채로
+    floor_block_retreat: bool = False  # 막혀(BLOCKED) 오래 선 로봇을 물러나게 한다
+    floor_corridor_clear: bool = False  # 좁은 통로를 막고 선 로봇을 물러나게 해 길을 연다
+    floor_retreat_after_s: float = 10.0  # 이만큼 막혀 서 있으면 물러난다
+    floor_retreat_speed_mps: float = 0.05  # 물러나는 속도
+    floor_retreat_max_m: float = 1.0  # 한 번에 물러나는 가장 긴 거리
 
 
 def load_params(path=None) -> FleetParams:

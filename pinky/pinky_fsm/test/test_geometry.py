@@ -3,7 +3,13 @@ import math
 from itertools import pairwise
 
 import pytest
-from pinky_fsm.geometry import Polyline, poses_along, quaternion_yaw, yaw_quaternion
+from pinky_fsm.geometry import (
+    Polyline,
+    poses_along,
+    poses_backing,
+    quaternion_yaw,
+    yaw_quaternion,
+)
 
 
 def test_poses_along_spaces_points_at_most_one_step_apart():
@@ -30,6 +36,17 @@ def test_poses_along_drops_repeated_points():
     poses = poses_along([(0.0, 0.0), (0.0, 0.0), (0.1, 0.0)], final_yaw=0.0, step=0.05)
     assert [p[:2] for p in poses] == [(0.0, 0.0), pytest.approx((0.05, 0.0)),
                                       pytest.approx((0.1, 0.0))]
+
+
+def test_poses_backing_keep_the_points_and_face_against_the_motion():
+    """후진 경로: 로봇은 진행 방향의 반대를 본다. 마지막 점도 마지막 선분의 반대다."""
+    pts = [(0.4, 0.3), (0.4, 0.0), (0.0, 0.0)]
+    back = poses_backing(pts, step=0.05)
+    assert [p[:2] for p in back] == [p[:2] for p in poses_along(pts, 0.0, 0.05)]
+    down = [p for p in back if p[0] == pytest.approx(0.4) and p[1] > 0.0]
+    assert down and all(p[2] == pytest.approx(math.pi / 2) for p in down)
+    left = [p for p in back if p[1] == 0.0 and p[0] < 0.4]
+    assert left and all(abs(p[2]) == pytest.approx(0.0) for p in left)
 
 
 def test_project_gives_distance_along_and_off_the_line():

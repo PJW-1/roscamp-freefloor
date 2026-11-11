@@ -168,7 +168,7 @@ def pinky(ns: str, x, y, yaw, *, heartbeat_timeout_s="1.5", nav_log_level="warn"
     nav_composition: Nav2 노드 9개를 프로세스 하나(component container)로 띄운다.
     nav_map, nav_map_fine: Nav2 지도 둘. 비면 lane_arena 지도.
     through_controller_id: 잠금 경계 경로에 쓸 controller(pinky_fsm). 비우면 모든 경로가
-    FollowPath로 간다. Nav2는 두 controller를 늘 띄운다.
+    FollowPath로 간다. Nav2는 두 controller와 후진용 FollowPathReverse를 늘 띄운다.
     nav_max_speed: 두 RPP의 최고 속도(m/s). None이면 설정 파일 그대로. pinky_fsm이 잠금
     경계에서 내는 속도 제한의 상한(horizon_cap_mps)도 이 값으로: RPP는 그 제한을 속도로 쓴다.
     nav_collision_check: 거짓이면 두 RPP의 충돌 검사(use_collision_detection)를 끈다.

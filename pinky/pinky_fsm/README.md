@@ -2,7 +2,7 @@
 
 핑키 한 대의 이동·도킹 명령을 받아 Nav2로 넘기고 상태를 보고한다. 핑키 Pi에서 namespace `/{pinky}`로 돈다.
 
-- 액션 서버: `move_to` (`MoveTo`), `dock` (`Dock`). 이름과 QoS는 `interfaces/fleet_interfaces/contract.yaml`에서 읽는다.
+- 액션 서버: `move_to` (`MoveTo`), `dock` (`Dock`), `retreat` (`Retreat`, 제안. 핑키 계약 3절 10번). 이름과 QoS는 `interfaces/fleet_interfaces/contract.yaml`에서 읽는다.
 - 발행: `state` (`RobotState`, 10 Hz, 변할 때만이 아니라 계속)
 - 구독: `/fleet/heartbeat`(계약의 HEARTBEAT QoS), `odom`(속도), `local_costmap/costmap`(BLOCKED 판단)
 - Nav2: controller의 `follow_path`(`FollowPath`)를 부른다. NavigateToPose는 부르지 않는다.
@@ -36,6 +36,7 @@
 | 이동 중 1 s 서 있고 경로 앞 0.5 m 안에 물체 | `BLOCKED`. Nav2가 물체 때문에 멈춰도 바로 끝내지 않고, 물체가 1 s 안 보이면 끄고 남은 경로를 다시 보낸다. 막힌 채 `block_timeout_s`(90 s, 제안)가 지나면 `TIMEOUT`(Nav2가 goal을 쥐고 있으면 세운다). 관제가 막힘 5 s(`blocked_mark_s`)에 goal을 먼저 취소하므로 관제가 취소하지 못했을 때의 마지막 안전장치다. 취소된 뒤에도 물체가 있으면 `BLOCKED` | 계약 4절, R9 |
 | 목표 실행 중 heartbeat·목표 수락이 1.5 s 없음 | 끊긴 지 1.5 s에 FollowPath를 취소해 정지 명령을 내고(제동 거리는 별도) `HEARTBEAT_LOST`로 끝낸다. 벽시계로 잰다 | R10, 계약 3절 5번 |
 | 위치를 모름 | `LOCALIZING`. 이때 온 목표는 `NAV_ABORTED`. 실행 중에 위치를 잃으면 FollowPath를 취소해 세우고 `NAV_ABORTED` | 계약 3절 6번 |
+| `retreat`(제안) | 이동을 먼저 끝내고(`CANCELED`) FollowPath 결과가 오고 로봇이 선 뒤 물러난다. path가 비면 Nav2 BackUp으로 곧게, 있으면 그 경로를 후진 controller `reverse_controller_id`(기본 `FollowPathReverse`)로 따른다. 결과 reason은 `backup.reason_of` | 핑키 계약 3절 10번 |
 | `dock` | **pinky_dock이 아직 없어** 이동을 멈추고 실패(`success=false`)를 돌려준다. 도킹을 했다고 꾸미지 않는다 | — |
 
 "물체"는 local costmap 값이 99(INSCRIBED) 이상인 칸이다. Nav2 local costmap은 `always_send_full_costmap: true`여야 한다.

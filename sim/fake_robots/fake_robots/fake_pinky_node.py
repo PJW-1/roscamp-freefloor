@@ -1,6 +1,12 @@
-"""FakePinky: robot_state, move_to, dock을 가진 가짜 이동 로봇. 일정대로 고장을 낸다."""
+"""FakePinky: robot_state, move_to, dock을 가진 가짜 이동 로봇. 일정대로 고장을 낸다.
+
+retreat(버전 2 1-A, 계약 0.9-draft 제안)는 보는 방향 그대로 뒤로 간다. path가 없으면 곧게,
+있으면 그 꺾은선(첫 점은 로봇 자리, 끝 점은 설 곳)을 따라 시킨 속도로 간다. 뒤에 다른 로봇이나
+물체가 있으면 그 자리에 서서 OBSTACLE_BEHIND로 끝낸다(자기 복구의 뒤 보기와 같은 검사).
+"""
 from __future__ import annotations
 
+import math
 import random
 import threading
 import time
@@ -8,7 +14,7 @@ from dataclasses import fields
 
 import rclpy
 from fleet_core.common.contract import to_ros_qos
-from fleet_interfaces.action import Dock, MoveTo
+from fleet_interfaces.action import Dock, MoveTo, Retreat
 from fleet_interfaces.msg import RobotState
 from geometry_msgs.msg import Pose2D
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
@@ -43,6 +49,26 @@ NAV_ABORT_DELAY_S = 0.2  # 해제 거리(0.2 m)를 지나기 전, 관제가 선�
 OFF_COURSE_M = 1.0  # 운영자가 치운 로봇이 가는 곳(지도 모서리 밖)
 FEEDBACK_PERIOD_S = 0.2
 CONTROL_RATE_HZ = 20.0
+# 실물 pinky_fsm의 경로 물러나기와 같게(FollowPathReverse 속도, 이보다 짧게 남으면 FAILED)
+REVERSE_SPEED_MPS = 0.05
+REVERSE_MIN_M = 0.02
+RETREAT_REASONS = (Retreat.Result.REASON_OBSTACLE_BEHIND, Retreat.Result.REASON_TIMEOUT,
+                   Retreat.Result.REASON_CANCELED, Retreat.Result.REASON_FAILED)
+
+
+def _project(px: float, py: float, path) -> tuple[int, float]:
+    """(px, py)에 가장 가까운 선분의 번호와 그 투영점부터 path 끝까지의 길이. 실물 pinky_fsm의
+    Polyline.project처럼 거리가 같으면 앞 선분이다."""
+    best, i, s_at, s = math.inf, 0, 0.0, 0.0
+    for k, ((ax, ay), (bx, by)) in enumerate(zip(path, path[1:], strict=False)):
+        seg = math.dist((ax, ay), (bx, by))
+        f = 0.0 if seg == 0.0 else min(max(
+            ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / (seg * seg), 0.0), 1.0)
+        d = math.dist((px, py), (ax + f * (bx - ax), ay + f * (by - ay)))
+        if d < best - 1e-12:
+            best, i, s_at = d, k, s + f * seg
+        s += seg
+    return i, s - s_at
 
 
 class _Goal:
@@ -59,6 +85,8 @@ class _Goal:
         self.start_at = 0.0
         self.error = (0.0, 0.0, 0.0)
         self.target_id = ""  # target_id of a move, dock_id of a dock (current_goal)
+        self.left = 0.0  # retreat: 남은 거리
+        self.speed = 0.0
 
     def finish(self, success: bool, reason: str = "") -> None:
         if not self.done.is_set():
@@ -128,6 +156,8 @@ class FakePinkyNode(Node):
             MoveTo, contract.name("move_to", pinky=self.robot_id), "move", group)
         self._dock_server = self._server(
             Dock, contract.name("dock", pinky=self.robot_id), "dock", group)
+        self._retreat_server = self._server(
+            Retreat, contract.name("retreat", pinky=self.robot_id), "retreat", group)
         self.create_timer(1.0 / CONTROL_RATE_HZ, self._tick)
         self.create_timer(1.0 / float(self.get_parameter("state_rate_hz").value),
                           self._publish_state)
@@ -150,6 +180,7 @@ class FakePinkyNode(Node):
         self.stop()
         self._move_server.destroy()
         self._dock_server.destroy()
+        self._retreat_server.destroy()
         return super().destroy_node()
 
     def _running(self) -> bool:
@@ -184,6 +215,8 @@ class FakePinkyNode(Node):
         if (goal.abort_at is not None and not goal.done.is_set()
                 and reason != MoveTo.Result.REASON_NAV_ABORTED):
             self._faults.give_back_nav_abort(goal.abort_from)  # 대체·취소되면 다음 목표로
+        if goal.kind == "retreat" and not success and reason not in RETREAT_REASONS:
+            reason = Retreat.Result.REASON_FAILED  # 계약 0.9: Retreat reason은 이 넷뿐이다
         goal.finish(success, reason)
         if self._active is goal:
             self._rest = (RobotState.STATE_DOCKED if goal.kind == "dock" and success
@@ -216,12 +249,56 @@ class FakePinkyNode(Node):
                         eta = self._motion.remaining() / self._cfg.speed_mps
                         goal.abort_at = t + min(NAV_ABORT_DELAY_S, eta / 2)  # 도착 전에 중단
                         goal.abort_from = self._faults.last_taken
+            elif kind == "retreat":
+                self._start_retreat(t, goal, handle.request)
             else:
                 goal.target_id = handle.request.dock_id
                 self._motion.clear_target()
                 goal.end_at = t + self._dock_cfg.duration_s
             self._goals[bytes(handle.goal_id.uuid)] = goal
         handle.execute()
+
+    def _start_retreat(self, t: float, goal: _Goal, request) -> None:
+        """보는 방향 그대로 뒤로. 갈 길을 지나온 선(trail)으로 두고 Motion.back으로 간다.
+
+        path가 없으면 뒤로 곧게 distance_m을 시킨 속도로. 있으면 실물 pinky_fsm처럼 제 자리에서
+        가장 가까운 선분부터 끝 점까지 차례로, 0.05 m/s를 넘지 않게 간다. 로봇 자리에서 시작하지
+        않는 path(이동의 path와 같은 연결 허용 거리)나 제 자리를 투영한 점부터 끝까지가 0.02 m보다
+        짧은 path는 따르지 않는다. 투영은 실물(Polyline.project)과 같이 같으면 앞 선분이다.
+        """
+        distance, speed = float(request.distance_m), float(request.speed_mps)
+        path = [(p.position.x, p.position.y) for p in request.path]
+        m = self._motion
+        rest = math.inf
+        if path:
+            i, rest = _project(m.x, m.y, path)
+            ahead = path[i + 1:]
+            speed = min(speed, REVERSE_SPEED_MPS)
+        else:
+            ahead = [(m.x - math.cos(m.yaw) * distance, m.y - math.sin(m.yaw) * distance)]
+        length = sum(math.dist(a, b) for a, b in zip([(m.x, m.y), *ahead], ahead, strict=False))
+        if (distance <= 0.0 or speed <= 0.0 or length <= 1e-9 or rest < REVERSE_MIN_M
+                or (path and self._path_misses_me(t, path))):
+            self._end(goal, False, Retreat.Result.REASON_FAILED)
+            return
+        m.clear_target()
+        m.trail = list(reversed(ahead))  # Motion.back은 trail 끝에서부터 되짚는다
+        goal.left, goal.speed = length, speed
+
+    def _retreat_step(self, t: float, dt: float, goal: _Goal) -> None:
+        radius = self._recovery.p.robot_radius_m
+        wall = self._faults.behind(t)
+        others = [(x, y, radius) for x, y in list(self._others.values())]
+        # 자기 복구의 뒤 보기와 같은 검사(recovery.py). 남은 길 전체에서 몸이 닿는가
+        if ((wall is not None and wall <= goal.left + radius)
+                or self._recovery._something_behind(self._motion, goal.left, others)):
+            self._end(goal, False, Retreat.Result.REASON_OBSTACLE_BEHIND)
+            return
+        step = min(goal.speed * dt, goal.left)
+        self._motion.back(step)
+        goal.left -= step
+        if goal.left <= 1e-9:
+            self._end(goal, True)
 
     def _path_misses_me(self, t: float, path) -> bool:
         """받은 path가 로봇이 아는 제 자리에서 연결 허용 거리보다 먼가(지시서 7.5).
@@ -273,6 +350,8 @@ class FakePinkyNode(Node):
     def _result(self, goal: _Goal, action_type):
         if action_type is MoveTo:
             return MoveTo.Result(success=goal.success, reason=goal.reason)
+        if action_type is Retreat:
+            return Retreat.Result(success=goal.success, reason=goal.reason)
         ex, ey, eyaw = goal.error
         return Dock.Result(success=goal.success, error_x_cm=ex, error_y_cm=ey,
                            error_yaw_deg=eyaw)
@@ -314,6 +393,8 @@ class FakePinkyNode(Node):
                 if not self._motion.moving:
                     self._recovery.succeeded()
                     self._end(goal, True)
+            elif goal.kind == "retreat":
+                self._retreat_step(t, dt, goal)
             elif t >= goal.end_at:
                 e = self._dock_cfg.error_cm
                 goal.error = (self._rng.gauss(e, 0.1 * e), self._rng.gauss(e, 0.1 * e),
@@ -369,7 +450,7 @@ class FakePinkyNode(Node):
         elif self._recovery.blocked:
             state = RobotState.STATE_BLOCKED
         elif busy:
-            state = RobotState.STATE_MOVING if goal.kind == "move" else RobotState.STATE_DOCKING
+            state = RobotState.STATE_DOCKING if goal.kind == "dock" else RobotState.STATE_MOVING
         else:
             state = self._rest
         x, y = noisy_pose(self._motion.x, self._motion.y, self._cfg.pose_noise_m, self._rng)

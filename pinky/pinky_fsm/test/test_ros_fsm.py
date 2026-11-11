@@ -186,6 +186,198 @@ def test_dock_fails_honestly_while_pinky_dock_is_missing(harness):
     assert res.result.success is False
 
 
+def _retreat_client(probe):
+    from fleet_interfaces.action import Retreat
+    from probe import C
+    from rclpy.action import ActionClient
+    client = ActionClient(probe, Retreat, C.name("retreat", pinky="pinky1"))
+    assert client.wait_for_server(10.0)
+    return client
+
+
+def test_a_retreat_stops_the_move_and_backs_up_with_the_same_backup_code(harness):
+    """버전 2 1-A(계약 0.9-draft 제안): 이동을 멈추고 Nav2 BackUp으로 곧게 물러난다."""
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    move = probe.send(lane_goal(["P-3", "P-4", "P-5"]))
+    assert wait_until(lambda: len(fake.goals) >= 1, 5.0)
+    h = probe.send(Retreat.Goal(distance_m=0.1, speed_mps=0.1), client=_retreat_client(probe))
+    assert probe.result(move, timeout=5.0).result.reason == MoveTo.Result.REASON_CANCELED
+    res = probe.result(h, timeout=10.0).result
+    assert (res.success, res.reason) == (True, "")
+    assert [(d, v) for _, d, v in fake.backups] == [(pytest.approx(0.1), pytest.approx(0.1))]
+
+
+def test_something_behind_ends_a_retreat_with_obstacle_behind(harness):
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    fake.wall_behind_m = 0.01
+    h = probe.send(Retreat.Goal(distance_m=0.1, speed_mps=0.1), client=_retreat_client(probe))
+    res = probe.result(h, timeout=10.0).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_OBSTACLE_BEHIND)
+
+
+def _back_path(*ids):
+    from geometry_msgs.msg import Pose
+    out = []
+    for i in ids:
+        p = Pose()
+        p.position.x, p.position.y = WAYPOINTS[i]
+        out.append(p)
+    return out
+
+
+def test_a_retreat_with_a_path_backs_along_it_on_the_reverse_controller(harness):
+    """Retreat.path(계약 0.9-draft 제안): 지나온 길을 거꾸로 적은 경로를 FollowPathReverse로
+    후진해 따른다. BackUp은 쓰지 않고, 로봇은 돌지 않는다(북쪽을 본 채 남쪽으로)."""
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    assert probe.result(probe.send(lane_goal(["P-3", "P-4"]))).result.success is True
+    h = probe.send(Retreat.Goal(distance_m=0.4, speed_mps=0.05, path=_back_path("P-4", "P-3")),
+                   client=_retreat_client(probe))
+    res = probe.result(h, timeout=10.0).result
+    assert (res.success, res.reason) == (True, "")
+    assert fake.controller_ids[-1] == "FollowPathReverse" and fake.backups == []
+    assert all(yaw == pytest.approx(math.pi / 2) for _, _, yaw in fake.path)
+    assert math.dist(fake.pose[:2], WAYPOINTS["P-3"]) <= 0.05
+    assert fake.pose[2] == pytest.approx(math.pi / 2)
+
+
+def test_something_behind_on_the_path_ends_a_retreat_with_obstacle_behind(harness):
+    """FakeNav는 RPP처럼 움직이는 쪽(후진이면 뒤)의 물체에 서고 NO_VALID_CONTROL로 끝낸다."""
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    assert probe.result(probe.send(lane_goal(["P-3", "P-4"]))).result.success is True
+    fake.obstacle = (0.35, 1.60)  # 뒤, P-3 근처
+    h = probe.send(Retreat.Goal(distance_m=0.4, speed_mps=0.05, path=_back_path("P-4", "P-3")),
+                   client=_retreat_client(probe))
+    res = probe.result(h, timeout=10.0).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_OBSTACLE_BEHIND)
+    assert fake.pose[1] > 1.80
+
+
+def test_a_retreat_path_away_from_the_robot_fails(harness):
+    from fleet_interfaces.action import Retreat
+    fake, probe = start(harness)
+    h = probe.send(Retreat.Goal(distance_m=0.4, speed_mps=0.05, path=_back_path("P-6", "P-5")),
+                   client=_retreat_client(probe))
+    res = probe.result(h, timeout=5.0).result
+    assert (res.success, res.reason) == (False, Retreat.Result.REASON_FAILED)
+    assert fake.goals == [] and fake.backups == []
+
+
+def _fake_node(late):
+    import threading
+    from types import SimpleNamespace
+    infos = []
+    node = SimpleNamespace(
+        _lock=threading.RLock(), _nav_pending={3}, _late=late, _nav_handles={3: object()},
+        get_logger=lambda: SimpleNamespace(warn=infos.append, info=infos.append),
+        _pose=lambda: None, _obstacle=lambda _p: False)
+    return node, infos
+
+
+def _broken():
+    raise RuntimeError("lost")
+
+
+def test_a_follow_path_goal_whose_send_fails_counts_as_rejected():
+    """Codex 리뷰 2: future 예외로 콜백이 죽으면 그 FollowPath는 끝내 결과가 없다."""
+    from types import SimpleNamespace
+
+    from pinky_fsm.node import PinkyFsmNode
+    late = []
+    node, infos = _fake_node(late)
+    PinkyFsmNode._on_nav_response(node, 3, SimpleNamespace(result=_broken))
+    assert late == [(3, "rejected")] and node._nav_pending == set() and infos
+
+
+class _CancelFuture:
+    def __init__(self, response=None, error=None):
+        self.callbacks, self._response, self._error = [], response, error
+
+    def add_done_callback(self, cb):
+        self.callbacks.append(cb)
+
+    def result(self):
+        if self._error:
+            raise self._error
+        return self._response
+
+
+def test_only_an_accepted_cancel_lets_the_core_forget_a_follow_path():
+    """재검토 1: 취소 응답에 그 goal이 들어 있을 때만 core에 알린다(거절, 오류는 알리지 않는다)."""
+    from types import SimpleNamespace
+
+    from action_msgs.srv import CancelGoal
+    from pinky_fsm.node import PinkyFsmNode
+    told = []
+    node, infos = _fake_node([])
+    node._fsm = SimpleNamespace(nav_cancel_accepted=lambda seq, now: told.append(seq) or [])
+    node._run = lambda cmds: None
+    yes = CancelGoal.Response(goals_canceling=[_goal_info()])
+    PinkyFsmNode._on_nav_cancel(node, 3, _CancelFuture(yes))
+    PinkyFsmNode._on_nav_cancel(node, 4, _CancelFuture(CancelGoal.Response(
+        return_code=CancelGoal.Response.ERROR_REJECTED)))
+    PinkyFsmNode._on_nav_cancel(node, 5, _CancelFuture(error=RuntimeError("lost")))
+    assert told == [3] and infos
+
+
+def test_a_cancel_answered_goal_terminated_or_unknown_also_lets_the_core_forget():
+    """재검토 2: 이미 끝났거나 서버가 모르는 goal은 돌지 않는다. 결과를 잃은 goal이 끝나 있으면
+    취소는 이렇게 답하고, 그때 잊지 않으면 그 뒤 모든 Retreat가 TIMEOUT이다."""
+    from types import SimpleNamespace
+
+    from action_msgs.srv import CancelGoal
+    from pinky_fsm.node import PinkyFsmNode
+    told = []
+    node, _ = _fake_node([])
+    node._nav_handles = {3: object(), 4: object()}
+    node._fsm = SimpleNamespace(nav_cancel_accepted=lambda seq, now: told.append(seq) or [])
+    node._run = lambda cmds: None
+    for seq, code in ((3, CancelGoal.Response.ERROR_GOAL_TERMINATED),
+                      (4, CancelGoal.Response.ERROR_UNKNOWN_GOAL_ID)):
+        PinkyFsmNode._on_nav_cancel(node, seq, _CancelFuture(CancelGoal.Response(return_code=code)))
+    assert told == [3, 4] and not node._nav_handles
+
+
+def _goal_info():
+    from action_msgs.msg import GoalInfo
+    return GoalInfo()
+
+
+def test_every_follow_path_cancel_reports_its_answer():
+    from types import SimpleNamespace
+
+    from pinky_fsm.node import PinkyFsmNode
+    futures = {}
+    handles = {7: SimpleNamespace(cancel_goal_async=lambda: futures.setdefault(7,
+                                                                             _CancelFuture()))}
+    node = SimpleNamespace(_nav_handles=handles, _nav_pending={8}, _cancel_on_accept=set())
+    node._on_nav_cancel = lambda seq, fut: None
+    PinkyFsmNode._cancel_all_nav(node)
+    assert len(futures[7].callbacks) == 1 and node._cancel_on_accept == {8}
+
+
+def test_a_lost_follow_path_result_keeps_the_goal_and_cancels_it():
+    """재검토 2: 결과를 잃어도 goal은 돌 수 있다. 핸들을 두고 취소를 보내며, core에는
+    nav_lost로 알린다(이동은 aborted처럼 끝나지만 취소가 받아들여질 때까지 잊지 않는다)."""
+    from types import SimpleNamespace
+
+    from pinky_fsm.node import PinkyFsmNode
+    ran, futures = [], []
+    node, infos = _fake_node([])
+    handle = SimpleNamespace(cancel_goal_async=lambda: futures.append(_CancelFuture())
+                             or futures[-1])
+    node._nav_handles = {3: handle}
+    node._fsm = SimpleNamespace(nav_lost=lambda *a: ran.append(a[0]) or [])
+    node._run = lambda cmds: None
+    node._on_nav_cancel = lambda seq, fut: None
+    PinkyFsmNode._on_nav_result(node, 3, SimpleNamespace(result=_broken))
+    assert ran == [3] and node._nav_handles == {3: handle} and infos
+    assert len(futures) == 1 and len(futures[0].callbacks) == 1
+
+
 def test_a_goal_at_a_lock_boundary_publishes_a_speed_limit_and_lifts_it_at_the_end(harness):
     """버전 2 4절 horizon 최소판(계약 0.8-draft 제안): final_goal이 거짓이면 끝 근처에서
     nav2 speed_limit으로 줄이고, 목표가 끝나면 푼다."""

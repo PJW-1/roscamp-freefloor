@@ -11,7 +11,9 @@ Pose noise is gaussian (like the ROS fake nodes) and seeded, so the same command
 rows. A scenario file sets the orders, stock, robots, arm and dock times and faults; its own
 seed, speed_factor and expectations are ignored. The file is first checked by the fake robots'
 parser (sim/fake_robots/fake_robots/scenario.py), and missing values take its defaults (4 s per
-item, 8 s swap, 3 s dock, 900 s timeout). Supported faults: `blocked`, and the operator
+item, 8 s swap, 3 s dock, 900 s timeout). Supported faults: `blocked`, `object` (an unmapped
+object at x, y for duration_s that any robot stops before; the robots then self-recover and
+report BLOCKED like the pinky, see sim_world.py), `low_battery`, and the operator
 actions `operator_remove` (confirm_clear on every zone the robot holds, retried each second
 until accepted; the robot leaves the floor only when accepted) and `operator_reinstate`
 (reinstate, retried each second; the robot is put back on its start zone with the given basket
@@ -94,7 +96,8 @@ DEFAULT_PLAN = {
 }
 MODES = ("path", "point")
 SEEDS = (1, 2, 3, 4, 5)
-WORLD_FAULTS = ("blocked", "low_battery")
+WORLD_FAULTS = ("blocked", "low_battery", "object")
+OBJECT_FAULTS = ("blocked", "object")  # rows of scenarios with these measure the object time
 OPERATOR_FAULTS = ("operator_remove", "operator_reinstate")
 MOVED_M = 1e-9  # a step with more displacement than this is a moving step
 ARRIVED_M = 1e-6  # the fake robot snaps onto its goal, so arrival is exact
@@ -336,7 +339,7 @@ def run_with_world(map_, scenario, seed, mode, timeout_s=None) -> tuple[dict, Si
         detours=sum(e.code == "DETOUR" for e in world.events),
     )
     row.update({f"wait_{r}_s": round(s, 3) for r, s in meter.wait.items()})
-    if any(f["type"] == "blocked" for f in data.get("faults") or []):
+    if any(f["type"] in OBJECT_FAULTS for f in data.get("faults") or []):
         row.update(object_still_s=round(meter.object_still, 3), object_hits=meter.object_hits)
     return row, world
 

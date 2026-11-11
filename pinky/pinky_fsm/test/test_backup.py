@@ -8,6 +8,7 @@ from pinky_fsm.backup import (
     CANCELED,
     FAILED,
     NAV2_COLLISION_AHEAD,
+    NAV2_NO_VALID_CONTROL,
     NAV2_TIMEOUT,
     OBSTACLE_BEHIND,
     TIMEOUT,
@@ -67,7 +68,15 @@ def test_reasons_follow_the_version_2_retreat_result():
     assert reason_of("aborted", 712) == FAILED
 
 
+def test_a_reverse_follow_path_stopped_by_its_collision_check_is_an_obstacle_behind():
+    """Retreat.path(제안): RPP collision check on the backing motion ends FollowPath with
+    NO_VALID_CONTROL. Other FollowPath failures (no progress, TF) are FAILED."""
+    assert reason_of("aborted", NAV2_NO_VALID_CONTROL) == OBSTACLE_BEHIND
+    assert reason_of("aborted", 105) == FAILED
+
+
 def test_error_codes_match_nav2():
     action = pytest.importorskip("nav2_msgs.action")
     assert NAV2_TIMEOUT == action.BackUp.Result.TIMEOUT
     assert NAV2_COLLISION_AHEAD == action.BackUp.Result.COLLISION_AHEAD
+    assert NAV2_NO_VALID_CONTROL == action.FollowPath.Result.NO_VALID_CONTROL

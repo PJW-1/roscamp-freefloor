@@ -243,6 +243,31 @@ def test_an_unknown_fault_type_is_refused():
         baseline.build_world(data, "lane_map", seed=1, mode="path")
 
 
+X0, Y0 = baseline.load_map("lane_map").bounds()[:2]
+OFF_ROUTE = {"at_s": 1, "type": "object", "x": X0 - 0.5, "y": Y0 - 0.5, "duration_s": 30}
+
+
+def test_an_object_reaches_the_world_and_its_row_measures_object_time(tmp_path):
+    data = {**baseline.load_scenario("basic_orders"), "faults": [dict(OFF_ROUTE)]}
+    world = baseline.build_world(data, "lane_map", seed=1, mode="path")
+    assert world.objects == [(1, 31, X0 - 0.5, Y0 - 0.5, 0.10)]
+    path = tmp_path / "object.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    result = baseline.run_one("lane_map", str(path), seed=1, mode="path")
+    assert result["finished"], result
+    assert (result["object_hits"], result["object_still_s"]) == (0, 0.0)
+
+
+def test_compare_floor_runs_objects_and_reports_the_heading_only_for_retreats(monkeypatch):
+    import compare_floor
+    data = {**baseline.load_scenario("basic_orders"), "faults": [dict(OFF_ROUTE)]}
+    world = compare_floor.build(data, "lane_map", 1, "freefloor")
+    assert world.objects and not world.report_heading
+    for switch in ("floor_block_retreat", "floor_corridor_clear"):
+        monkeypatch.setattr(compare_floor, "OVERRIDES", {switch: True})
+        assert compare_floor.build(data, "lane_map", 1, "freefloor").report_heading, switch
+
+
 # ---- CSV and summary ------------------------------------------------------------------------
 
 

@@ -25,6 +25,10 @@ FAILED = "FAILED"
 # nav2_msgs/action/BackUp 결과의 error_code (Jazzy, `ros2 interface show`로 2026-11-09 확인)
 NAV2_TIMEOUT = 711
 NAV2_COLLISION_AHEAD = 714  # 움직이는 쪽, 즉 로봇 뒤에 물체
+# nav2_msgs/action/FollowPath 결과의 NO_VALID_CONTROL(Jazzy, 2026-11-11 확인). 경로를 후진으로
+# 따를 때(Retreat.path, FollowPathReverse) RPP 충돌 검사가 움직이는 쪽, 즉 뒤의 물체를 보고 낸다.
+# BackUp의 7xx와 겹치지 않는다
+NAV2_NO_VALID_CONTROL = 106
 
 
 @dataclass(frozen=True)
@@ -68,12 +72,13 @@ def keep_lateral(distance_m: float, lateral_m: float, heading_err: float, limit_
 
 
 def reason_of(outcome: str, error_code: int) -> str:
-    """BackUp 결과(outcome: succeeded, aborted, canceled, rejected)를 Retreat reason으로."""
+    """BackUp이나 후진 FollowPath 결과(outcome: succeeded, aborted, canceled, rejected)를
+    Retreat reason으로."""
     if outcome == "succeeded":
         return ""
     if outcome == "canceled":
         return CANCELED
-    if outcome == "aborted" and error_code == NAV2_COLLISION_AHEAD:
+    if outcome == "aborted" and error_code in (NAV2_COLLISION_AHEAD, NAV2_NO_VALID_CONTROL):
         return OBSTACLE_BEHIND
     if outcome == "aborted" and error_code == NAV2_TIMEOUT:
         return TIMEOUT

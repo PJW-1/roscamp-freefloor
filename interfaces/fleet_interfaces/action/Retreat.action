@@ -1,0 +1,20 @@
+# 제안(팀 합의 전): 관제가 시키는 물러나기. 레인 레포 버전 2 1-A의 Retreat에 path를 더했다.
+# path가 비면 로봇이 보는 방향 그대로 뒤로 곧게 distance_m을 speed_mps로 간다(Nav2 BackUp, 자가 복구와
+# 같은 실행 코드). path가 있으면 그 꺾은선을 후진으로 따라간다(Nav2 FollowPath, 컨트롤러
+# FollowPathReverse): 첫 점은 로봇이 있는 곳, 끝 점은 설 곳이고 지나온 길을 거꾸로 적은 것이다.
+# 이때 distance_m은 path의 길이다. 받으면 달리던 이동(FollowPath)을 먼저 멈춘다. 이동 goal은
+# CANCELED로 끝난다.
+float32 distance_m
+float32 speed_mps
+geometry_msgs/Pose[] path
+---
+string REASON_OBSTACLE_BEHIND="OBSTACLE_BEHIND"
+string REASON_TIMEOUT="TIMEOUT"
+string REASON_CANCELED="CANCELED"
+# 서버 없음, 잘못된 입력 같은 그 밖의 실패
+string REASON_FAILED="FAILED"
+
+bool success
+string reason
+---
+float32 distance_traveled

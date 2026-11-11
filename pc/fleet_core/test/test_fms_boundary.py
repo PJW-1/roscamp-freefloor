@@ -32,7 +32,7 @@ ORDER_SIDE_ATTRIBUTES = {"basket", "order", "orders", "placed_items", "last_orde
 # traffic이 commands.py에서 가져올 수 있는 이름. 허용 목록이라 추가는 결정 사항이다.
 TRAFFIC_VOCABULARY = {
     "CancelCmd", "DispatchFeedback", "DispatchResult", "DockCmd", "EventOut", "MoveCmd",
-    "NO_ROBOT", "RobotIsolated", "ZoneView",
+    "NO_ROBOT", "RetreatCmd", "RobotIsolated", "ZoneView",
 }
 
 

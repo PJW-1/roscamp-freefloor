@@ -9,7 +9,7 @@ import math
 from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Time
 from fleet_core.common.commands import OrderRecord
-from fleet_interfaces.action import Dock, FillBasket, MoveTo, SwapBasket
+from fleet_interfaces.action import Dock, FillBasket, MoveTo, Retreat, SwapBasket
 from fleet_interfaces.msg import (
     Assignment,
     AssignmentArray,
@@ -107,6 +107,10 @@ def move_result(result) -> tuple[bool, str]:
     return result.success, result.reason
 
 
+def retreat_result(result) -> tuple[bool, str]:
+    return result.success, result.reason
+
+
 def dock_result(result) -> tuple[bool, float, float, float]:
     return result.success, result.error_x_cm, result.error_y_cm, result.error_yaw_deg
 
@@ -158,17 +162,30 @@ def order_board_orders(msg: OrderBoard) -> list[OrderRecord]:
     return [OrderRecord(o.order_id, _board_items(o.items)) for o in msg.orders]
 
 
+def _poses(path) -> list[Pose]:
+    """(x, y, yaw)들을 geometry_msgs/Pose로. MoveTo와 Retreat의 path가 같이 쓴다."""
+    poses = []
+    for x, y, yaw in path:
+        pose = Pose()
+        pose.position.x, pose.position.y = float(x), float(y)
+        pose.orientation.z, pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
+        poses.append(pose)
+    return poses
+
+
 def move_goal(cmd) -> MoveTo.Goal:
     goal = MoveTo.Goal(target_id=cmd.target_id, final_goal=bool(cmd.final_goal))
     goal.target_pose.x = float(cmd.x)
     goal.target_pose.y = float(cmd.y)
     goal.target_pose.theta = float(cmd.yaw)
-    for x, y, yaw in cmd.path:  # 비면 점 목표
-        pose = Pose()
-        pose.position.x, pose.position.y = float(x), float(y)
-        pose.orientation.z, pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
-        goal.path.append(pose)
+    goal.path = _poses(cmd.path)  # 비면 점 목표
     return goal
+
+
+def retreat_goal(cmd) -> Retreat.Goal:
+    """관제가 시키는 물러나기(계약 0.9-draft 제안). path가 비면 곧게 뒤로."""
+    return Retreat.Goal(distance_m=float(cmd.distance_m), speed_mps=float(cmd.speed_mps),
+                        path=_poses(cmd.path))
 
 
 def dock_goal(cmd) -> Dock.Goal:

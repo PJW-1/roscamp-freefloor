@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,9 +13,15 @@ ORDER_RESULTS = ("SHIPPED", "PARTIAL", "HELD")
 ROBOT_FAULTS = ("comm_loss", "nav_abort", "stuck", "operator_remove", "blocked", "drift",
                 "operator_reinstate", "obstacle_behind", "low_battery")
 ARM_FAULTS = ("arm_fail", "swap_partial")
-FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS
+# 로봇에 묶이지 않는 고장. object: 지도에 없는 물체가 (x, y)에 duration_s 동안 있다(짧으면 지나가는
+# 사람, 길면 놓고 간 상자). 갈 길 앞에서 그것을 본 로봇은 서고 자기 복구 뒤 BLOCKED다. 관제는 모른다
+WORLD_FAULTS = ("object",)
+FAULT_TYPES = ROBOT_FAULTS + ARM_FAULTS + WORLD_FAULTS
 # 이 고장이 난 로봇은 돌아오지 않으므로 주차를 기다리지 않는다.
 GONE_FAULTS = ("stuck", "operator_remove")
+OBJECT_RADIUS_M = 0.10  # object 고장의 기본 반지름: 사람 다리나 작은 상자
+OBJECT_KEYS = ("x", "y", "radius_m")
+OBJECT_MAP_MARGIN_M = 1.0  # 물체는 웨이포인트 범위에서 이만큼 안에 있어야 한다(오타 막기)
 REINSTATE_BASKETS = ("EMPTY", "NONE")  # operator_reinstate가 관리자 대신 알리는 바구니
 EXPECT_DEFAULTS = {
     "all_orders_finished": True,
@@ -109,6 +116,9 @@ class Fault:
     target: str = ""  # nav_abort: 이 지점으로 가는 목표만 중단. 비면 모든 목표
     offset_m: float = 0.0  # drift: 보고 위치를 진행 방향 왼쪽으로 미는 거리(음수면 오른쪽)
     distance_m: float = 0.0  # obstacle_behind: 로봇 뒤 물체까지(path를 따라). 후진을 막는다
+    x: float = 0.0  # object: 물체 중심(맵 좌표, m)
+    y: float = 0.0
+    radius_m: float = OBJECT_RADIUS_M  # object: 물체 반지름
 
 
 @dataclass(frozen=True)
@@ -267,6 +277,12 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
     if kind == "obstacle_behind":
         _positive(raw, "duration_s")
         _positive(raw, "distance_m")
+    if kind == "object":
+        x, y, radius = _object_place(raw, lane_map)
+    else:
+        if any(key in raw for key in OBJECT_KEYS):
+            raise ScenarioError(f"{', '.join(OBJECT_KEYS)} belong to an object fault: {raw}")
+        x, y, radius = 0.0, 0.0, OBJECT_RADIUS_M
     start, basket = None, str(raw.get("basket", "EMPTY"))
     if kind == "operator_reinstate":
         if "start" not in raw:
@@ -284,7 +300,30 @@ def _parse_fault(raw: dict, robots: dict, lane_map) -> Fault:
                  raw.get("arm", ""), int(raw.get("after_items", 0)),
                  start=start, basket=basket, target=target,
                  offset_m=float(raw.get("offset_m", 0.0)),
-                 distance_m=float(raw.get("distance_m", 0.0)))
+                 distance_m=float(raw.get("distance_m", 0.0)), x=x, y=y, radius_m=radius)
+
+
+def _object_place(raw: dict, lane_map) -> tuple[float, float, float]:
+    """object 고장의 (x, y, 반지름). 로봇에 묶이지 않고, 웨이포인트 범위 가까이에 있어야 한다."""
+    if raw.get("robot"):
+        raise ScenarioError(f"an object is not tied to a robot: {raw}")
+    _positive(raw, "duration_s")  # 물체가 있는 시간
+    radius = _positive(raw, "radius_m", OBJECT_RADIUS_M)
+    numbers = {}
+    for key in ("at_s", "duration_s", "radius_m", "x", "y"):
+        value = raw.get(key, OBJECT_RADIUS_M if key == "radius_m" else None)
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(value)):
+            raise ScenarioError(f"object needs a finite number {key}, got {value!r}: {raw}")
+        numbers[key] = float(value)
+    if numbers["at_s"] < 0:
+        raise ScenarioError(f"object at_s must not be negative: {raw}")
+    place = [numbers["x"], numbers["y"]]
+    x0, y0, x1, y1 = lane_map.bounds()
+    m = OBJECT_MAP_MARGIN_M
+    if not (x0 - m <= place[0] <= x1 + m and y0 - m <= place[1] <= y1 + m):
+        raise ScenarioError(f"object at {tuple(place)} is far off the map: {raw}")
+    return place[0], place[1], radius
 
 
 def _check_reinstates(faults: list) -> None:

@@ -12,7 +12,7 @@
 ## 구성
 
 - 모든 노드가 `/{namespace}` 안에서 돈다. TF는 `/{namespace}/tf`, `/{namespace}/tf_static`이고 프레임 이름(`map`, `odom`, `base_footprint`, `rplidar_link`)에는 접두사가 없다(R17).
-- controller_server(`follow_path`, RPP)가 `cmd_vel`로 바로 낸다. velocity_smoother와 collision_monitor는 없다. `pinky_fsm`이 `follow_path`를 바로 부른다.
+- controller_server(`follow_path`, RPP)가 `cmd_vel`로 바로 낸다. controller는 셋이다: `FollowPath`, 잠금 경계 경로용 `FollowPathThrough`, 물러나기 경로용 `FollowPathReverse`(제안, 팀 합의 전. 0.05 m/s 후진, 제자리 회전 없음). 셋 다 늘 뜬다. velocity_smoother와 collision_monitor는 없다. `pinky_fsm`이 `follow_path`를 바로 부른다.
 - AMCL은 1 cm 지도(`map_fine`), costmap은 5 cm 지도(`map`)를 읽는다(R15).
 - local costmap은 0.025 m이고 `always_send_full_costmap: true`다. `pinky_fsm`이 `local_costmap/costmap`으로 BLOCKED를 판단한다.
 - 버전 2를 막지 않으려고 둔 것(안내 3절): planner_server(`compute_path_to_pose`, `is_path_valid`), 전역 costmap의 라이다 층, behavior_server의 BackUp(어느 BT도 부르지 않음), controller의 `speed_limit` 토픽.
