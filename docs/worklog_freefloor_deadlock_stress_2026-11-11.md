@@ -70,7 +70,12 @@ broken(불변식 위반)은 고치기 전 swap에서 0. 고친 뒤 캠페인이 
   결과가 같다는 것은 코드 읽기로만 확인했고 v4/v5/v6, digest, 대기 자리 테스트와 Codex 리뷰는
   **못 돌렸다**(그 작업자 보고). 그 시험 전에는 합치지 말 것.
 - 우측통행 통로 판정 m 기준(할 일 1): 작업자 worktree `.claude/worktrees/agent-aca6c322efa5adefe`,
-  브랜치 `fix/keep-right-meters`(f98dae9에서). 결과는 그 작업자의 보고를 볼 것.
+  브랜치 `fix/keep-right-meters`(f98dae9에서), 커밋 f3652ee. `PASS_MAX_CELLS = 10`을 `PASS_MAX_M = 0.30`으로
+  바꿔 북쪽 통로가 통로로 잡힌다(3 cm 칸은 그대로 10칸, 2 cm 칸은 15칸). 그래도 **나란히 지나가기는
+  안 된다**(작업자 보고, 이 문서 작성자는 다시 재지 않음): 북쪽 통로 가운데에서 중심이 설 수 있는 폭이
+  0.20 m라 두 몸 잠금 원(반지름 0.09 m)이 가운데 칸을 함께 쥔다. 잠금 폭·지도 여유를 바꾸는 정책
+  결정이 필요하다. 새 테스트 `test_floor_keep_right_v6.py`: 4 passed, 1 xfailed(strict, 나란히 지나가기).
+  arena_v5의 `test_floor_keep_right.py` 20개, digest, 스트레스는 고친 뒤 **못 돌렸다**.
 
 ## 남은 것, 돌리지 않은 것
 
