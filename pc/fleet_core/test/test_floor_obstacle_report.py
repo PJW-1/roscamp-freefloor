@@ -201,9 +201,10 @@ def test_a_mark_never_takes_cells_under_a_robot(over):
         assert not _marked_on(tr, x, y, body), "the mark took cells under the robot ahead"
 
 
-def test_progress_does_not_jump_past_a_fold_onto_the_way_back():
+def test_the_cells_around_a_fold_stay_held_when_a_thrown_report_puts_progress_past_it():
     """되접히는 길(출고 접근선 위 끝에서 돌아 내려옴)에서 튄 보고가 진행점을 꼭짓점 너머 돌아오는
-    구간으로 넘기면 꼭짓점 둘레 칸을 놓는다(헤드리스 씨앗 3의 불변식 위반)."""
+    구간으로 넘겨도 꼭짓점 둘레 칸을 놓지 않는다(헤드리스 씨앗 3의 불변식 위반). 진행점 자체는
+    막지 않는다: 막으면 꼭짓점에 정확히 닿지 않는 로봇의 잠금이 늘지 않았다(arena_v5 주문 16건)."""
     world = v6([], noise=0.0)
     for _ in range(5):
         world.step()
@@ -213,11 +214,17 @@ def test_progress_does_not_jump_past_a_fold_onto_the_way_back():
     tr._legs["pinky1"] = leg = _Leg(route, (1.85, 0.50))
     leg.s, leg.s_lock = 0.2, route.length
     leg.s_sent = route.length
+    around = tr._body_cells(1.85, 0.67)
+    assert tr.zones.acquire_all("pinky1", around | tr._lock_cells(route, 0.0, route.length))
     tr.on_robot_state("pinky1", *route.at(0.2), 0.0, "MOVING")
     tr._follow(m)
-    tr.on_robot_state("pinky1", 1.85, 0.60, 0.0, "MOVING")  # 돌아오는 구간 위로 튄 보고
-    tr._follow(m)
-    assert leg.s <= route.cum[1] + 1e-9
+    for _ in range(6):  # 돌아오는 구간 위로 튄 보고가 이어져도
+        world.t += 0.1
+        tr.on_robot_state("pinky1", 1.85, 0.56, 0.0, "MOVING")
+        tr._follow(m)
+        tr._release_cells(m)
+    assert leg.s > route.cum[1]  # 진행점은 꼭짓점을 넘었다
+    assert around <= tr.zones.held_set("pinky1")
 
 
 # ---- 5. arena_v6 물체 셋 일정, 세 로봇 ----------------------------------------------------

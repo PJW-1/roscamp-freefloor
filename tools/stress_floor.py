@@ -14,9 +14,11 @@
 있는 것이다. 도크 지점(고정 선으로만 들어간다)과 주차 자리(관제가 줄을 당겨 세운다)는 뺀다. 목표에 한 번
 닿으면 닿은 것으로 친다: 그 뒤 관제가 로봇을 주차 자리로 보낸다.
 
-한 판은 모두 목표에 닿거나 --limit 초가 지나면 끝난다. 줄마다 결과:
-  ok        모두 닿았다
+한 판은 모두 목표에 닿거나 --limit 초가 지나면 끝난다(목표 0.05 m 안에 한 번 들어오면 닿은 것이다.
+그 뒤의 주차 이동은 보지 않는다). 줄마다 결과:
+  ok        모두 닿았고 못 푼 교착과 격리가 없었다
   stuck     시간 안에 못 닿았다(누가 못 닿았는지 left에 적는다)
+  unresolved  모두 닿았지만 그사이 못 푼 교착(DEADLOCK_UNRESOLVED)이나 격리(ROBOT_ISOLATED)가 있었다
   broken    칸 불변식이 깨졌다(FloorWorld의 검사: 몸이 쥔 칸 밖, 두 로봇이 닿음 등). error에 내용
 사건 수(교착 감지, 풀지 못한 교착, 비켜 서기, 길 없음, 격리)와 가장 오래 선 시간, 최소 간격도 적는다.
 """
@@ -55,7 +57,7 @@ class Bench:
     def __init__(self, map_name: str, overrides: dict, noise: float):
         self.lanes = load_lane_map(REPO / "sim" / "fake_robots" / "maps" / f"{map_name}.yaml")
         self.floor = floor_map_for(self.lanes)
-        self.params = replace(load_params(), traffic_mode="freefloor", **LOCKS, **overrides)
+        self.params = replace(load_params(), traffic_mode="freefloor", **{**LOCKS, **overrides})
         self.noise = noise
         docks = {station.dock for station in self.lanes.stations.values()}
         self.parking = list(self.lanes.parking)
@@ -116,6 +118,8 @@ class Bench:
             for code in COUNTED:
                 row[code] = counts.get(code, 0)
             row["t_s"] = round(world.t, 1)
+            if row["result"] == "ok" and (row["DEADLOCK_UNRESOLVED"] or row["ROBOT_ISOLATED"]):
+                row["result"] = "unresolved"  # 닿기는 했지만 못 푼 교착이나 격리가 있었다
             if math.isfinite(world.min_gap):
                 row["min_gap_m"] = round(world.min_gap, 3)
         return row

@@ -182,6 +182,7 @@ class _Leg:
     no_yield: tuple = ()  # 너무 오래 기다려 이 다리에서는 더 비켜 주지 않는 로봇들
     short_decided: bool = False  # 지름길을 탈지 골랐다(다리마다 한 번)
     halt_on: Route | None = None  # 마주 오는 로봇에 막혀 잠금 끝 전에 선 경로(잠금이 늘면 지운다)
+    halt_lock: float = 0.0  # 그때의 잠금 끝: 어디서든 잠금이 이보다 늘면 더는 선 것이 아니다
 
 
 @dataclass
@@ -285,6 +286,7 @@ class FloorController(TrafficController):
         # robot -> cell -> reports in a row beyond the body while at rest (kept apart from
         # m.outside, which counts beyond release_distance_m)
         self._rest_outside: dict[str, dict[str, int]] = {name: {} for name in robots}
+        self._deadlock_fast = False  # 새 순환이 마주 달리는 둘이다: 유예 없이 한 번 비켜 서 본다
         self._wp_cell: dict = {}
         self.metrics = {"slowdowns": 0, "replans": 0, "sidesteps": 0, "no_path": 0,
                         "pre_admits": 0, "shortcuts": 0}
@@ -1002,11 +1004,9 @@ class FloorController(TrafficController):
         if not (seen and seen[0] == (m.last_seen, m.x, m.y) and seen[1] is leg.route):
             seen = leg.followed = ((m.last_seen, m.x, m.y), leg.route, leg.s)
         ahead = min(max(leg.s, leg.s_sent), max(leg.s, seen[2] + FOLLOW_AHEAD_M))
-        # 되접히는 꼭짓점(90°보다 꺾임)은 넘겨 투영하지 않는다: 돌아오는 구간이 가까워 튄 보고가
-        # 진행점을 꼭짓점 너머로 넘기면 꼭짓점 둘레 칸을 놓는다. 꼭짓점에 닿으면 넘어간다
-        fold = next((f for f in self._folds(leg.route) if f > leg.s + 1e-9), None)
-        if fold is not None:
-            ahead = min(ahead, fold)
+        # 되접히는 꼭짓점(90°보다 꺾임)에서는 돌아오는 구간이 가까워 튄 보고가 진행점을 꼭짓점 너머로
+        # 넘길 수 있다. 진행점은 막지 않고(막으면 꼭짓점에 정확히 닿지 않는 로봇의 잠금이 늘지
+        # 않는다) 방금 지난 꼭짓점의 둘레 칸을 놓지 않는다(_release_cells)
         s, _ = leg.route.project(m.x, m.y, leg.s, ahead)
         leg.s = max(leg.s, s)
         if self._back_on:
@@ -1046,6 +1046,11 @@ class FloorController(TrafficController):
             for s0, s1 in self._box_spans(leg.route):
                 if s0 - 1e-9 <= leg.s < s1 - 1e-9 <= leg.s_lock:
                     keep |= self._lock_cells(leg.route, s0, s1)
+        if leg and leg.route:
+            # 방금 지난 되접히는 꼭짓점의 둘레: 진행점이 넘어간 뒤에도 로봇이 아직 거기서 돌 수 있다
+            for f in self._folds(leg.route):
+                if leg.s - FOLLOW_AHEAD_M <= f <= leg.s:
+                    keep |= self._body_cells(*leg.route.at(f))
         if self._back:
             keep |= self._back_keep(m, leg)
         for active in self._active[m.name].values():
@@ -2078,14 +2083,21 @@ class FloorController(TrafficController):
         if grew:
             leg.halt_on = None
             return
-        if (leg.halt_on is leg.route or m.goal is None or m.goal.kind != MOVE
-                or leg.route.fixed_at(leg.s) is not None):
+        if (self._halted(leg) or m.goal is None or m.goal.kind != MOVE
+                or leg.route.fixed_at(leg.s) is not None
+                or (self._passes and m.name in self._passes)):  # 나란히 지나는 중: 제 줄로 간다
             return
         for other in sorted(self._blockers(m.name)):
             if other in self._missions and self._facing(m.name, other, moving=False):
                 self._cancel_goal(m)
-                leg.halt_on = leg.route
+                leg.halt_on, leg.halt_lock = leg.route, leg.s_lock
                 return
+
+    @staticmethod
+    def _halted(leg: _Leg) -> bool:
+        """마주 오는 로봇 앞에 일찍 선 채다: 그 경로 그대로이고 잠금이 그때보다 늘지 않았다.
+        잠금은 접근선 한도에 닿는 길에서도 늘 수 있어(_halt_head_on을 거치지 않는다) 여기서 본다."""
+        return leg.halt_on is leg.route and leg.s_lock <= leg.halt_lock + 1e-9
 
     def _at_stop(self, m: _Mission, leg: _Leg, cap: float) -> bool:
         """설 자리로 가는 MoveTo가 끝났고 설 자리 floor_extend_step_m 안이다."""
@@ -2095,7 +2107,7 @@ class FloorController(TrafficController):
         """잠금이 floor_replan_s 동안 못 늘고 앞이 짧으면 남을 피해 다시 계획한다."""
         now = self._clock()
         route = leg.route
-        short = leg.s_lock - leg.s < self.params.floor_extend_step_m or leg.halt_on is leg.route
+        short = leg.s_lock - leg.s < self.params.floor_extend_step_m or self._halted(leg)
         if grew or not short or leg.s_lock >= route.length - AT_END_M:
             leg.stuck_since = None
             leg.no_way_since = None
@@ -2201,19 +2213,25 @@ class FloorController(TrafficController):
             # free-floor robots meet head-on in narrow aisles and step aside: a warning here;
             # one that cannot be resolved is still an error (DEADLOCK_UNRESOLVED)
             self._event("WARN", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
-            if self._head_on(cycle):
-                # 마주 달리는 둘은 기다려도 풀리지 않고, 유예 동안 코앞까지 다가가면 돌 자리도
-                # 없어진다: 유예 없이 다음 주기에 비켜 선다
-                self._deadlock_since = now - self.params.deadlock_grace_s
+            # 마주 달리는 둘은 기다려도 풀리지 않고, 유예 동안 코앞까지 다가가면 돌 자리도
+            # 없어진다: 다음 주기에 유예 없이 비켜 서 본다
+            self._deadlock_fast = self._head_on(cycle)
             return frozenset()
+        # lowest priority first, as choose_retreat; one that cannot step aside (on a fixed
+        # line, docking) passes the turn to the next
+        # 접근선 차례를 기다리는 로봇이 먼저 비킨다: 선을 쥔 로봇이 나가야 선이 빈다
+        turns = sorted(cycle, key=lambda name: (name not in line_waits,
+                                                self._priority(name), name))
+        if not self._deadlock_acted and self._deadlock_fast:
+            # 지금 순환이 아직 마주 달리는 둘일 때만. 비켜 서지 못하면 못 풀었다고 하지 않고
+            # 유예를 그대로 기다린다(그사이 저절로 풀릴 수 있다)
+            self._deadlock_fast = False
+            if self._head_on(cycle) and any(
+                    self._sidestep(self._missions[name], cycle) for name in turns):
+                self._deadlock_acted = True
         if not self._deadlock_acted and now - self._deadlock_since >= \
                 self.params.deadlock_grace_s:
             self._deadlock_acted = True
-            # lowest priority first, as choose_retreat; one that cannot step aside (on a fixed
-            # line, docking) passes the turn to the next
-            # 접근선 차례를 기다리는 로봇이 먼저 비킨다: 선을 쥔 로봇이 나가야 선이 빈다
-            turns = sorted(cycle, key=lambda name: (name not in line_waits,
-                                                    self._priority(name), name))
             if not any(self._sidestep(self._missions[name], cycle) for name in turns):
                 robot = choose_retreat(cycle, self._priority)
                 self._event("ERROR", "DEADLOCK_UNRESOLVED",
@@ -2255,7 +2273,7 @@ class FloorController(TrafficController):
             leg, m = self._legs.get(name), self._missions[name]
             if (leg is None or leg.route is None or leg.done or leg.waiting
                     or leg.resume is not None or leg.s >= leg.route.length - 0.02
-                    or (moving and m.goal is None and leg.halt_on is not leg.route)):
+                    or (moving and m.goal is None and not self._halted(leg))):
                 return False
             p, q = leg.route.at(leg.s), leg.route.at(min(leg.route.length, leg.s + 0.05))
             d = math.dist(p, q)
@@ -2447,7 +2465,7 @@ class FloorController(TrafficController):
         end = leg.s_lock
         final = end >= route.length - AT_END_M
         if m.goal is None:
-            if leg.halt_on is leg.route:
+            if self._halted(leg):
                 return  # 마주 오는 로봇 앞에서 일찍 섰다: 잠금이 늘 때까지 보내지 않는다
             if not self._settled(m):
                 return  # 첫 출발: 보고 자리가 가라앉을 때까지 기다린다
