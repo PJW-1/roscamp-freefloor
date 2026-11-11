@@ -34,3 +34,24 @@ def test_the_robot_that_steps_aside_stands_clear_of_the_way_the_other_takes():
     row = swap("SC", "SM")
     assert row["FLOOR_SIDESTEP"] >= 1, row
     assert row["result"] == "ok" and row["longest_stop_s"] < 30.0, row
+
+
+# 62c82e6 뒤에도 끝나지 않던 쌍(2026-11-11 밤 스트레스). 둘이 잠금 끝까지 달려 중심 0.18~0.2 m로 붙은
+# 뒤에야 순환이 보였고, 그때는 제자리에서 돌 원도 잠글 수 없어 비켜 서지 못했다
+CLOSE_UP = [("NA", "QO"), ("MC", "SE"), ("NC", "QO"), ("SE", "WS")]
+CLOSE_UP_KEEP_RIGHT = [("NA", "QO"), ("NC", "QO"), ("QO", "SC")]
+BENCH_KR = stress_floor.Bench("arena_v6", {"floor_keep_right": True}, 0.03)
+
+
+@pytest.mark.parametrize("pair", CLOSE_UP)
+def test_robots_that_would_end_nose_to_nose_stop_early_and_both_arrive(pair):
+    row = swap(*pair)
+    assert row["result"] == "ok", row
+    assert row["DEADLOCK_UNRESOLVED"] == 0 and row["ROBOT_ISOLATED"] == 0, row
+
+
+@pytest.mark.parametrize("pair", CLOSE_UP_KEEP_RIGHT)
+def test_the_same_with_keep_right(pair):
+    row = swap(*pair, bench=BENCH_KR)
+    assert row["result"] == "ok", row
+    assert row["DEADLOCK_UNRESOLVED"] == 0 and row["ROBOT_ISOLATED"] == 0, row
