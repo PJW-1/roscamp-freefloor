@@ -15,6 +15,11 @@ narrow_lines에 적은 고정 선은 clear 칸이 없는 좁은 틈(두 팔 사�
 shortcuts(있으면) {지름길: 선}: 같은 도크로 가는 선 대신 탈 수 있는 짧은 선. 시작과 끝이
 그 선과 같고 사이에서 갈라졌다 다시 합친다. 둘 다 rolling_lines다. 로봇은 그 선으로 출발해
 갈림목 앞에서 고른다(관제).
+passages(있으면) {이름: {points: [[x, y], ...], line: bool}}: 양방향 통로. 가운데 선(점 순서는 방향
+표시의 +쪽일 뿐)과, 몸이 그 선을 쓸고 가는 칸(통로 칸, 관제가 정한다). line: true 통로는 로봇 중심이 설
+칸이 (거의) 없어 가운데 선을 탄다: 선의 모든 점이 좁은 선처럼 벽에서 반지름 + wall_margin_m 이상이고 양
+끝은 clear다. 계획기는 양 끝 칸을 잇는 길로 양쪽 방향 모두 지난다. 그 선 밑 clear 아닌 칸이
+passage_floor다. line이 아닌 통로는 가운데 선이 clear 칸 위다(A*가 칸 위로 지난다).
 robot_half_width_m(있으면): 차동구동 로봇은 옆으로 가지 않으니 곧게 달리는 동안은 반폭 + cell_margin_m만
 잠그고, 제자리에서 돌 수 있는 곳(출발점, 끝점, 크게 꺾이는 점 앞)만 반지름 + cell_margin_m 원으로 잠근다.
 """
@@ -31,6 +36,16 @@ DEFAULT_FLOOR = Path(__file__).parents[2] / "data" / "floor_map.yaml"
 
 class FloorMapError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class Passage:
+    name: str
+    points: tuple  # ((x, y), ...): 첫 점에서 끝 점 쪽이 +방향
+    line: bool = False  # 가운데 선을 탄다(clear 칸이 없는 통로)
+
+    def length(self) -> float:
+        return sum(math.dist(a, b) for a, b in zip(self.points, self.points[1:], strict=False))
 
 
 @dataclass(frozen=True)
@@ -120,6 +135,7 @@ class FloorMap:
         self.shortcuts = self._read_shortcuts({} if shortcuts is None else shortcuts)
         self.shortcut_parts = {name: self._shortcut_parts(name, base)
                                for name, base in self.shortcuts.items()}
+        self.passages = self._read_passages(data.get("passages"))
         self.robot_half_width_m = self._read_half_width(data.get("robot_half_width_m"))
         # beside a straight run only: robot_half_width_m + side_margin_m (default cell_margin_m)
         self.side_margin_m = self._read_side_margin(data.get("side_margin_m", self.cell_margin_m))
@@ -137,6 +153,11 @@ class FloorMap:
             self.cell_of(x, y) for x, y in self._samples(self.fixed_lines[name], self.px_m / 4)
         ) - self.clear for name in sorted(self.narrow_lines)}
         self.line_floor = frozenset().union(*self.line_floor_of.values())
+        # line 통로 가운데 선 밑의 clear 아닌 칸: 그 선으로만 지난다
+        self.passage_floor_of = {name: frozenset(
+            self.cell_of(x, y) for x, y in self._samples(p, self.px_m / 4)
+        ) - self.clear for name, p in sorted(self.passages.items()) if p.line}
+        self.passage_floor = frozenset().union(*self.passage_floor_of.values())
         self._check()
 
     def without_shortcuts(self) -> "FloorMap":
@@ -225,6 +246,33 @@ class FloorMap:
                 if math.dist(pose, (ax + u * dx, ay + u * dy)) <= 1e-6:
                     return True
         return False
+
+    def _read_passages(self, value) -> dict:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise FloorMapError(f"passages {value!r} must map names to passages")
+        found = {}
+        for name, raw in value.items():
+            if not isinstance(name, str) or not isinstance(raw, dict):
+                raise FloorMapError(f"passages: {name!r} must name a {{points, line}} mapping")
+            if name in self.fixed_lines:
+                raise FloorMapError(f"passage {name} is a fixed line name too")
+            extra = sorted(set(raw) - {"points", "line"})
+            if extra:
+                raise FloorMapError(f"passage {name}: unknown keys {extra}")
+            line = raw.get("line", False)
+            if not isinstance(line, bool):
+                raise FloorMapError(f"passage {name}: line {line!r} must be true or false")
+            pts = raw.get("points")
+            if (not isinstance(pts, list) or len(pts) < 2
+                    or any(not isinstance(p, list) or len(p) != 2 for p in pts)):
+                raise FloorMapError(f"passage {name} needs two points or more [[x, y], ...]")
+            points = tuple(tuple(map(float, p)) for p in pts)
+            if any(math.dist(a, b) < 1e-9 for a, b in zip(points, points[1:], strict=False)):
+                raise FloorMapError(f"passage {name} has two points in one place")
+            found[name] = Passage(name, points, line)
+        return found
 
     def _read_rolling(self, names) -> frozenset:
         if not isinstance(names, list) or any(n not in self.fixed_lines for n in names
@@ -326,6 +374,23 @@ class FloorMap:
                 if self.cell_of(x, y) not in self.clear:
                     raise FloorMapError(f"fixed line {line.name} leaves clear floor at "
                                         f"({x:.2f}, {y:.2f})")
+        for p in self.passages.values():
+            if not p.line:
+                for x, y in self._samples(p, self.cell_m / 2):
+                    if self.cell_of(x, y) not in self.clear:
+                        raise FloorMapError(f"passage {p.name} leaves clear floor at "
+                                            f"({x:.2f}, {y:.2f}) (line: true rides its line)")
+                continue
+            step = self.px_m / 4  # 좁은 선과 같은 검사
+            need = wall + step / 2
+            for x, y in self._samples(p, step):
+                if (self.cell_of(x, y) not in self.free
+                        or self._gap_to_wall(x, y, need) < need - 1e-9):
+                    raise FloorMapError(f"passage {p.name} is nearer than {wall:.2f} m to a wall "
+                                        f"at ({x:.2f}, {y:.2f})")
+            for end in (p.points[0], p.points[-1]):
+                if self.cell_of(*end) not in self.clear:
+                    raise FloorMapError(f"passage {p.name}: the end {end} is not on clear floor")
 
     def _cell_free(self, cell) -> bool:
         i, j = cell
