@@ -138,7 +138,7 @@ RETREAT_TRIES = 2  # 통로: Retreat가 잇달아 이만큼 실패하면 그 자
 # 선은 꺾인 길에서 칸 여유(cell_margin_m 0.03 m)만큼도 벗어나지 않는다
 STALE_TRAIL_M = 0.05
 # 우측통행(floor_keep_right, 제안)
-PASS_MAX_CELLS = 10  # 수직으로 이어진 빈 칸이 이만큼 이하인 곳만 통로로 본다
+PASS_MAX_M = 0.30  # 수직으로 이어진 빈 칸 폭(칸 수 x 칸 크기)이 이만큼 이하인 곳만 통로로 본다
 PASS_MEET_M = 0.5  # 두 길을 계약 속도로 같이 달릴 때 이만큼 가까워지는 동안을 만나는 때로 본다
 PASS_ALIGN = 0.85  # 통로 안 진행 방향과 통로 축의 코사인이 이보다 작으면 통로 안에서 돈다(약 32도)
 PASS_EXTRA_M = 0.4  # 줄로 가는 길이 이만큼까지 길어도 나란히 지난다
@@ -346,7 +346,9 @@ class FloorController(TrafficController):
         self._passages = []
         self._passage_of: tuple[dict, dict] = ({}, {})  # 축마다 칸 (i, j) -> 통로 번호
         if self._keep_right:
-            self._passages = passages(self.floor, self._near, PASS_MAX_CELLS)
+            # 길이를 칸 수로(3 cm 칸 10, 2 cm 칸 15). 나눗셈 오차로 한 칸 덜 세지 않게
+            max_cells = int(PASS_MAX_M / self.floor.cell_m + 1e-6)
+            self._passages = passages(self.floor, self._near, max_cells)
             for k, passage in enumerate(self._passages):
                 for c in passage.cells:
                     self._passage_of[passage.axis][c] = k
