@@ -1992,6 +1992,10 @@ class FloorController(TrafficController):
             # free-floor robots meet head-on in narrow aisles and step aside: a warning here;
             # one that cannot be resolved is still an error (DEADLOCK_UNRESOLVED)
             self._event("WARN", "DEADLOCK_DETECTED", f"wait cycle {cycle}")
+            if self._head_on(cycle):
+                # 마주 달리는 둘은 기다려도 풀리지 않고, 유예 동안 코앞까지 다가가면 돌 자리도
+                # 없어진다: 유예 없이 다음 주기에 비켜 선다
+                self._deadlock_since = now - self.params.deadlock_grace_s
             return frozenset()
         if not self._deadlock_acted and now - self._deadlock_since >= \
                 self.params.deadlock_grace_s:
@@ -2025,6 +2029,28 @@ class FloorController(TrafficController):
                 self._deadlock_since = now
                 self._deadlock_acted = False
         return frozenset()
+
+    def _head_on(self, cycle) -> bool:
+        """순환이 서로 마주 달리는 두 로봇이다: 둘 다 길을 가는 중이고, 진행 방향이 120° 넘게
+        반대이고, 서로를 향한다."""
+        if len(set(cycle)) != 2:
+            return False
+        a, b = sorted(set(cycle))
+        ways = {}
+        for name in (a, b):
+            leg, m = self._legs.get(name), self._missions[name]
+            if (leg is None or leg.route is None or leg.done or leg.waiting
+                    or leg.resume is not None or m.goal is None or leg.s >= leg.route.length - 0.02):
+                return False
+            p, q = leg.route.at(leg.s), leg.route.at(min(leg.route.length, leg.s + 0.05))
+            d = math.dist(p, q)
+            if d < 1e-6:
+                return False
+            ways[name] = (p, ((q[0] - p[0]) / d, (q[1] - p[1]) / d))
+        (pa, da), (pb, db) = ways[a], ways[b]
+        to_b = (pb[0] - pa[0], pb[1] - pa[1])
+        return (da[0] * db[0] + da[1] * db[1] < -0.5
+                and da[0] * to_b[0] + da[1] * to_b[1] > 0 > db[0] * to_b[0] + db[1] * to_b[1])
 
     def _line_waits(self) -> dict[str, set[str]]:
         """대기 자리에 선(또는 설 곳이 없어 선) 접근선 대기 로봇 -> 그 선을 바쁘게 하는 로봇: 선 칸을
@@ -2070,11 +2096,10 @@ class FloorController(TrafficController):
                 wanted |= swept_cells(self.floor, ahead, self._body)
         blocked = others | wanted
         here = self._here(m)
-        avoid_ids = self._inflate(others) | wanted
-        if leg.waiting and leg.done:
-            # 대기 자리에 선 로봇은 남의 길 위에 서 있을 수 있다: 그 길을 건너 비켜도 된다(남은 서서
-            # 기다리고, 건너는 칸은 잠가서 지난다). 설 자리만 남의 길 밖이다
-            avoid_ids = self._inflate(others)
+        # 설 자리만 남의 길(wanted) 밖이다. 가는 길은 남이 아직 쥐지 않은 그 길을 건너도 된다: 순환에
+        # 든 로봇은 서서 기다리고, 건너는 칸은 잠가서 지난다. 마주 오는 상대의 길은 바로 이 자리를
+        # 지나므로, 그 길을 피해 계획하면 출발 칸 둘레가 모두 막혀 넓은 바닥에서도 길이 없었다
+        avoid_ids = self._inflate(others)
         spots = sorted((c for c in self.floor.clear
                         if 0.25 <= math.dist(here, self.floor.centre(c)) <= SIDESTEP_REACH_M),
                        key=lambda c: math.dist(here, self.floor.centre(c)))
