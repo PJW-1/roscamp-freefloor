@@ -9,9 +9,13 @@ origin: [-0.15, -0.15, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.25
-# Robot, cells and margins as floor_map_arena_v5.yaml. The passage north of the long shelves is
-# eight clear cells wide (0.42 m), the others one to three.
-cell_m: 0.03
+# Robot and margins as floor_map_arena_v5.yaml, cells of 0.02 m (0.03 there): the user asked for
+# less to be locked around a robot (2026-11-11), and smaller cells round the lock up by less.
+# Headless on this map, median width of the lock across a robot on a straight run / where it
+# may turn: 0.24 / 0.27 m with 0.03 m cells, 0.22 / 0.26 m with 0.02 m. The margins stay:
+# cell_margin_m 0.02 failed a Gazebo run on two early releases. The passage north of the long
+# shelves is the widest (0.42 m), the west passage 0.37 m, the others 0.23 to 0.28 m.
+cell_m: 0.02
 robot_radius_m: 0.08
 cell_margin_m: 0.03
 robot_half_width_m: 0.06
@@ -26,16 +30,18 @@ parking:
   - {id: P-1, x: 0.73, y: 0.11}
   - {id: P-2, x: 0.43, y: 0.11}
   - {id: P-3, x: 0.14, y: 0.11}
-# The only lines are the last 0.17 m into each dock (the direction a robot comes in by; the
-# user asked for them to be shorter than the 0.23 m of v5, and arrival_tolerance_m is 0.15). WORK is
+# The only lines are the last 0.18 m into each dock (the direction a robot comes in by; the
+# user asked for them to be shorter than the 0.23 m of v5, and arrival_tolerance_m is 0.15).
+# Not 0.17: a lane leaving a zone must be longer than release_distance_m (0.17 on this arena),
+# and a 0.17 m line passed that check by rounding only. WORK is
 # entered from the south as on the drawing. OUTBOUND is entered from the north, not from the
 # south as drawn: with free paths a robot coming by the north passage would drive past the dock
 # down the 0.26 m east strip and turn round to come in. So the robots go round clockwise: north
 # passage east, down through OUTBOUND, a south or the middle passage west, parking, up the west
 # passage into WORK. Both docks are driven through, none is a dead end.
 fixed_lines:
-  work_in: [[0.20, 0.71], [0.20, 0.88]]
-  outbound_in: [[1.85, 0.67], [1.85, 0.50]]
+  work_in: [[0.20, 0.70], [0.20, 0.88]]
+  outbound_in: [[1.85, 0.68], [1.85, 0.50]]
 # Where a robot waits for its turn on a dock line (first free place in this order). For WORK the
 # parking spots, nearest first. For OUTBOUND two places along the north wall in the wide passage.
 wait_spots:
