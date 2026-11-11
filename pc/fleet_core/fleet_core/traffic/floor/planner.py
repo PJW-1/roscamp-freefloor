@@ -236,10 +236,15 @@ class FloorPlanner:
             return None  # in the gap of a narrow line: only that line leads out (leg)
         if a not in floor.clear:
             # stopped a few cm into a wall margin: one straight step back onto clear floor first
+            dead: set = set()  # 목표에 닿지 못한 걸음과 이어진 빈 칸
             for step in self._steps_onto_clear(start, avoid):
+                cell = floor.cell_of(*step)
+                if cell in dead:
+                    continue  # 같은 바닥 조각에서 이미 찾았다: 다시 찾아도 길이 없다
                 rest = self.plan(step, goal, avoid, penalty, s0 + math.dist(start, step), wait)
                 if rest is not None:
                     return [tuple(start), *rest]
+                dead |= self._piece(cell, (floor.clear - avoid) | {b})
             return None
         allowed = (floor.clear - avoid) | {a, b}
         if math.dist(start, goal) < 1e-9:
@@ -250,6 +255,22 @@ class FloorPlanner:
         raw = [tuple(start)] + [floor.centre(c) for c in cells[1:-1]] + [tuple(goal)]
         short = self.shortcut(raw, allowed)
         return self.round_corners(short, allowed)
+
+    @staticmethod
+    def _piece(cell, allowed) -> set:
+        """cell에서 allowed 칸만 밟아 닿는 칸들(astar와 같은 이웃 규칙: 모서리를 가로지르지 않는다)."""
+        seen, todo = {cell}, [cell]
+        while todo:
+            i, j = todo.pop()
+            for di, dj in NEIGHBOURS:
+                nxt = (i + di, j + dj)
+                if nxt in seen or nxt not in allowed:
+                    continue
+                if di and dj and ((i + di, j) not in allowed or (i, j + dj) not in allowed):
+                    continue
+                seen.add(nxt)
+                todo.append(nxt)
+        return seen
 
     def _steps_onto_clear(self, start, avoid=frozenset()) -> list:
         """Centres of the clear cells within STEP_ONTO_CLEAR_M that a straight step over free

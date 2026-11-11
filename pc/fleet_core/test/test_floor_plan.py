@@ -494,3 +494,47 @@ def test_sampled_points_in_the_mouths_of_a_gap_have_a_step_that_keeps_off_the_wa
     assert found and not stuck
     assert max(nearer_a_wall(floor, start, step) for start, step in found) <= floor.cell_m / 2
 
+
+
+# 벽 여유 안에 선 로봇이 갈 수 없는 목적지를 계획할 때, 빈 칸으로 나가는 걸음마다 A*를 다시 돌렸다
+# (2 cm 칸의 arena_v6에서 한 번의 계획에 157번, 2.3 s: 핑키는 관제 신호가 1.5 s 끊기면 선다).
+# 서로 이어진 빈 칸에서 출발하면 결과가 같으므로 바닥 조각마다 한 번만 찾는다.
+
+class CountingPlanner(FloorPlanner):
+    def __init__(self, floor):
+        super().__init__(floor)
+        self.searches = 0
+
+    def astar(self, *args, **kwargs):
+        self.searches += 1
+        return super().astar(*args, **kwargs)
+
+
+def walled_goal(floor, goal):
+    b = floor.cell_of(*goal)
+    return frozenset({(b[0] + di, b[1] + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)} - {b})
+
+
+def test_an_unreachable_goal_is_searched_once_for_floor_that_hangs_together():
+    floor = box_floor()
+    start, goal = (1.0, 0.76), (1.6, 0.4)
+    planner = CountingPlanner(floor)
+    avoid = walled_goal(floor, goal)
+    assert len(planner._steps_onto_clear(start, avoid)) >= 3  # 걸음 후보가 여럿이다
+    assert planner.plan(start, goal, avoid=avoid) is None
+    assert planner.searches == 1
+
+
+def test_every_piece_of_floor_is_still_searched_when_the_goal_is_unreachable():
+    floor = box_floor()
+    start, goal = (1.0, 0.76), (1.6, 0.4)
+    dead_end = floor.centre((3, 3))
+    ring = {(3 + di, 3 + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)} - {(3, 3)}
+
+    class DeadEndFirst(CountingPlanner):
+        def _steps_onto_clear(self, start, avoid=frozenset()):
+            return [dead_end, *super()._steps_onto_clear(start, avoid)]
+
+    planner = DeadEndFirst(floor)
+    assert planner.plan(start, goal, avoid=frozenset(ring) | walled_goal(floor, goal)) is None
+    assert planner.searches == 2  # 갇힌 칸에서 한 번, 나머지 바닥에서 한 번
