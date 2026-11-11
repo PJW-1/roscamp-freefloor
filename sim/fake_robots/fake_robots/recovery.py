@@ -18,6 +18,7 @@ import math
 from dataclasses import dataclass
 
 from fake_robots.motion import path_gap
+from fake_robots.obstacle_report import obstacle_fields
 
 # 관제는 꼭짓점을 release_distance_m 지나면 뒤 구역을 놓는다(fleet_params, lane_map.conflict_pairs).
 # 그 꼭짓점에 다음 로봇이 설 수 있으므로 후진한 중심도 꼭짓점에서 0.2 + 0.03 m 앞에 둔다.
@@ -172,6 +173,19 @@ class ObstacleRecovery:
                     and gap < math.dist((x, y), (motion.x, motion.y)) - 1e-9):
                 return True
         return False
+
+    def obstacle_ahead(self, motion) -> tuple[float, float, float] | None:
+        """막힌 물체의 (x, y, 반지름). 서 있는 자리 앞이고, 후진해도 그 자리다. 모르면 None.
+
+        위치를 모르는 blocked 고장이라 반지름 0(관제 기본값)이다.
+        """
+        ends = [s for s in (self._hold, self._abort_s) if s is not None]
+        if not ends:
+            return None
+        route = [*motion.via, motion.target] if motion.target else [
+            (motion.x + math.cos(motion.yaw), motion.y + math.sin(motion.yaw))]
+        stop = max(0.0, min(ends) - motion.travelled)
+        return obstacle_fields((motion.x, motion.y), route, stop, self.p.robot_radius_m)
 
     def restart(self) -> None:
         """목표가 끝났거나 바뀌었다. 후진과 RECOVERING을 멈추고 시도 수는 둔다.

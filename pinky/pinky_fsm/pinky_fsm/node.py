@@ -45,6 +45,7 @@ from pinky_fsm.backup import BackUp, CancelBackUp, reason_of
 from pinky_fsm.backup_ros import BackUpRunner
 from pinky_fsm.contract import default_contract_path, load_contract, to_ros_qos
 from pinky_fsm.core import (
+    BLOCKED,
     RECOVERING,
     CancelNav,
     ClearCostmap,
@@ -54,7 +55,7 @@ from pinky_fsm.core import (
     PinkyFsm,
     SendPath,
 )
-from pinky_fsm.costmap import Grid, obstacle_on, to_frame
+from pinky_fsm.costmap import Grid, invert_frame, obstacle_location, to_frame
 from pinky_fsm.geometry import quaternion_yaw, yaw_quaternion
 
 FEEDBACK_PERIOD_S = 0.2
@@ -147,6 +148,7 @@ class PinkyFsmNode(Node):
         self._speed = (0.0, 0.0)
         self._costmap: tuple[Grid, str] | None = None  # (격자, 틀). 한 번에 바꿔 짝이 맞게 둔다
         self._battery = UNKNOWN_BATTERY
+        self._seen_obstacle: tuple[float, float, float] | None = None  # map 틀 (x, y, 반지름)
 
         self._tf = Buffer()
         self._tf_listener = TransformListener(self._tf, self)
@@ -252,14 +254,24 @@ class PinkyFsmNode(Node):
         if costmap is None or not points:
             return False
         grid, frame = costmap
+        back = None  # 격자 틀 → map 틀
         if frame and frame != self._map_frame:
             try:
                 tf = self._tf.lookup_transform(frame, self._map_frame, Time())
             except TransformException:
                 return False
             q, p = tf.transform.rotation, tf.transform.translation
-            points = to_frame(points, (p.x, p.y, quaternion_yaw(q.x, q.y, q.z, q.w)))
-        return obstacle_on(grid, points)
+            pose = (p.x, p.y, quaternion_yaw(q.x, q.y, q.z, q.w))
+            points = to_frame(points, pose)
+            back = invert_frame(pose)
+        found = obstacle_location(grid, points)
+        if found is None:
+            return False
+        x, y, r = found
+        if back is not None:
+            [(x, y)] = to_frame([(x, y)], back)
+        self._seen_obstacle = (x, y, r)  # BLOCKED/RECOVERING 동안 보고하려고 마지막 값을 남긴다
+        return True
 
     # -- 액션 서버 --------------------------------------------------------------------------
 
@@ -496,6 +508,9 @@ class PinkyFsmNode(Node):
         with self._lock:
             state, goal = self._fsm.state(), self._fsm.current_goal()
             pose = self._pose()
+            if state not in (BLOCKED, RECOVERING):
+                self._seen_obstacle = None  # 멈춘 동안만 들고 있는다
+            seen = self._seen_obstacle
         msg = RobotState(robot_id=self.robot_id, battery=float(self._battery), state=state,
                          current_goal=goal)
         if pose is not None and state != RobotState.STATE_LOCALIZING:
@@ -503,6 +518,9 @@ class PinkyFsmNode(Node):
             msg.stamp = pose[3]  # 위치를 잰 시각(계약 2절)
         else:
             msg.stamp = self.get_clock().now().to_msg()
+        if seen is not None and state in (BLOCKED, RECOVERING):
+            msg.obstacle_seen = True
+            msg.obstacle_x, msg.obstacle_y, msg.obstacle_radius = (float(v) for v in seen)
         self._state_pub.publish(msg)
 
 
