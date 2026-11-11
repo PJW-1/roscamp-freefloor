@@ -632,14 +632,152 @@ def test_a_robot_far_before_the_fork_does_not_choose_yet():
     assert leg.in_line == "outbound_in" and not leg.short_decided
 
 
+# ---- the junction where the way out joins the middle passage --------------------------------
+
+
+def drive_on(traffic, name, step=0.03):
+    """name drives step m on along its route (no further than it was sent), the MoveTos it no
+    longer follows end, its result comes when it gets to the end of the last one, and it is
+    driven once."""
+    m, leg = traffic._missions[name], traffic._legs.get(name)
+    if leg is None or leg.route is None:
+        return
+    s = min(leg.s_sent, leg.s + step)
+    x, y = leg.route.at(s)
+    x2, y2 = leg.route.at(min(leg.route.length, s + 0.01))
+    moved(traffic, name, x, y, math.atan2(y2 - y, x2 - x), reports=3)
+    for goal_id in list(traffic._active[name]):
+        if m.goal is None or goal_id != m.goal.id:
+            traffic.on_move_result(name, goal_id, False, "CANCELED")
+    for _ in range(traffic.params.release_confirm_samples):
+        traffic._count_reports_outside(m)
+    traffic._release_cells(m)
+    if m.goal and leg.s >= leg.s_sent - 1e-6:
+        traffic.on_move_result(name, m.goal.id, True, "")
+    traffic._drive(m)
+
+
+def meet_at_the_junction(lead):
+    """a leaves the outbound dock to park and drives lead steps; then b sets off from the south
+    passage for the dock (up the middle passage) and both drive on, a step each in turn, until
+    both are through. Returns the traffic and, for every turn, the robots that held part of the
+    junction and the wait cycle."""
+    from fleet_core.traffic.deadlock import find_cycle, wait_graph
+    traffic = fleet({"a": DOCK, "b": (1.20, 0.125, math.pi)})
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "P-1")
+    for _ in range(lead):
+        drive_on(traffic, "a")
+    traffic._start_leg(traffic._missions["b"], "TO_OUTBOUND", "OUTBOUND", "O")
+    traffic._drive(traffic._missions["b"])
+    assert traffic._legs["b"].in_line == "outbound_in"  # a robot leaving the dock: no shortcut
+    box = traffic._body_cells(*MERGE)
+    turns = []
+    for _ in range(150):
+        for name in ("a", "b"):
+            drive_on(traffic, name)
+        inside = {name for name in "ab" if traffic.zones.held_set(name) & box}
+        turns.append((inside, find_cycle(wait_graph(traffic.zones)),
+                      {name: traffic._here(traffic._missions[name]) for name in "ab"}))
+        if "a" not in traffic._legs and "b" not in traffic._legs:
+            break
+    return traffic, turns
+
+
+@pytest.mark.parametrize("lead", range(16, 24))
+def test_only_one_robot_at_a_time_holds_the_junction_where_the_way_out_joins_the_way_in(lead):
+    """A robot leaving the dock turns north at (0.97, 0.445) into the middle passage, where a robot
+    to the dock comes up from the south. Both are on rolling lines. Rolled up to the junction from
+    both sides, each held part of the cells the other needed there: a wait cycle nobody could step
+    out of (headless runs, 3 robots, uneven work times: DEADLOCK_UNRESOLVED, an isolated robot,
+    the run timed out). The stretch whose cells touch the junction is taken whole or not at all."""
+    traffic, turns = meet_at_the_junction(lead)
+    assert all(cycle is None for _, cycle, _ in turns), next(
+        (k, c, here) for k, (_, c, here) in enumerate(turns) if c)
+    assert all(len(inside) <= 1 for inside, _, _ in turns)
+    assert "a" not in traffic._legs and traffic._missions["a"].phase == "PARKED"
+    assert traffic._missions["b"].phase == "DOCKING"
+
+
+def test_a_robot_going_north_stops_clear_of_the_junction_while_one_comes_out_of_the_gap():
+    traffic, turns = meet_at_the_junction(20)
+    assert all(cycle is None for _, cycle, _ in turns)
+    first = next(k for k, (inside, _, _) in enumerate(turns) if inside)
+    assert turns[first][0] == {"a"}
+    # b stood south of the junction while a was in it, its body clear of it
+    waited = [here["b"] for inside, _, here in turns[first:] if inside == {"a"}]
+    assert waited and all(y < MERGE[1] - 0.2 for _, y in waited)
+    assert "b" in set().union(*(inside for inside, _, _ in turns[first:]))  # and went on after
+
+
+def test_a_robot_coming_out_of_the_gap_stops_clear_of_the_junction_while_one_goes_north():
+    traffic, turns = meet_at_the_junction(17)
+    assert all(cycle is None for _, cycle, _ in turns)
+    first = next(k for k, (inside, _, _) in enumerate(turns) if inside)
+    assert turns[first][0] == {"b"}
+    waited = [here["a"] for inside, _, here in turns[first:] if inside == {"b"}]
+    assert waited and all(x < MERGE[0] - 0.2 for x, _ in waited)
+    assert "a" in set().union(*(inside for inside, _, _ in turns[first:]))
+
+
+def test_a_stop_inside_the_junction_does_not_end_a_lock_inside_it():
+    """A cap (a stop before a line) inside a box span whose start the lock has already reached:
+    no lock end inside the span is tried (Codex on e81fc79: it fell back to the end inside)."""
+    traffic = fleet({"b": (1.20, 0.125, math.pi)})
+    leg = heads_in(traffic, "b")
+    (s0, s1), = traffic._box_spans(leg.route)
+    leg.s, leg.s_lock = s0 - 0.05, s0
+    ends = traffic._candidates(leg, cap=(s0 + s1) / 2)
+    assert all(not s0 + 1e-9 < e < s1 - 1e-9 for e in ends), (s0, s1, ends)
+    assert traffic._candidates(leg) == [s1]  # without the cap: the whole span
+
+
+def test_a_robot_keeps_the_junction_until_it_is_through_it():
+    """The robot leaving turns on the spot at (0.97, 0.445). A noisy report north of the corner
+    had put its progress past it while its reports now lag 7 cm west: the cells of the corner
+    behind the progress were let go under the turning robot (headless runs, 3 robots, 16 orders
+    every 12 s, seeds 16 and 28: "on cells it does not hold" at the junction). The span is held
+    whole until the progress is through it."""
+    traffic = fleet({"a": DOCK})
+    traffic._start_leg(traffic._missions["a"], "TO_PARK", None, "P-1")
+    leg = traffic._legs["a"]
+    (s0, s1), = traffic._box_spans(leg.route)
+    corner, _ = leg.route.project(*MERGE)
+    while leg.s < corner + 0.04:
+        drive_on(traffic, "a")
+    assert leg.s_lock == pytest.approx(s1)
+    a = moved(traffic, "a", MERGE[0] - 0.066, MERGE[1] + 0.014, NORTH, reports=1)
+    traffic._active["a"].clear()  # nothing old to follow: only the leg keeps cells
+    for cell_id in traffic.zones.held_set("a"):
+        a.outside[cell_id] = 99
+    traffic._release_cells(a)
+    held = traffic.zones.held_set("a")
+    assert traffic._body_cells(*MERGE) <= held
+
+
+def test_the_junction_is_the_only_box_on_this_map():
+    """A box is the turn circle of a rolling line where another rolling line runs through the
+    turn and comes in from another side. Where the way in and the way out part at the top of the
+    middle passage both come from the south (no box); the shortcut's shared stretch is taken
+    whole already (no box of its own)."""
+    traffic = fleet({"a": DOCK})
+    assert traffic._boxes == [frozenset(traffic._body_cells(*MERGE))]
+
+
 # ---- runs ---------------------------------------------------------------------------------
 
 
-def run(tmp_path, monkeypatch, seed, robots, count, period_s, timeout_s, noise_m=0.03):
+def run(tmp_path, monkeypatch, seed, robots, count, period_s, timeout_s, noise_m=0.03,
+        work=None):
+    """work: (seconds per item, swap seconds) of the arms, the manager's ETA set to the same."""
+    data = scenario(robots, count, period_s, noise_m, timeout_s)
+    overrides = dict(LOCKS)
+    if work is not None:
+        item_s, swap_s = work
+        data["arm"].update(seconds_per_item=item_s, swap_seconds=swap_s)
+        overrides.update(eta_swap_s=swap_s, eta_fill_s_per_item=item_s, eta_fill_base_s=item_s)
     path = tmp_path / "arena_v4_run.yaml"
-    path.write_text(yaml.safe_dump(scenario(robots, count, period_s, noise_m, timeout_s)),
-                    encoding="utf-8")
-    monkeypatch.setattr(compare_floor, "OVERRIDES", dict(LOCKS))
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    monkeypatch.setattr(compare_floor, "OVERRIDES", overrides)
     row, world = compare_floor.run("arena_v4", str(path), seed, "freefloor")
     assert world is not None, row["error"]
     assert row["finished"], {k: row[k] for k in ("error", "end_s", "orders_shipped")}
@@ -661,6 +799,14 @@ def test_three_pinkys_ship_six_orders_when_every_report_is_exact(tmp_path, monke
 
 def test_three_pinkys_keep_up_when_orders_come_faster_than_they_ship(tmp_path, monkeypatch):
     run(tmp_path, monkeypatch, 1, THREE, 16, 15, 900)
+
+
+def test_three_pinkys_ship_when_the_one_leaving_meets_one_going_in_at_the_junction(
+        tmp_path, monkeypatch):
+    """Uneven work: 2 s an item, 20 s a swap, an order every 10 s. The robot coming out of the
+    gap and the one going up the middle passage met at the junction and each held part of it
+    (DEADLOCK_UNRESOLVED at about 117 s, an isolated robot, the run timed out)."""
+    run(tmp_path, monkeypatch, 1, THREE, 8, 10, 600, work=(2.0, 20.0))
 
 
 def test_two_pinkys_ship_six_orders(tmp_path, monkeypatch):
