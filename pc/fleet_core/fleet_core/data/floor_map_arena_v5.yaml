@@ -31,8 +31,9 @@ parking:
 # to go to before docking, only the direction a robot comes in by (the user, 2026-11-11). They
 # are longer than arrival_tolerance_m (0.15 m): with 0.14 m lines a robot driving past a dock was
 # taken to have arrived and docked the wrong way round (Gazebo, 2026-11-11). Each comes from the
-# open floor at 45 degrees to the walls, and no way to its start comes nearer to the dock than
-# 0.2 m: WORK from the north-west, OUTBOUND from the north-east. The start of the OUTBOUND line
+# open floor at 45 degrees to the walls: WORK from the north-west, OUTBOUND from the north-east,
+# so the usual ways to a line start keep 0.2 m or more from the dock. Nothing enforces this: a
+# robot planned again within arrival_tolerance_m of a dock still arrives without its line. The start of the OUTBOUND line
 # is as far from WORK through the south passage as through the way between the islands, and a
 # robot leaving OUTBOUND has about as far to the waiting spots by either passage: which way a
 # robot takes depends on where the others are (straight from the east every robot went the same

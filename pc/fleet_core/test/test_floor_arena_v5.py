@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from fleet_core.traffic.floor.cells import disk_cells
+from fleet_core.traffic.floor.cells import disk_cells, swept_cells
 from fleet_core.traffic.floor.floor_map import DEFAULT_FLOOR, floor_map_for
 from fleet_core.traffic.lane_map import load_lane_map
 
@@ -98,9 +98,9 @@ def test_two_robots_fit_side_by_side_past_the_islands():
     assert 7 * FLOOR.cell_m - 2 * side >= FLOOR.cell_m  # 두 띠 사이에 칸 하나가 남는다
 
 
-def test_the_narrowest_place_is_between_the_long_shelf_and_the_first_island():
-    """물체 4 선반의 모서리와 물체 1 사이 0.27 m: 빈 칸이 두 줄 이상이라 한 대가 지난다.
-    다른 곳은 빈 칸이 다섯 줄 이상이다."""
+def test_the_throat_between_the_long_shelf_and_the_first_island_has_two_clear_rows():
+    """물체 4 선반의 모서리와 물체 1 사이는 0.27 m다. 세 곳에서 빈 칸이 두 줄 이상이다
+    (한 대가 지나는 폭). 다른 곳이 모두 더 넓다는 것은 여기서 보지 않는다."""
     assert ISLAND_1[0] - SHELF_4[2] == pytest.approx(0.01)
     assert SHELF_4[1] - ISLAND_1[3] == pytest.approx(0.27)
     throat = [clear_rows(x, ISLAND_1[3], SHELF_4[1]) for x in (0.495, 0.525, 0.555)]
@@ -143,11 +143,11 @@ def test_a_dock_line_is_longer_than_the_arrival_tolerance():
         assert line.length() >= load_params().arrival_tolerance_m + 0.07
 
 
-def test_a_parked_robot_leaves_the_dock_lines_and_the_other_spots_free():
+def test_a_robot_on_its_parking_spot_leaves_the_dock_lines_and_the_other_spots_free():
+    """자리 좌표에 정확히 선 로봇을 본다. 도착 허용 거리(0.15 m)만큼 벗어나 선 로봇은 보지 않는다."""
     line_cells = set()
     for line in FLOOR.fixed_lines.values():
-        for x, y in line.points:
-            line_cells |= set(disk_cells(FLOOR, x, y, BODY))
+        line_cells |= set(swept_cells(FLOOR, list(line.points), BODY))
     bodies = {spot: set(disk_cells(FLOOR, x, y, BODY)) for spot, (x, y) in FLOOR.parking}
     for spot, cells in bodies.items():
         assert not cells & line_cells, spot
@@ -208,8 +208,9 @@ def test_three_pinkys_keep_up_when_orders_come_faster_than_they_ship(tmp_path, m
     run(tmp_path, monkeypatch, 1, count=16, period_s=15, timeout_s=900)
 
 
-def test_the_robots_use_both_passages_and_the_way_between_the_islands(tmp_path, monkeypatch):
-    """한 줄로 도는 길이 아니다: 한 번의 실행에서 북쪽 통로, 남쪽 통로, 건너는 통로를 모두 지난다."""
+def test_robots_are_seen_in_both_passages_and_between_the_islands(tmp_path, monkeypatch):
+    """한 줄로 도는 길이 아니다: 한 번의 실행에서 로봇 위치가 북쪽 통로, 남쪽 통로, 건너는 통로
+    세 곳에서 모두 나온다(끝까지 지났는지, 어느 방향인지는 보지 않는다)."""
     _, world = run(tmp_path, monkeypatch, 1)
     seen = collections.Counter()
     for frame in world.frames:
@@ -219,3 +220,38 @@ def test_the_robots_use_both_passages_and_the_way_between_the_islands(tmp_path, 
             elif ISLAND_1[2] < x < ISLAND_3[0] and ISLAND_3[1] < y < ISLAND_3[3]:
                 seen["between"] += 1
     assert all(seen[where] > 0 for where in ("north", "south", "between")), seen
+
+
+def off_line(points, p) -> float:
+    """점 p에서 선분 points까지 거리."""
+    (ax, ay), (bx, by) = points
+    dx, dy = bx - ax, by - ay
+    u = min(1.0, max(0.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy)))
+    return math.dist(p, (ax + u * dx, ay + u * dy))
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_every_robot_comes_into_a_dock_down_its_line(tmp_path, monkeypatch, seed):
+    """들어가는 방향: 도크에 닿기 전 0.15 m 안에 들어선 자리가 그 도크의 선 위다(0.05 m 안).
+    관제는 이를 강제하지 않는다(도크 0.15 m 안에서 다시 계획하면 선 없이 도착한다): 이 실행들에서
+    그런 일이 없었다는 것만 본다."""
+    _, world = run(tmp_path, monkeypatch, seed)
+    lines = {"WORK": FLOOR.fixed_lines["work_in"].points,
+             "OUTBOUND": FLOOR.fixed_lines["outbound_in"].points}
+    arrivals = 0
+    tracks = collections.defaultdict(list)
+    for frame in world.frames:
+        for name, xy in frame["robots"].items():
+            tracks[name].append(tuple(xy))
+    for name, track in tracks.items():
+        for station, dock in FLOOR.docks.items():
+            entered = None  # 0.15 m 안에 처음 들어선 자리
+            for before, here in zip(track, track[1:], strict=False):
+                far, near = math.dist(before, dock), math.dist(here, dock)
+                if far > 0.15 >= near:
+                    entered = here
+                if entered is not None and near <= 0.03:
+                    arrivals += 1
+                    assert off_line(lines[station], entered) <= 0.05, (name, station, entered)
+                    entered = None
+    assert arrivals >= 16  # 주문 8건: 작업 도크 8번, 출고 도크 8번
