@@ -590,34 +590,3 @@ def test_a_shortcut_that_meets_another_line_again_away_from_its_dock_is_refused(
     # switched off, the shortcut is no line of the floor: nothing to refuse
     off = FloorController(site, load_params(), ["r1"], lambda: 0.0, floor=FloorMap(data))
     assert "outbound_short" not in off.floor.fixed_lines
-
-
-# ---- wait_spots: where a robot waits for its turn on a dock line --------------------------
-
-
-def waiting_data(**changes):
-    data = {"bounds": [0, 0, 2, 1], "cell_m": 0.1, "robot_radius_m": 0.08,
-            "cell_margin_m": 0.05, "fixed_lines": {"work_in": [[0.3, 0.5], [0.7, 0.5]]},
-            "wait_spots": {"work_in": [[1.5, 0.5], [1.5, 0.7]]}}
-    data.update(changes)
-    return data
-
-
-def test_a_floor_without_wait_spots_has_none(floor):
-    assert floor.wait_spots == {}
-
-
-def test_wait_spots_are_read_in_the_order_written():
-    assert FloorMap(waiting_data()).wait_spots == {"work_in": ((1.5, 0.5), (1.5, 0.7))}
-
-
-@pytest.mark.parametrize("bad", [{"nowhere": [[1.5, 0.5]]}, {"work_in": [[1.5]]},
-                                 {"work_in": "here"}, [[1.5, 0.5]], {"work_in": [[1.5, "a"]]}])
-def test_wait_spots_that_name_no_line_or_no_place_are_refused(bad):
-    with pytest.raises(FloorMapError, match="wait_spots"):
-        FloorMap(waiting_data(wait_spots=bad))
-
-
-def test_a_wait_spot_off_clear_floor_is_refused():
-    with pytest.raises(FloorMapError, match="wait spot"):
-        FloorMap(waiting_data(wait_spots={"work_in": [[1.97, 0.5]]}))

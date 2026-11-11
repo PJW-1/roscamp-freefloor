@@ -1142,9 +1142,6 @@ class FloorController(TrafficController):
             if name != m.name and other.waiting and other.route is not None:
                 waits.append(other.route.points[-1])
                 banned |= self._standing_cells(*other.route.points[-1])
-        named = self.floor.wait_spots.get(leg.in_line)
-        if named and self._wait_named(m, leg, named, banned, out_line):
-            return  # 지도에 적은 대기 자리. 모두 찼으면 아래에서 예전대로 찾는다
         near, far = WAIT_SPOT_M
         if not out_line and self._standing_cells(*start).isdisjoint(banned) and \
                 near <= math.dist(start, line_start) <= far and \
@@ -1180,31 +1177,6 @@ class FloorController(TrafficController):
         leg.route = first
         leg.s = leg.s_lock = leg.s_sent = 0.0
         leg.stuck_since = None
-
-    def _wait_named(self, m: _Mission, leg: _Leg, named, banned, out_line) -> bool:
-        """지도에 적은 대기 자리(적은 차례대로) 중 몸이 남의 칸·다른 대기 자리에 닿지 않는 첫 자리로.
-        이미 적은 자리에 서 있으면 그대로 선다(옆 주차 로봇의 칸과 맞닿아도 된다: 서 있는 자리다).
-        갈 자리가 없으면 False."""
-        start = self._here(m)
-        for spot in named:
-            here = math.dist(start, spot) <= self.params.arrival_tolerance_m
-            if not here and not self._body_cells(*spot).isdisjoint(banned):
-                continue
-            if here and not out_line:
-                leg.route = Route([start])
-                if m.goal:
-                    self._cancel_goal(m)  # 옛 다리의 목표가 아니라 여기 선다
-                leg.done = True
-                leg.s = leg.s_lock = leg.s_sent = 0.0
-                return True
-            route = self._route(m, start, spot, out_line, cautious=True)
-            if route is None:
-                continue
-            leg.route = route
-            leg.s = leg.s_lock = leg.s_sent = 0.0
-            leg.stuck_since = None
-            return True
-        return False
 
     def _wait_route(self, m: _Mission, start, cells, out_line) -> Route | None:
         """cells(가까운 차례) 중 출발할 수 있는 첫 대기 자리로 가는 길. 없으면 처음 찾은 길."""
