@@ -43,12 +43,3 @@ parking:
 fixed_lines:
   work_in: [[1.55, 0.17], [1.78, 0.17]]
   outbound_in: [[0.33, 0.68], [0.17, 0.52]]
-# Where a robot waits for its turn on a dock line: the first free place in this order. Without
-# these the traffic control takes the nearest clear place 0.3 m or more from the line start,
-# which on this floor is the mouth of a passage: robots waiting there shut the robot leaving
-# the dock in twice in Gazebo (2026-11-11). For WORK the parking spots (a parked robot that is
-# called stays where it is). For OUTBOUND the place between the two islands first (a robot
-# there leaves three clear rows of the passage north and south of it), then the parking spots.
-wait_spots:
-  work_in: [[1.86, 0.58], [1.86, 0.87], [1.57, 0.87]]
-  outbound_in: [[0.86, 0.495], [1.57, 0.87], [1.86, 0.87], [1.86, 0.58]]

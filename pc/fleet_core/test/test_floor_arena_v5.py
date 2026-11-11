@@ -4,7 +4,6 @@ middle line; north and south of them the floor is seven or eight clear cells wid
 two robots pass side by side), and between them five. The only fixed lines are the last 0.23 m into each dock: they give the
 direction a robot comes in by, and everywhere else a robot plans its own way."""
 import collections
-import copy
 import itertools
 import math
 import sys
@@ -273,21 +272,13 @@ DOCKED = ("DOCKING", "AT_STATION")
 WAITERS = ("pinky1", "pinky3")
 
 
-def unnamed_floor():
-    """이 바닥에서 지도에 적은 대기 자리만 뺀 것: 관제가 대기 자리를 스스로 찾는다."""
-    floor = copy.copy(FLOOR)
-    floor.wait_spots = {}
-    return floor
-
-
-def dock_wait_world(closes=None, hold_s=25.0, order=WAITERS, floor=None):
+def dock_wait_world(closes=None, hold_s=25.0, order=WAITERS):
     """pinky2 at the outbound dock, pinky1 and pinky3 sent there from the east (in this order).
     After hold_s (both stand at their wait spots) pinky2 is sent to WORK. closes replaces the
-    wait spot rule (_closes_way); None keeps it. floor: None is the floor without the wait
-    spots of the map (the rule and the wait cycles are what these tests are about)."""
+    wait spot rule (_closes_way); None keeps it."""
     robots = {n: {"start": s, "speed_mps": 0.15, "pose_noise_m": 0.0} for n, s in THREE}
     world = FloorWorld(seed=1, orders=[], robots=robots, site=LANES,
-                       floor=unnamed_floor() if floor is None else floor,
+                       floor=FLOOR,
                        params=replace(load_params(), **LOCKS))
     for name, (x, y) in {"pinky1": (1.60, 0.21), "pinky2": FLOOR.docks["OUTBOUND"],
                          "pinky3": (1.57, 0.87)}.items():
@@ -396,62 +387,10 @@ def test_a_robot_waiting_for_a_line_turn_waits_on_the_robot_that_holds_the_line(
     assert traffic._legs[later].asked_at == asked[later]
 
 
-# ---- wait spots written on the map ---------------------------------------------------------
-# Gazebo 2026-11-11 (after the rule above): pinky1 left WORK for OUTBOUND, pinky2 waited for its
-# turn at WORK in the east mouth of the south passage and pinky3 stood on P-3; pinky1 found no
-# way between them. A robot that waits near the line start can stand in a passage on this
-# floor, so the map says where to wait: between the islands and on the parking spots.
-
-CROSS = (0.86, 0.495)  # 두 섬 사이
-
-
-def spot_of(traffic, name):
-    return traffic._legs[name].route.points[-1]
-
-
-def test_the_map_names_the_wait_spots_between_the_islands_and_on_the_parking_spots():
-    spots = [pose for _, pose in FLOOR.parking]
-    assert set(FLOOR.wait_spots) == {"work_in", "outbound_in"}
-    assert set(FLOOR.wait_spots["work_in"]) == set(spots)
-    assert FLOOR.wait_spots["outbound_in"][0] == CROSS
-    assert set(FLOOR.wait_spots["outbound_in"][1:]) == set(spots)
-
-
-def test_a_robot_on_a_wait_spot_holds_no_cell_of_a_dock_line_and_its_body_no_other_spot():
-    """선 칸은 서 있는 로봇이 쥘 수 있는 칸(몸과 release_distance_m 안)으로, 자리끼리는 몸으로 본다
-    (옆 주차 자리와는 0.29 m라 release_distance_m 원은 겹친다)."""
-    radius = max(BODY, LOCKS["release_distance_m"])
-    line_cells = set()
-    for line in FLOOR.fixed_lines.values():
-        line_cells |= set(swept_cells(FLOOR, list(line.points), BODY))
-    places = sorted({spot for spots in FLOOR.wait_spots.values() for spot in spots})
-    for spot in places:
-        assert not set(disk_cells(FLOOR, *spot, radius)) & line_cells, spot
-    bodies = {spot: set(disk_cells(FLOOR, *spot, BODY)) for spot in places}
-    for (a, one), (b, other) in itertools.combinations(bodies.items(), 2):
-        assert not one & other, (a, b)
-
-
-def test_a_robot_between_the_islands_leaves_three_clear_rows_beside_it_north_and_south():
-    radius = max(BODY, LOCKS["release_distance_m"])
-    taken = set(disk_cells(FLOOR, *CROSS, radius))
-    free = {c for c in FLOOR.clear if not disk_cells(FLOOR, *FLOOR.centre(c), BODY) & taken}
-    for ys in ((0.105, 0.135, 0.165), (0.825, 0.855, 0.885)):  # 남쪽, 북쪽 통로
-        for y in ys:  # 빈 칸 세 줄씩: 한 대가 지난다
-            row = {FLOOR.cell_of(x / 100, y) for x in range(72, 100, 3)}
-            assert row <= free, y
-
-
-def test_robots_waiting_for_the_outbound_dock_stand_on_the_wait_spots_of_the_map():
-    world, traffic = dock_wait_world(floor=FLOOR)
-    named = FLOOR.wait_spots["outbound_in"]
-    spots = [spot_of(traffic, n) for n in WAITERS]
-    assert spots[0] == CROSS, spots
-    assert min(math.dist(spots[1], place) for place in named[1:]) <= 0.15, spots  # 서 있던 주차 자리
-    assert out_and_in(world, traffic)
-    codes = [e.code for e in world.events]
-    assert "DEADLOCK_DETECTED" not in codes and "FLOOR_SIDESTEP" not in codes, codes
-    assert world.cell_violations == 0
+# ---- the robot leaving the work dock ------------------------------------------------------
+# Gazebo 2026-11-11: pinky1 left WORK for OUTBOUND, pinky2 waited for its turn at WORK in the
+# east mouth of the south passage and pinky3 stood on P-3; pinky1 found no way between them.
+# (지도에 적는 대기 자리 wait_spots는 2026-11-11 폐기: 관제가 선 시작 근처에서 스스로 찾는다.)
 
 
 def work_wait_world():
@@ -472,15 +411,6 @@ def work_wait_world():
     traffic.on_dispatch(901, "WORK", "pinky2")
     world.run(10.0)
     return world, traffic
-
-
-def test_a_robot_called_to_a_busy_work_dock_waits_on_its_parking_spot():
-    world, traffic = work_wait_world()
-    leg = traffic._legs["pinky2"]
-    assert leg.waiting and leg.done
-    assert spot_of(traffic, "pinky2") == pytest.approx(dict(FLOOR.parking)["P-2"], abs=0.01)
-    assert math.dist((world.virtual["pinky2"].x, world.virtual["pinky2"].y),
-                     dict(FLOOR.parking)["P-2"]) < 0.02  # 그 자리에 그대로 있다
 
 
 def test_the_robot_leaving_the_work_dock_gets_past_the_waiting_and_the_parked_robot():
