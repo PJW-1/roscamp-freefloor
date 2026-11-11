@@ -54,7 +54,13 @@ from fleet_core.traffic.deadlock import choose_retreat, find_cycle, wait_graph
 from fleet_core.traffic.floor.cells import CellLocks, disk_cells, swept_cells
 from fleet_core.traffic.floor.eta import route_s
 from fleet_core.traffic.floor.floor_map import floor_map_for
-from fleet_core.traffic.floor.planner import FloorPlanner, Route, _nearest_on, rest_of_exit
+from fleet_core.traffic.floor.planner import (
+    NEIGHBOURS,
+    FloorPlanner,
+    Route,
+    _nearest_on,
+    rest_of_exit,
+)
 from fleet_core.traffic.mission import (
     AT_STATION,
     BLOCKED,
@@ -96,6 +102,7 @@ YIELD_AHEAD_M = 1.2  # 서로 막았을 때 돌아가는 로봇이 비켜 갈 �
 PLANS_PER_TICK = 1  # one plan can take ~10 ms: the other robots plan on the next ticks
 WAIT_SPOT_M = (0.3, 1.2)  # a robot waiting for an approach line stands this far from its start
 WAIT_TRIES = 8  # 출발할 수 없는 대기 자리 길을 이만큼 보면 그만 찾는다
+WAY_TRIES = 80  # 도크에서 나갈 길을 막는 대기 자리를 이만큼 보면 그만 찾고 예전대로 고른다
 # a robot at rest lets go down to its body only after this many reports in a row: noise drawn
 # anew for each report (sigma 0.03 m) crosses the 5 cm body margin about 1 time in 20
 REST_RELEASE_SAMPLES = 10
@@ -143,6 +150,7 @@ class _Leg:
     stuck_since: float | None = None  # the lock could not grow since then
     resume: tuple | None = None  # sidestep leg: (phase, dest, goal waypoint) to go on with
     resume_at: float | None = None  # sidestep done: plan the real leg again from then
+    turn_at: float | None = None  # 비켜 선 접근선 대기 로봇이 줄에 선 시각(돌아와서 이어 간다)
     waiting: bool = False  # another robot has the approach line: the route ends at a wait spot
     asked_at: float = 0.0  # when this leg asked for its approach line (first come first served)
     admitted: bool = False  # 시간창: 접근선 차례를 받음(선이 비기 전 미리 출발 포함)
@@ -279,6 +287,9 @@ class FloorController(TrafficController):
         self._back: dict[str, _Back] = {}  # 로봇 -> 물러나기 일
         self._trail: dict[str, _Trail] = {}  # 로봇 -> 보낸 경로 기록
         self._mark_at: dict[str, float] = {}  # 로봇 -> 막힘 표시를 한 때
+        self._way_disk: dict = {}  # 칸 -> 그 칸에 중심을 둔 몸이 닿는 칸 (i, j)(나갈 길 찾기)
+        self._way_goals: dict[str, frozenset] = {}  # 접근선 -> 도크에서 닿아야 할 칸
+        self._way_now: dict[tuple, frozenset] = {}  # (접근선, 대기 자리들) -> 도크에서 닿는 목표 칸
         if self._back_on:
             self.metrics.update(retreats=0, reroutes=0, corridor_clears=0)
 
@@ -813,8 +824,9 @@ class FloorController(TrafficController):
         return None
 
     def _start_leg(self, m: _Mission, phase: str, dest: str | None, goal_waypoint,
-                   way=None) -> None:
-        """지금 자리에서 goal_waypoint까지 새 바닥 경로. 따라가던 MoveTo는 교체될 때까지 쥔다."""
+                   way=None, asked_at: float | None = None) -> None:
+        """지금 자리에서 goal_waypoint까지 새 바닥 경로. 따라가던 MoveTo는 교체될 때까지 쥔다.
+        asked_at: 접근선 줄에 선 시각(비켜 섰다 돌아온 대기 로봇), None이면 지금."""
         self.zones.cancel_all_requests(m.name)
         here = self._dock_here(m)
         station = next((s for s, st in self.site.stations.items() if st.dock == goal_waypoint),
@@ -841,7 +853,7 @@ class FloorController(TrafficController):
         m.settle_idx = None
         m.phase = phase
         m.dest = dest
-        leg.asked_at = self._clock()
+        leg.asked_at = self._clock() if asked_at is None else asked_at
         self._legs[m.name] = leg
         self._plan(m, leg)
 
@@ -1125,12 +1137,15 @@ class FloorController(TrafficController):
         start = self._here(m)
         line_start = self.floor.fixed_lines[leg.in_line].points[0]
         banned = set(self._all_line_ids) | set(self.zones.held_by_others(m.name))
+        waits = []  # 다른 대기 로봇이 설 자리
         for name, other in self._legs.items():
             if name != m.name and other.waiting and other.route is not None:
+                waits.append(other.route.points[-1])
                 banned |= self._standing_cells(*other.route.points[-1])
         near, far = WAIT_SPOT_M
         if not out_line and self._standing_cells(*start).isdisjoint(banned) and \
-                near <= math.dist(start, line_start) <= far:
+                near <= math.dist(start, line_start) <= far and \
+                not self._closes_way(leg.in_line, waits, start):
             leg.route = Route([start])  # already standing in a good place
             if m.goal:
                 self._cancel_goal(m)  # stop here, not at the old leg's target
@@ -1140,12 +1155,34 @@ class FloorController(TrafficController):
         spots = sorted((c for c in self.floor.clear
                         if near <= math.dist(line_start, self.floor.centre(c)) <= far),
                        key=lambda c: math.dist(line_start, self.floor.centre(c)))
+        spots = [c for c in spots if self._standing_cells(*self.floor.centre(c)).isdisjoint(banned)]
+        # 도크에서 나갈 마지막 길을 막지 않는 자리 먼저. 그런 자리가 없으면 예전대로 고른다
+        closing = []
+
+        def opens(cell) -> bool:
+            if len(closing) >= WAY_TRIES:
+                return False  # 계획 비용: 더 보지 않는다
+            if self._closes_way(leg.in_line, waits, self.floor.centre(cell)):
+                closing.append(cell)
+                return False
+            return True
+
+        first = self._wait_route(m, start, (c for c in spots if opens(c)), out_line)
+        if first is None and closing:
+            first = self._wait_route(m, start, spots, out_line)
+        if first is None:
+            leg.route = None  # nowhere to wait now: try again after floor_replan_s
+            return
+        # 출발할 수 있는 자리가 없으면 처음 찾은 길(예전대로): 칸을 기다려 교착 처리에 보인다
+        leg.route = first
+        leg.s = leg.s_lock = leg.s_sent = 0.0
+        leg.stuck_since = None
+
+    def _wait_route(self, m: _Mission, start, cells, out_line) -> Route | None:
+        """cells(가까운 차례) 중 출발할 수 있는 첫 대기 자리로 가는 길. 없으면 처음 찾은 길."""
         first, stuck_ways = None, 0
-        for cell in spots:
-            spot = self.floor.centre(cell)
-            if not self._standing_cells(*spot).isdisjoint(banned):
-                continue
-            route = self._route(m, start, spot, out_line, cautious=True)
+        for cell in cells:
+            route = self._route(m, start, self.floor.centre(cell), out_line, cautious=True)
             if route is None:
                 continue
             if not self._can_start(m.name, route):
@@ -1154,15 +1191,73 @@ class FloorController(TrafficController):
                 if stuck_ways >= WAIT_TRIES:
                     break  # 계획 비용: 더 보지 않는다
                 continue
-            first = route
-            break
-        if first is None:
-            leg.route = None  # nowhere to wait now: try again after floor_replan_s
-            return
-        # 출발할 수 있는 자리가 없으면 처음 찾은 길(예전대로): 칸을 기다려 교착 처리에 보인다
-        leg.route = first
-        leg.s = leg.s_lock = leg.s_sent = 0.0
-        leg.stuck_since = None
+            return route
+        return first
+
+    def _closes_way(self, line: str, waits, spot) -> bool:
+        """spot에 서면(다른 대기 로봇은 waits에) 접근선 도크에서 지금 닿는 주차 지점·다른 도크 선
+        시작 중 하나라도 못 닿게 되나. 도크를 떠나는 로봇이 대기 로봇들 사이에 갇히지 않게 한다."""
+        key = (line, tuple(waits))
+        now = self._way_now.get(key)
+        if now is None:  # 지도와 대기 자리만으로 정해진다: 대기 자리가 바뀔 때까지 다시 쓴다
+            if len(self._way_now) > 64:
+                self._way_now.clear()
+            now = self._way_now[key] = self._way_reach(line, waits)
+        return bool(now) and not now <= self._way_reach(line, [*waits, spot])
+
+    def _way_goals_of(self, line: str) -> frozenset:
+        """도크에서 나가 닿아야 할 칸: 주차 지점과 다른 스테이션의 접근선 시작(없으면 도크)."""
+        goals = self._way_goals.get(line)
+        if goals is None:
+            mine = self._line_station(line)
+            poses = [self.site.waypoint_pose(p) for p in self.site.parking]
+            for sid in self.site.stations:
+                if sid == mine:
+                    continue
+                other = self._line(sid, "in")
+                if other is not None:
+                    poses.append(self.floor.fixed_lines[other].points[0])
+                elif sid in self.floor.docks:
+                    poses.append(self.floor.docks[sid])
+            goals = frozenset(c for c in (self.floor.cell_of(*p) for p in poses)
+                              if c in self.floor.clear)
+            self._way_goals[line] = goals
+        return goals
+
+    def _way_reach(self, line: str, waits) -> frozenset:
+        """접근선 끝(도크)에서 몸(_body)이 waits에 선 로봇들의 서 있는 칸에 닿지 않고 빈 칸으로
+        갈 수 있는 목표 칸(_way_goals_of)."""
+        radius = max(self._body, self.params.release_distance_m)
+        taken = set()
+        for x, y in waits:
+            taken |= disk_cells(self.floor, x, y, radius)
+        goals = self._way_goals_of(line)
+        clear = self.floor.clear
+
+        def free(cell) -> bool:
+            disk = self._way_disk.get(cell)
+            if disk is None:
+                disk = frozenset(disk_cells(self.floor, *self.floor.centre(cell), self._body))
+                self._way_disk[cell] = disk
+            return disk.isdisjoint(taken)
+
+        # 대기 로봇이 목표 칸 위에 서서 못 닿는 것은 길이 끊긴 것이 아니다: 닿은 것으로 친다
+        found = {g for g in goals if not free(g)}
+        start = self.floor.cell_of(*self.floor.fixed_lines[line].points[-1])
+        if start not in clear or not free(start):
+            return frozenset(found)
+        seen, todo = {start}, deque([start])
+        while todo and len(found) < len(goals):
+            i, j = todo.popleft()
+            if (i, j) in goals:
+                found.add((i, j))
+            for di, dj in NEIGHBOURS:
+                cell = (i + di, j + dj)
+                if cell not in seen and cell in clear:
+                    seen.add(cell)
+                    if free(cell):
+                        todo.append(cell)
+        return frozenset(found)
 
     # ---- 지름길 ----------------------------------------------------------------------------
 
@@ -1778,6 +1873,9 @@ class FloorController(TrafficController):
         비켜 선 뒤에도 같은 순환이 deadlock_unresolved_s 이어지면 그 로봇을 격리한다.
         """
         graph = wait_graph(self.zones)
+        line_waits = self._line_waits()
+        for name, busy in line_waits.items():
+            graph.setdefault(name, set()).update(busy)
         graph.pop(BLOCK_OWNER, None)
         cycle = find_cycle(graph)
         if not cycle:
@@ -1809,7 +1907,9 @@ class FloorController(TrafficController):
             self._deadlock_acted = True
             # lowest priority first, as choose_retreat; one that cannot step aside (on a fixed
             # line, docking) passes the turn to the next
-            turns = sorted(cycle, key=lambda name: (self._priority(name), name))
+            # 접근선 차례를 기다리는 로봇이 먼저 비킨다: 선을 쥔 로봇이 나가야 선이 빈다
+            turns = sorted(cycle, key=lambda name: (name not in line_waits,
+                                                    self._priority(name), name))
             if not any(self._sidestep(self._missions[name], cycle) for name in turns):
                 robot = choose_retreat(cycle, self._priority)
                 self._event("ERROR", "DEADLOCK_UNRESOLVED",
@@ -1835,6 +1935,34 @@ class FloorController(TrafficController):
                 self._deadlock_acted = False
         return frozenset()
 
+    def _line_waits(self) -> dict[str, set[str]]:
+        """대기 자리에 선(또는 설 곳이 없어 선) 접근선 대기 로봇 -> 그 선을 바쁘게 하는 로봇: 선 칸을
+        쥐었거나 차례를 받아 그 선으로 가는 로봇. 칸을 기다리지 않아도 이들을 기다린다."""
+        waits: dict[str, set[str]] = {}
+        for name, leg in self._legs.items():
+            line = leg.in_line
+            if (not leg.waiting or line is None or line in self.floor.rolling_lines
+                    or (leg.route is not None and not leg.done) or not self._in_service(name)):
+                continue  # 대기 자리로 가는 중이면 칸 대기가 보인다
+            busy = {self.zones.holder(c) for c in self._line_ids[line]}
+            busy |= {other for other, o in self._legs.items()
+                     if o.in_line == line and (not o.waiting or o.admitted)}
+            busy = {b for b in busy if b in self._missions and b != name and self._in_service(b)
+                    and not self._may_get_by(b)}
+            if busy:
+                waits[name] = busy
+        return waits
+
+    def _may_get_by(self, name: str) -> bool:
+        """막힌 지 floor_pass_wait_s가 안 됐고 다른 길도 찾아보는 중이다: 곧 돌아갈 수 있으니 접근선
+        대기 로봇과의 순환으로 치지 않는다(잠깐 생겼다 저절로 풀리는 순환을 알리지 않는다)."""
+        leg = self._legs.get(name)
+        if leg is None or leg.no_way_since is not None:
+            return False  # 도크에 섰거나 다른 길이 없다
+        if leg.stuck_since is None:
+            return True  # 막히지 않았다
+        return self._clock() - leg.stuck_since < self.params.floor_pass_wait_s
+
     def _sidestep(self, m: _Mission, cycle) -> bool:
         """남의 칸과 남이 가려는 길에서 벗어난 가장 가까운 빈 자리로 비켜 선다."""
         if not m.available or m.phase not in (TO_WORK, TO_OUTBOUND, TO_PARK):
@@ -1852,6 +1980,10 @@ class FloorController(TrafficController):
         blocked = others | wanted
         here = self._here(m)
         avoid_ids = self._inflate(others) | wanted
+        if leg.waiting and leg.done:
+            # 대기 자리에 선 로봇은 남의 길 위에 서 있을 수 있다: 그 길을 건너 비켜도 된다(남은 서서
+            # 기다리고, 건너는 칸은 잠가서 지난다). 설 자리만 남의 길 밖이다
+            avoid_ids = self._inflate(others)
         spots = sorted((c for c in self.floor.clear
                         if 0.25 <= math.dist(here, self.floor.centre(c)) <= SIDESTEP_REACH_M),
                        key=lambda c: math.dist(here, self.floor.centre(c)))
@@ -1869,6 +2001,8 @@ class FloorController(TrafficController):
             self.zones.cancel_all_requests(m.name)
             goal = m.path[-1]
             side = _Leg(route, spot, resume=(m.phase, m.dest, goal))
+            if leg.waiting:
+                side.turn_at = leg.asked_at  # 돌아와서 접근선 줄의 제자리를 잇는다
             self._legs[m.name] = side
             self.metrics["sidesteps"] += 1
             self._event("WARN", "FLOOR_SIDESTEP",
@@ -1884,7 +2018,7 @@ class FloorController(TrafficController):
         if now < leg.resume_at:
             return
         phase, dest, goal = leg.resume
-        self._start_leg(m, phase, dest, goal)
+        self._start_leg(m, phase, dest, goal, asked_at=leg.turn_at)
 
     def _spot_taken(self, m: _Mission) -> bool:
         leg = self._legs.get(m.name)
