@@ -84,13 +84,16 @@ class Bench:
             world = FloorWorld(seed=seed, orders=[], robots=robots, site=self.lanes,
                                floor=self.floor, params=self.params)
             traffic = world.core.traffic
-            traffic._spot_taken = lambda m: False  # 아무 지점으로나 보낸다(주차 자리 규칙 없이)
+            reached = {n: False for n in goals}
+            taken = traffic._spot_taken
+            # 목표로 가는 동안만 주차 자리 규칙을 끈다(아무 지점으로나 보내려고). 닿은 뒤에는 규칙대로
+            # 빈 주차 자리를 고른다: 계속 꺼 두면 두 로봇이 같은 주차 자리로 가서 서로 막는다
+            traffic._spot_taken = lambda m: reached.get(m.name, True) and taken(m)
             world._report_states()
             traffic._plan_budget = 99
             for name, waypoint in goals.items():
                 traffic._start_leg(traffic._missions[name], "TO_PARK", None, waypoint)
             target = {n: self.pose(w) for n, w in goals.items()}
-            reached = {n: False for n in goals}
             still = collections.Counter()
             last = {n: (world.virtual[n].x, world.virtual[n].y) for n in goals}
             while world.t < limit_s and not all(reached.values()):
@@ -167,6 +170,8 @@ def main(argv=None) -> int:
     parser.add_argument("--shard", default="1/1", help="i/n: 판을 n으로 나눈 i번째만")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help="관제 파라미터를 바꾼다(여러 번)")
+    parser.add_argument("--only", action="append", default=[], metavar="CASE",
+                        help="이 이름의 판만 돌린다(여러 번). 실패한 판을 다시 볼 때")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     overrides = {}
@@ -180,7 +185,7 @@ def main(argv=None) -> int:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
         writer.writeheader()
         for k, (name, starts, goals) in enumerate(cases(bench, args.kind, args.cases, args.seed)):
-            if k % of != index - 1:
+            if k % of != index - 1 or (args.only and name not in args.only):
                 continue
             row = bench.run(starts, goals, args.seed, args.limit)
             row.update(kind=args.kind, case=name, seed=args.seed, noise=args.noise)

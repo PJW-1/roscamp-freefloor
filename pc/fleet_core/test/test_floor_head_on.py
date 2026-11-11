@@ -55,3 +55,88 @@ def test_the_same_with_keep_right(pair):
     row = swap(*pair, bench=BENCH_KR)
     assert row["result"] == "ok", row
     assert row["DEADLOCK_UNRESOLVED"] == 0 and row["ROBOT_ISOLATED"] == 0, row
+
+
+def test_a_robot_halted_before_a_facing_one_is_let_go_once_the_two_pass_side_by_side():
+    """일찍 선 로봇이 나란히 지나가기에 들면 선 표시를 지운다: 남아 있으면 잠금이 늘 때까지 목표를
+    보내지 않아, 제 줄이 이미 잡혀 있어도 출발하지 못한다(Codex 리뷰 2026-11-11, 8bb8a9e)."""
+    from floor_world import FloorWorld
+    robots = {n: {"start": s, "speed_mps": 0.15, "pose_noise_m": 0.0}
+              for n, s in (("pinky1", "SC"), ("pinky2", "P-2"), ("pinky3", "P-3"))}
+    world = FloorWorld(seed=1, orders=[], robots=robots, site=BENCH_KR.lanes,
+                       floor=BENCH_KR.floor, params=BENCH_KR.params)
+    traffic = world.core.traffic
+    traffic._spot_taken = lambda m: False
+    world._report_states()
+    m = traffic._missions["pinky1"]
+    traffic._start_leg(m, "TO_PARK", None, "SM")
+    leg = traffic._legs["pinky1"]
+    leg.halt_on, leg.halt_lock = leg.route, leg.s_lock
+    assert traffic._halted(leg)
+    traffic._passes["pinky1"] = object()  # 나란히 지나가기에 들었다
+    traffic._halt_head_on(m, leg, grew=False)
+    assert not traffic._halted(leg)
+
+
+def test_three_robots_taking_each_others_places_park_on_different_spots_afterwards():
+    """측정 도구: 목표에 닿은 로봇은 주차 자리 규칙대로 빈 자리로 간다. 규칙을 계속 꺼 두면 두 로봇이
+    같은 주차 자리로 가서 하나가 영영 기다리고, 그 로봇이 남의 목표를 막아 '못 닿음'으로 셌다."""
+    row = BENCH.run({"pinky1": "MC", "pinky2": "SM", "pinky3": "WS"},
+                    {"pinky1": "SM", "pinky2": "WS", "pinky3": "MC"}, 1, 90.0)
+    assert row["result"] == "ok", row
+
+
+def boxed_in_world():
+    """pinky1이 넓은 남서쪽 바닥(SM)에 서 있고, 동쪽과 서쪽 0.12~0.15 m에 남(pinky2)이 쥔 칸이 있다:
+    몸(반지름 0.11 m)은 닿지 않지만 pinky1의 자리와 둘레 칸이 모두 '남의 칸에 몸이 닿을 수 있는 칸'
+    (넓힌 칸) 안이다. 남북으로는 비어 있다."""
+    from floor_world import FloorWorld
+    robots = {n: {"start": s, "speed_mps": 0.15, "pose_noise_m": 0.0}
+              for n, s in (("pinky1", "SM"), ("pinky2", "P-2"), ("pinky3", "P-3"))}
+    world = FloorWorld(seed=1, orders=[], robots=robots, site=BENCH.lanes, floor=BENCH.floor,
+                       params=BENCH.params)
+    traffic = world.core.traffic
+    traffic._spot_taken = lambda m: False
+    world.virtual["pinky1"].x -= 0.008  # 칸 가운데가 아니라 서쪽 끝에 선다(양옆 칸까지의 거리가 다르다)
+    world._report_states()
+    m = traffic._missions["pinky1"]
+    traffic._start_leg(m, "TO_PARK", None, "SC")
+    x, y = traffic._here(m)
+    floor = traffic.floor
+    i0, j0 = floor.cell_of(x, y)
+    east = next(di for di in range(1, 12) if floor.box_distance((i0 + di, j0), x, y) > 0.115)
+    west = next(di for di in range(1, 12) if floor.box_distance((i0 - di, j0), x, y) > 0.115)
+    side = {(i0 + di, j0 + dj) for di in (east, east + 1, -west, -west - 1)
+            for dj in range(-3, 4)}  # 양옆으로 몸 바로 밖 두 줄
+    for cell in side:  # 서 있는 로봇은 둘레 0.17 m를 쥔다: 달려와 선 로봇처럼 몸 둘레만 남긴다
+        traffic.zones.release("pinky1", floor.cell_id(cell))
+    assert traffic.zones.acquire_all("pinky2", {floor.cell_id(c) for c in side})
+    return traffic, m
+
+
+def test_a_robot_standing_too_close_to_cells_of_another_has_a_straight_step_out():
+    from fleet_core.traffic.floor.cells import swept_cells
+    traffic, m = boxed_in_world()
+    floor, here = traffic.floor, traffic._here(m)
+    others = traffic._others_cells("pinky1")
+    avoid = traffic._inflate(others)
+    i, j = floor.cell_of(*here)
+    assert all((i + di, j + dj) in avoid for di in (-1, 0, 1) for dj in (-1, 0, 1))  # 둘레가 다 막혔다
+    steps = traffic._escape_steps(here, others, avoid)
+    assert steps
+    for p in steps:
+        assert floor.cell_of(*p) in floor.clear and floor.cell_of(*p) not in avoid
+        assert not swept_cells(floor, [here, p], traffic._body) & others  # 몸이 남의 칸에 닿지 않는다
+        assert abs(p[1] - here[1]) > abs(p[0] - here[0])  # 남이 없는 남북 쪽이다
+
+
+def test_it_steps_aside_from_there_instead_of_finding_no_free_spot():
+    """예전: 출발 칸 둘레가 모두 넓힌 칸이라 어느 빈 자리로도 길이 없었다('no free spot'). 세 대가
+    0.2 m 간격으로 모인 판(ring MB>SC>WS>MB)에서 아무도 비켜 서지 못하고 격리됐다."""
+    traffic, m = boxed_in_world()
+    here = traffic._here(m)
+    assert traffic._sidestep(m, ["pinky1", "pinky2"])
+    route = traffic._legs["pinky1"].route
+    assert route.points[0] == pytest.approx(here)
+    others = traffic._others_cells("pinky1")
+    assert traffic.floor.cell_of(*route.points[1]) not in traffic._inflate(others)

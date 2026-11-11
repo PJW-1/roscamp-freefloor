@@ -59,7 +59,7 @@ from dataclasses import dataclass, field
 from fleet_core.common.commands import MoveCmd, RetreatCmd
 from fleet_core.traffic.controller import TrafficController
 from fleet_core.traffic.deadlock import choose_retreat, find_cycle, wait_graph
-from fleet_core.traffic.floor.cells import CellLocks, disk_cells, swept_cells
+from fleet_core.traffic.floor.cells import CellLocks, disk_cells, line_cells, swept_cells
 from fleet_core.traffic.floor.eta import route_s
 from fleet_core.traffic.floor.floor_map import floor_map_for
 from fleet_core.traffic.floor.lanes import passages
@@ -99,6 +99,8 @@ BLOCK_OWNER = "#blocked"  # pseudo holder of cells in front of an object
 RESERVE_PENALTY_M = 0.5  # extra cost of a cell another robot plans to be in at that time
 SIDESTEP_REACH_M = 1.2  # how far a robot looks for a free spot to step aside to
 SIDESTEP_HOLD_S = 3.0  # how long it stays aside before planning its leg again
+ESCAPE_REACH_M = 0.2  # 남의 칸에 바짝 붙어 선 로봇이 곧게 빠져나올 한 걸음의 한도
+ESCAPE_STARTS = 3  # 빠져나올 걸음을 이만큼까지 본다(서로 이어지지 않은 바닥 조각마다 하나)
 FIRST_MOVE_REPORTS = 20  # 첫 출발 전에 모을 서 있는 보고 수(10 Hz면 2 s): 평균의 잡음이 1/4.5로 준다
 FIRST_MOVE_WAIT_S = 5.0  # 자리가 가라앉지 않아도 이만큼 기다렸으면 떠난다(예전처럼 마지막 자리로)
 STAND_REPORTS = 50  # 서 있는 로봇의 자리로 평균 낼 최근 보고 수(10 Hz면 5 s): 조금씩 밀린 로봇을 따라간다
@@ -2080,12 +2082,11 @@ class FloorController(TrafficController):
     def _halt_head_on(self, m: _Mission, leg: _Leg, grew: bool) -> None:
         """잠금이 안 늘고 마주 오는 로봇의 칸에 막혔으면 잠금 끝까지 가지 않고 지금 선다. 끝까지 가면
         둘이 중심 0.2 m 안으로 붙어 제자리에서 돌 원도 잠그지 못해 비켜 서지 못했다(arena_v6)."""
-        if grew:
-            leg.halt_on = None
+        if grew or (self._passes and m.name in self._passes):
+            leg.halt_on = None  # 나란히 지나는 중이면 제 줄로 간다: 전에 선 것도 푼다
             return
         if (self._halted(leg) or m.goal is None or m.goal.kind != MOVE
-                or leg.route.fixed_at(leg.s) is not None
-                or (self._passes and m.name in self._passes)):  # 나란히 지나는 중: 제 줄로 간다
+                or leg.route.fixed_at(leg.s) is not None):
             return
         for other in sorted(self._blockers(m.name)):
             if other in self._missions and self._facing(m.name, other, moving=False):
@@ -2333,6 +2334,22 @@ class FloorController(TrafficController):
         # 든 로봇은 서서 기다리고, 건너는 칸은 잠가서 지난다. 마주 오는 상대의 길은 바로 이 자리를
         # 지나므로, 그 길을 피해 계획하면 출발 칸 둘레가 모두 막혀 넓은 바닥에서도 길이 없었다
         avoid_ids = self._inflate(others)
+        at = self.floor.cell_of(*here)
+        avoid = frozenset(avoid_ids - {at})
+        # 출발점과 거기서 닿는 빈 칸들(한 번만 구한다: 닿지 않는 자리마다 길을 찾지 않는다). 벽 여유
+        # 안에 선 로봇은 계획기가 빈 바닥으로 나가는 걸음을 따로 찾으므로 자리마다 찾는다(None)
+        open_floor = self.floor.clear - avoid
+        starts = [(here, self.planner._piece(at, open_floor | {at})
+                   if at in self.floor.clear else None)]
+        if at in avoid_ids:
+            # 남의 칸에 바짝 붙어 섰다: 둘레 칸이 모두 '몸이 닿을 수 있는 칸'이라 한 걸음도 계획되지
+            # 않는다. 몸이 실제로 닿지 않고 곧게 빠져나올 걸음에서도 찾는다
+            for step in self._escape_steps(here, others, avoid_ids):
+                cell = self.floor.cell_of(*step)
+                if len(starts) > ESCAPE_STARTS or any(
+                        piece is not None and cell in piece for _, piece in starts):
+                    continue
+                starts.append((step, self.planner._piece(cell, open_floor)))
         spots = sorted((c for c in self.floor.clear
                         if 0.25 <= math.dist(here, self.floor.centre(c)) <= SIDESTEP_REACH_M),
                        key=lambda c: math.dist(here, self.floor.centre(c)))
@@ -2341,8 +2358,14 @@ class FloorController(TrafficController):
             if disk_cells(self.floor, *spot,
                           max(self._body, self.params.release_distance_m)) & blocked:
                 continue
-            route = self.planner.leg(here, spot, avoid=frozenset(avoid_ids - {self.floor.cell_of(
-                *here)}))
+            route = None
+            for start, piece in starts:
+                if piece is not None and cell not in piece and cell in open_floor:
+                    continue  # 이 출발점에서 닿지 않는 바닥이다
+                found = self.planner.leg(start, spot, avoid=avoid)
+                if found is not None:
+                    route = found if start is here else Route([tuple(here), *found.points])
+                    break
             if route is None:
                 continue
             if m.goal:
@@ -2359,6 +2382,30 @@ class FloorController(TrafficController):
                         m.name)
             return True
         return False
+
+    def _escape_steps(self, here, others, avoid_ids) -> list:
+        """남의 칸에 바짝 붙어 선 자리에서 곧게 한 걸음에 닿는 빈 칸의 중심들, 가까운 순. 닿는 칸은
+        '몸이 남의 칸에 닿을 수 있는 칸'(avoid_ids) 밖이고, 걸음 내내 중심은 빈 바닥(clear) 위,
+        몸은 남의 칸(others) 밖이다."""
+        floor = self.floor
+        i0, j0 = floor.cell_of(*here)
+        n = math.ceil(ESCAPE_REACH_M / floor.cell_m)
+        found = []
+        for di in range(-n, n + 1):
+            for dj in range(-n, n + 1):
+                cell = (i0 + di, j0 + dj)
+                if cell not in floor.clear or cell in avoid_ids:
+                    continue
+                p = floor.centre(cell)
+                d = math.dist(here, p)
+                if not 1e-9 < d <= ESCAPE_REACH_M:
+                    continue
+                if not line_cells(floor, [here, p]) <= floor.clear:
+                    continue
+                if swept_cells(floor, [here, p], self._body) & others:
+                    continue
+                found.append((d, p))
+        return [p for _, p in sorted(found)]
 
     def _after_sidestep(self, m: _Mission, leg: _Leg) -> None:
         now = self._clock()
