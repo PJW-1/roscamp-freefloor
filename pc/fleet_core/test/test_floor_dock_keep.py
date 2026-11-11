@@ -135,3 +135,40 @@ def test_behind_a_robot_that_waits_its_turn_the_way_queues_instead_of_passing_th
     route = way_to_outbound(traffic)
     assert route is not None
     assert min(y for _, y in free_part(traffic, route)) > 0.6  # 북쪽 통로로 간다: b 뒤에서 기다리게 된다
+
+
+def test_a_robot_waits_for_the_line_on_the_side_the_line_starts_not_behind_the_dock():
+    """대기 자리는 접근선 시작점에서 직선으로 가까운 자리가 아니라, 도크 자리를 지나지 않고 접근선에
+    닿는 자리다. 직선으로는 긴 진열대 사이 통로 안(1.52, 0.42)이나 도크 남쪽 구석(1.86, 0.18)이
+    가깝지만, 거기서는 도크를 통과해야 접근선에 닿는다. Gazebo와 머리 없는 시뮬에서 로봇이 좁은 통로를
+    거슬러 그 자리로 갔다(2026-11-12)."""
+    from fleet_core.traffic.floor.controller import _Leg
+    site = load_lane_map(REPO / "sim" / "fake_robots" / "maps" / "arena_v6.yaml")
+    params = replace(load_params(), traffic_mode="freefloor")
+    clock = [0.0]
+    core = FleetManager(site, params, ["a", "b"], lambda: clock[0])
+    core.on_robot_state("a", 0.50, 0.86, 0.0, "IDLE")
+    core.on_robot_state("b", 1.61, 0.83, 0.0, "IDLE")  # 북쪽 통로 동쪽 끝: 접근선 앞자리를 쥐고 있다
+    for _ in range(5):
+        clock[0] += 0.1
+        core.tick()
+    traffic = core.traffic
+    m = traffic._missions["a"]
+    leg = _Leg(None, traffic.floor.docks["OUTBOUND"], in_line="outbound_in")
+    leg.waiting = True
+    traffic._legs["a"] = leg
+    traffic._plan_wait(m, leg, None)
+    if leg.route is not None:  # 지금 갈 자리가 없으면 None(다음 주기에 다시 찾는다)
+        x, y = leg.route.points[-1]
+        assert y > 0.6 or x < 1.0, leg.route.points[-1]  # 도크 남쪽이나 긴 진열대 사이로 가지 않는다
+
+
+def test_the_way_from_a_wait_spot_to_the_line_is_measured_around_the_dock():
+    traffic = v6_core().traffic
+    far = traffic._approach_m("outbound_in")
+    floor = traffic.floor
+    from fleet_core.traffic.floor.controller import WAIT_SPOT_M
+    limit = WAIT_SPOT_M[1]  # 대기 자리로 치는 가장 먼 거리
+    assert far[floor.cell_of(1.60, 0.80)] < 0.5  # 북쪽 통로: 접근선 시작점 바로 서쪽
+    assert far[floor.cell_of(1.86, 0.18)] > limit  # 도크 남쪽 구석: 직선 0.55 m, 돌아가면 2 m 넘는다
+    assert far[floor.cell_of(1.50, 0.41)] > limit  # 긴 진열대 사이 통로: 직선 0.48 m, 돌아가면 1.5 m

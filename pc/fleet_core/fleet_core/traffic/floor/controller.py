@@ -52,6 +52,7 @@ m.path는 [출발할 때 가까운 지점, 목적지 지점] 두 개다. 선택�
 """
 from __future__ import annotations
 
+import heapq
 import math
 from collections import deque
 from dataclasses import dataclass, field
@@ -324,6 +325,7 @@ class FloorController(TrafficController):
         # 스테이션 도크에 선 로봇의 몸 둘레 칸 (i, j): 지나가는 길이 벽으로 피한다(_route)
         self._dock_keep = frozenset(c for dock in self.floor.docks.values()
                                     for c in disk_cells(self.floor, *dock, self._body))
+        self._approach: dict[str, dict] = {}  # 접근선 -> 칸마다 선 시작점까지 돌아가는 거리(_approach_m)
         self._stand: dict[str, deque] = {}  # 로봇 -> 서 있는 동안의 최근 보고 자리(STAND_REPORTS개)
         # 로봇 -> 첫 출발을 기다리기 시작한 시각(다 기다렸으면 None)
         self._unsettled: dict[str, float | None] = {}
@@ -1405,8 +1407,12 @@ class FloorController(TrafficController):
                 waits.append(other.route.points[-1])
                 banned |= self._standing_cells(*other.route.points[-1])
         near, far = WAIT_SPOT_M
+        # 접근선 시작점까지 도크 자리를 지나지 않고 가는 거리: 직선으로 가까워도 도크 건너편이면
+        # (지나쳐 나가는 도크의 뒤쪽, 좁은 통로 안) 대기 자리가 아니다
+        around = self._approach_m(leg.in_line)
         if not out_line and self._standing_cells(*start).isdisjoint(banned) and \
                 near <= math.dist(start, line_start) <= far and \
+                around.get(self.floor.cell_of(*start), math.inf) <= far and \
                 not self._closes_way(leg.in_line, waits, start):
             leg.route = Route([start])  # already standing in a good place
             if m.goal:
@@ -1415,7 +1421,8 @@ class FloorController(TrafficController):
             leg.s = leg.s_lock = leg.s_sent = 0.0
             return
         spots = sorted((c for c in self.floor.clear
-                        if near <= math.dist(line_start, self.floor.centre(c)) <= far),
+                        if near <= math.dist(line_start, self.floor.centre(c)) <= far
+                        and around.get(c, math.inf) <= far),
                        key=lambda c: math.dist(line_start, self.floor.centre(c)))
         # 후보는 가까운 차례로 하나씩 본다: 쓰는 자리까지만 칸을 검사한다(칸 0.02 m 지도에서 주기가 길어진다)
         seen: dict = {}
@@ -1449,6 +1456,32 @@ class FloorController(TrafficController):
         leg.route = first
         leg.s = leg.s_lock = leg.s_sent = 0.0
         leg.stuck_since = None
+
+    def _approach_m(self, line: str) -> dict:
+        """빈 칸 (i, j) -> 접근선 시작점까지, 스테이션 도크의 몸 둘레 칸(_dock_keep)을 지나지 않고
+        가는 거리(m). 닿지 않는 칸은 없다. 지도만으로 정해지므로 선마다 한 번 구한다."""
+        found = self._approach.get(line)
+        if found is None:
+            floor = self.floor
+            open_cells = floor.clear - self._dock_keep
+            first = floor.cell_of(*floor.fixed_lines[line].points[0])
+            found, todo = {first: 0.0}, [(0.0, first)]
+            while todo:
+                d, (i, j) = heapq.heappop(todo)
+                if d > found.get((i, j), math.inf):
+                    continue
+                for di, dj in NEIGHBOURS:
+                    nxt = (i + di, j + dj)
+                    if nxt not in open_cells:
+                        continue
+                    if di and dj and ((i + di, j) not in open_cells or (i, j + dj) not in open_cells):
+                        continue  # 모서리를 가로지르지 않는다(계획기와 같다)
+                    nd = d + floor.cell_m * math.hypot(di, dj)
+                    if nd < found.get(nxt, math.inf):
+                        found[nxt] = nd
+                        heapq.heappush(todo, (nd, nxt))
+            self._approach[line] = found
+        return found
 
     def _wait_route(self, m: _Mission, start, cells, out_line) -> Route | None:
         """cells(가까운 차례) 중 출발할 수 있는 첫 대기 자리로 가는 길. 없으면 처음 찾은 길."""
