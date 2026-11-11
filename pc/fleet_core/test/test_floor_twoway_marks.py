@@ -228,6 +228,19 @@ def test_an_isolated_robot_keeps_its_mark_with_its_cells():
     assert traffic.zones.held_set("b").isdisjoint(traffic._passage_ids["north3"])
 
 
+def test_an_earlier_waiter_out_of_contact_does_not_keep_its_turn_on_a_free_mark():
+    """먼저 기다리던 로봇이 통신이 끊기면 빈 표시의 차례를 잡아 두지 않는다(반대쪽이 굶지 않는다)."""
+    traffic = fleet({"a": WEST_N, "b": EAST_S})
+    go(traffic, "a", "TO_PARK", "P-1")
+    go(traffic, "b", "TO_OUTBOUND", "O", blind=True)
+    traffic._mark.clear()
+    traffic._mark_wait.clear()
+    traffic._mark_wait["north3"] = {"b": (-1, -5.0)}  # b가 먼저 반대쪽에서 기다렸다
+    assert not traffic._may_mark("a", "north3", 1)
+    traffic._missions["b"].comm = "HEARTBEAT_LOST"
+    assert traffic._may_mark("a", "north3", 1)
+
+
 def isolated_in_north3(**over):
     """b가 반대쪽에서 출고로 떠난 뒤(길이 물체 3 북쪽 통로를 지난다) a가 그 통로 안에서 격리된다."""
     traffic = fleet({"a": WEST_N, "b": EAST_S}, **over)

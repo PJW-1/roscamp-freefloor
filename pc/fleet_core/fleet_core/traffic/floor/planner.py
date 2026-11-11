@@ -256,7 +256,7 @@ class FloorPlanner:
                 floor.fixed_lines[other].points[0], head[-1]) <= 1e-6), None)
         return None
 
-    # ---- line passages (two-way) ----------------------------------------------------------
+    # ---- line 통로(양방향) ----------------------------------------------------------------
 
     def _passage_at(self, start):
         """start가 line 통로 안이면 (이름, 선 위 거리): 가운데 선에서 JOIN_M 안이고 양 끝에서

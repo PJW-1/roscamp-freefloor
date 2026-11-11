@@ -1383,7 +1383,10 @@ class FloorController(TrafficController):
                         clear = plain
                 route = clear or route
         if route is None and not extra and not keep:
-            route = self.planner.leg(start, goal, out_line, in_line)
+            if ways:  # 쥔 통로 안에서는 그 방향으로만 나간다
+                route = self.planner.leg(start, goal, out_line, in_line, ways=ways)
+            else:
+                route = self.planner.leg(start, goal, out_line, in_line)
         return route
 
     def _plan_around(self, start, goal, out_line, in_line, walls, extra, penalty, mine=frozenset(),
@@ -1996,8 +1999,9 @@ class FloorController(TrafficController):
 
     def _wants_mark(self, name: str, passage: str, way: int) -> bool:
         """name의 다리가 아직 그 통로를 그 방향으로 지나려 하고 표시를 쥐지 않았다."""
-        if name not in self._missions or not self._in_service(name):
-            return False
+        if (name not in self._missions or not self._in_service(name)
+                or not self._missions[name].available):
+            return False  # 통신이 끊긴 로봇은 차례를 잡아 두지 않는다(다시 이어지면 새로 기다린다)
         leg = self._legs.get(name)
         if leg is None or leg.route is None or self._holds(name, passage, way):
             return False
