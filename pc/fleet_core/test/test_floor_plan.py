@@ -538,3 +538,30 @@ def test_every_piece_of_floor_is_still_searched_when_the_goal_is_unreachable():
     planner = DeadEndFirst(floor)
     assert planner.plan(start, goal, avoid=frozenset(ring) | walled_goal(floor, goal)) is None
     assert planner.searches == 2  # 갇힌 칸에서 한 번, 나머지 바닥에서 한 번
+
+
+class EveryStepPlanner(FloorPlanner):
+    """고치기 전처럼 걸음마다 다시 찾는다(견줄 기준)."""
+
+    @staticmethod
+    def _piece(cell, allowed):
+        return set()
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_skipping_floor_that_hangs_together_gives_the_same_path_as_trying_every_step(seed):
+    """남이 쥔 칸을 아무렇게나 놓고, 기다림 값(유한)도 주고, 벽 여유 안의 출발점에서 견준다."""
+    import random
+    floor = box_floor()
+    rng = random.Random(seed)
+    start, goal = (1.0, 0.76), (1.6, 0.4)
+    keep = {floor.cell_of(*goal)}
+    avoid = frozenset(c for c in floor.clear if c not in keep and rng.random() < 0.25)
+
+    def wait(cell, s, heading):
+        return (0.1 * ((cell[0] * 7 + cell[1] * 3 + seed) % 4), 0.05 * ((cell[0] + cell[1]) % 2))
+
+    for kwargs in ({}, {"wait": wait}):
+        new = FloorPlanner(floor).plan(start, goal, avoid=avoid, **kwargs)
+        old = EveryStepPlanner(floor).plan(start, goal, avoid=avoid, **kwargs)
+        assert new == old

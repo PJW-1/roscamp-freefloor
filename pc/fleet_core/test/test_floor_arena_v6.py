@@ -27,12 +27,13 @@ def test_the_cells_and_margins_of_the_map():
     assert (V5.cell_m, V5.cell_margin_m, V5.side_margin_m) == (0.03, 0.03, 0.02)
 
 
-def test_the_dock_lines_are_shorter_than_on_v5_and_longer_than_the_release_distance():
+def test_a_dock_line_is_longer_than_the_arrival_tolerance_by_more_than_the_position_error():
+    """핑키는 목표에서 arrival_tolerance_m 안이면 도착으로 본다. 선이 0.17~0.18 m면 위치가 3 cm 틀린
+    핑키가 선 시작점에서 도착해 도킹이 실패했다(Gazebo, 2026-11-11)."""
     for name, line in FLOOR.fixed_lines.items():
         (ax, ay), (bx, by) = line.points[0], line.points[-1]
         length = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
-        assert LOCKS["release_distance_m"] < length < 0.23, (name, length)
-        assert length > load_params().arrival_tolerance_m
+        assert length >= load_params().arrival_tolerance_m + 0.07, (name, length)
 
 
 def scenario(count=8, period_s=20.0, noise_m=0.03, timeout_s=600):

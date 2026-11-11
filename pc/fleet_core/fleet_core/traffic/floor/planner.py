@@ -236,7 +236,9 @@ class FloorPlanner:
             return None  # in the gap of a narrow line: only that line leads out (leg)
         if a not in floor.clear:
             # stopped a few cm into a wall margin: one straight step back onto clear floor first
-            dead: set = set()  # 목표에 닿지 못한 걸음과 이어진 빈 칸
+            # 목표에 닿지 못한 걸음과 이어진 빈 칸. penalty와 wait가 늘 유한한 값을 낼 때 결과가
+            # 예전과 같다(관제의 예약 값은 유한하다). 무한대를 내는 함수는 이어진 칸에서도 길을 끊는다
+            dead: set = set()
             for step in self._steps_onto_clear(start, avoid):
                 cell = floor.cell_of(*step)
                 if cell in dead:
