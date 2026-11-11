@@ -1,0 +1,151 @@
+{
+ "pass": false,
+ "orders_total": 8,
+ "orders_shipped": 6,
+ "orders_partial": 0,
+ "orders_held": 0,
+ "duration_s": 1200.0,
+ "timed_out": true,
+ "violations": [
+  "t=173.7 c60_29 released from pinky1 while 0.08 m from it",
+  "t=173.7 c60_30 released from pinky1 while 0.07 m from it",
+  "t=173.7 c60_31 released from pinky1 while 0.07 m from it",
+  "t=173.7 c61_33 released from pinky1 while 0.07 m from it",
+  "t=173.9 c61_28 released from pinky1 while 0.07 m from it",
+  "t=173.9 c61_29 released from pinky1 while 0.06 m from it",
+  "t=173.9 c61_30 released from pinky1 while 0.05 m from it",
+  "t=173.9 c61_31 released from pinky1 while 0.05 m from it",
+  "t=173.9 c61_32 released from pinky1 while 0.05 m from it",
+  "t=173.9 c63_35 released from pinky1 while 0.08 m from it",
+  "... (203 more)"
+ ],
+ "min_release_distance_m": 0.0,
+ "checks": {
+  "all_orders_finished": {
+   "value": false,
+   "expected": true,
+   "ok": false
+  },
+  "orders_shipped": {
+   "value": 6,
+   "expected": 8,
+   "ok": false
+  },
+  "orders_partial": {
+   "value": 0,
+   "expected": 0,
+   "ok": true
+  },
+  "orders_held": {
+   "value": 0,
+   "expected": 0,
+   "ok": true
+  },
+  "orders_shipped_min": {
+   "value": 6,
+   "minimum": 0,
+   "ok": true
+  },
+  "fifo_violations": {
+   "value": 0,
+   "expected": 0,
+   "ok": true
+  },
+  "dual_arm_overlaps": {
+   "value": 0,
+   "expected": 0,
+   "arms_never_placing": [],
+   "ok": true
+  },
+  "zone_holder_max": {
+   "value": 1,
+   "expected": 1,
+   "ok": true
+  },
+  "released_without_position_check": {
+   "value": 209,
+   "expected": 0,
+   "ok": false
+  },
+  "unheld_zone_pose": {
+   "value": 0,
+   "expected": 0,
+   "ok": true
+  },
+  "released_while_off_lane": {
+   "value": 0,
+   "expected": 0,
+   "ok": true
+  },
+  "path_not_connected": {
+   "value": 0,
+   "expected": 0,
+   "ok": true
+  },
+  "robot_idle": {
+   "value": 0,
+   "expected": 0,
+   "ok": true
+  },
+  "direct_returns_min": {
+   "value": 5,
+   "minimum": 0,
+   "ok": true
+  },
+  "parked_while_backlog": {
+   "value": 0,
+   "expected": 0,
+   "ok": true
+  },
+  "shipped_before_operator": {
+   "value": 0,
+   "minimum": 0,
+   "ok": true
+  },
+  "detours_around_isolated": {
+   "value": 0,
+   "minimum": 0,
+   "ok": true
+  },
+  "timed_out": {
+   "value": true,
+   "expected": false,
+   "ok": false
+  },
+  "bound_after_reinstate_min": {
+   "value": 0,
+   "minimum": 0,
+   "ok": true
+  },
+  "shipped_after_reinstate_min": {
+   "value": 0,
+   "minimum": 0,
+   "ok": true
+  },
+  "unexpected_errors": {
+   "value": 4,
+   "expected": 0,
+   "codes": [
+    "ROBOT_ISOLATED",
+    "GOAL_FAILED",
+    "ROBOT_ISOLATED",
+    "GOAL_FAILED"
+   ],
+   "ok": false
+  },
+  "order_results": {
+   "value": {},
+   "expected": {},
+   "ok": true
+  },
+  "events_include": {
+   "missing": [],
+   "ok": true
+  },
+  "event_counts": {
+   "value": {},
+   "expected": {},
+   "ok": true
+  }
+ }
+}

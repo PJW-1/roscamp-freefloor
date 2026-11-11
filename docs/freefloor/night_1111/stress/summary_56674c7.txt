@@ -4,6 +4,5 @@ cross off 120 {'ok': 119, 'stuck': 1} detected 2 unresolved 0 isolated 0 sideste
     WS>NC+QW>MC stuck left pinky2 unres 0 iso 0 side 0 | 
 cross on 120 {'ok': 119, 'stuck': 1} detected 2 unresolved 0 isolated 0 sidesteps 0 kr 0 nw 10 off_cells 0 | ok mean t 11.9 longest stop 5.0 min gap 0.237
     WS>NC+QW>MC stuck left pinky2 unres 0 iso 0 side 0 | 
-ring off 120 {'ok': 120} detected 100 unresolved 0 isolated 0 sidesteps 64 kr 0 nw 0 off_cells 7 | ok mean t 16.8 longest stop 10.9 min gap 0.207
-ring on 120 {'ok': 120} detected 60 unresolved 0 isolated 0 sidesteps 75 kr 0 nw 89 off_cells 4 | ok mean t 17.3 longest stop 15.1 min gap 0.207
-
+ring off 120 {'ok': 120} detected 100 unresolved 0 isolated 0 sidesteps 59 kr 0 nw 0 off_cells 8 | ok mean t 16.7 longest stop 10.9 min gap 0.207
+ring on 120 {'ok': 120} detected 58 unresolved 0 isolated 0 sidesteps 72 kr 0 nw 95 off_cells 5 | ok mean t 17.1 longest stop 12.9 min gap 0.207

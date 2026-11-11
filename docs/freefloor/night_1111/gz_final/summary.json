@@ -4,10 +4,10 @@
   "orders_shipped": 8,
   "orders_partial": 0,
   "orders_held": 0,
-  "duration_s": 246.50000000000003,
+  "duration_s": 241.50000000000003,
   "timed_out": false,
   "violations": [],
-  "min_release_distance_m": 0.09171216721755283,
+  "min_release_distance_m": 0.08990949620774552,
   "checks": {
     "all_orders_finished": {
       "value": true,
