@@ -1,0 +1,61 @@
+# 실물 경기장 지도 v5 제안 (2026-11-11, sim/fleet_gz_sim/sites/arena_v5.yaml). 벽 안쪽 1.98 x 0.99 m,
+# 물체 넷은 v4의 것이고 자리만 옮겼다. 자리는 v4 그대로다(출고는 서쪽 벽 가운데, 작업 도크는 남동쪽
+# 구석, 대기는 북동쪽).
+#  - 관제는 자유바닥으로 돈다. 고정 선은 도크 앞 0.23 m뿐이라(들어가는 방향만 정한다) 로봇은
+#    어느 통로로든 계획한 경로로 다닌다. 작업 도크는 북서쪽에서, 출고 도크는 북동쪽에서 비스듬히 들어간다
+#  - 아래 레인은 표시와 거리 계산용이다: 남쪽 통로는 서쪽으로, 북쪽 통로는 동쪽으로 그렸지만 로봇은
+#    이 방향을 따르지 않는다
+#
+#   y
+#  0.87  [물체 4 선반]                        P-1 ----- P-2
+#  0.78                 -> NM ---------> NE              |
+#  0.68        QO -----/   ^               \            P-3
+#  0.52   O <-/ |   [1]    |     [3]        \
+#  0.45   |    WM          |                QW
+#  0.30   OS    |          |                  \
+#  0.21         SW <------ SM <--------- SE <- W (작업, 0.17)
+#  0.17  [물체 2 선반]
+#        0.17  0.33 0.41  0.86          1.36  1.62 1.78  x
+floor_map: floor_map_arena_v5.yaml  # free-floor map (traffic_mode freefloor), in fleet_core/data
+half_width_m: 0.05
+lane_entry_m: 0.25
+origin_m: [0.0, 0.0]
+bundle_two_way: false
+waypoints:
+  - {id: QW, x: 1.62, y: 0.33}      # WORK 도크 앞 (고정 선의 시작)
+  - {id: W, x: 1.78, y: 0.17}       # WORK 도크 (남동쪽 구석)
+  - {id: SE, x: 1.40, y: 0.21}      # 남쪽 통로 동쪽 끝
+  - {id: SM, x: 0.86, y: 0.21}      # 남쪽 통로, 건너는 통로 앞
+  - {id: SW, x: 0.41, y: 0.24}      # 남쪽 통로 서쪽 끝
+  - {id: WM, x: 0.41, y: 0.45}      # 서쪽 구역, 출고 도크 맞은편
+  - {id: NM, x: 0.86, y: 0.78}      # 북쪽 통로, 건너는 통로 앞
+  - {id: NE, x: 1.36, y: 0.78}      # 북쪽 통로 동쪽 끝
+  - {id: QO, x: 0.33, y: 0.68}      # OUTBOUND 도크 앞 (고정 선의 시작)
+  - {id: O, x: 0.17, y: 0.52}       # OUTBOUND 도크 (서쪽 벽 가운데)
+  - {id: OS, x: 0.17, y: 0.30}      # 도크를 남쪽으로 나온 곳
+  - {id: P-1, x: 1.57, y: 0.87}     # 북쪽 벽 앞
+  - {id: P-2, x: 1.86, y: 0.87}     # 북동쪽 구석
+  - {id: P-3, x: 1.86, y: 0.58}     # 동쪽 벽 앞
+lanes:
+  - {from: QW, to: W}
+  - {from: W, to: SE}
+  - {from: SE, to: SM}
+  - {from: SM, to: SW}
+  - {from: SW, to: WM}
+  - {from: WM, to: QO}
+  - {from: QO, to: O}
+  - {from: O, to: OS}
+  - {from: OS, to: SW}
+  - {from: QO, to: NM}
+  - {from: NM, to: NE}
+  - {from: NE, to: QW}
+  - {from: SM, to: NM}              # 두 섬 사이 건너는 통로
+two_way:  # 대기 자리는 북쪽과 동쪽 벽을 따라 한 줄로 있다
+  BAY1: [NE, P-1]
+  BAY2: [P-1, P-2]
+  BAY3: [P-2, P-3]
+  EAST: [P-3, QW]
+stations:
+  WORK: {dock: W, queue: [[QW, W]], commit: W, server: workcell, arms: [arm1, arm2], action: fill}
+  OUTBOUND: {dock: O, queue: [[QO, O]], commit: O, server: arm3, arms: [arm3], action: swap}
+parking: [P-1, P-2, P-3]

@@ -1,0 +1,43 @@
+# Free-floor map for the fifth layout of the real arena, a proposal (2026-11-11, "v5"): the walls
+# (1.98 x 0.99 m inside) and the four objects of v4, put elsewhere. Not laid out in the real arena
+# yet. arena_v5_fine.pgm is the 1 cm map the site generator writes from
+# sim/fleet_gz_sim/sites/arena_v5.yaml. Coordinates are those of the lane map
+# sim/fake_robots/maps/arena_v5.yaml, which names this file in its floor_map key.
+image: arena_v5_fine.pgm
+resolution: 0.01
+origin: [-0.15, -0.15, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+# Robot, cells and margins as floor_map_arena_v4.yaml (wall_margin_m 0.003 too: with it the
+# passages north and south of object 3 and south of object 1 are eight clear cells wide, so two
+# robots pass side by side; north of object 1 there are seven).
+cell_m: 0.03
+robot_radius_m: 0.08
+cell_margin_m: 0.03
+robot_half_width_m: 0.06
+side_margin_m: 0.02
+wall_margin_m: 0.003
+# Stations as on v4.
+docks:
+  WORK: [1.78, 0.17]
+  OUTBOUND: [0.17, 0.52]
+parking:
+  - {id: P-1, x: 1.57, y: 0.87}
+  - {id: P-2, x: 1.86, y: 0.87}
+  - {id: P-3, x: 1.86, y: 0.58}
+# No passage is a line here: every one has clear cells and the robots plan their own way through
+# any of them, in either direction. The only lines are the last 0.23 m into each dock: no point
+# to go to before docking, only the direction a robot comes in by (the user, 2026-11-11). They
+# are longer than arrival_tolerance_m (0.15 m): with 0.14 m lines a robot driving past a dock was
+# taken to have arrived and docked the wrong way round (Gazebo, 2026-11-11). Each comes from the
+# open floor at 45 degrees to the walls, and no way to its start comes nearer to the dock than
+# 0.2 m: WORK from the north-west, OUTBOUND from the north-east. The start of the OUTBOUND line
+# is as far from WORK through the south passage as through the way between the islands, and a
+# robot leaving OUTBOUND has about as far to the waiting spots by either passage: which way a
+# robot takes depends on where the others are (straight from the east every robot went the same
+# way round, headless 2026-11-11). The lines are locked whole, so one robot at a time is on the
+# way into a dock and the next one waits on the floor. A robot leaves a dock on a planned path.
+fixed_lines:
+  work_in: [[1.62, 0.33], [1.78, 0.17]]
+  outbound_in: [[0.33, 0.68], [0.17, 0.52]]
