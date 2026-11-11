@@ -61,7 +61,7 @@ def _obstacle(value):
     """보고된 막힘 물체 -> (x, y, 반지름). 숫자 셋이 아니거나 유한하지 않으면 None(옛 로봇처럼)."""
     try:
         x, y, r = (float(v) for v in value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not all(math.isfinite(v) for v in (x, y, r)) or r < 0:
         return None
@@ -160,8 +160,9 @@ class FleetManager:
         # 받은 그대로 기록한다. robot_id가 없던 기록도 똑같이 읽힌다.
         no_id = isinstance(robot_id, str) and text(robot_id) == ""
         if obstacle is not None:
+            seen = _obstacle(obstacle)  # 반복자는 한 번만 읽는다. 틀린 값은 None(옛 로봇처럼)
             self._input("on_robot_state", robot, x, y, yaw, state, battery, robot_id,
-                        list(obstacle))
+                        list(seen) if seen is not None else obstacle)
         else:
             self._input("on_robot_state", robot, x, y, yaw, state, battery,
                         *([] if no_id else [robot_id]))
@@ -178,8 +179,7 @@ class FleetManager:
         if obstacle is None:
             self.traffic.on_robot_state(robot, x, y, yaw, text(state), battery)
         else:
-            self.traffic.on_robot_state(robot, x, y, yaw, text(state), battery,
-                                        obstacle=_obstacle(obstacle))
+            self.traffic.on_robot_state(robot, x, y, yaw, text(state), battery, obstacle=seen)
         self._pump()
 
     def on_order_board(self, run_mode, orders) -> None:

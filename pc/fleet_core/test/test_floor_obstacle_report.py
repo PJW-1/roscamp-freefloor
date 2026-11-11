@@ -244,6 +244,17 @@ def test_an_old_robot_without_the_fields_runs_as_before_with_the_switch_on():
     assert codes(old_on, "FLOOR_BLOCKED") and not codes(old_on, "FLOOR_OBSTACLE")
 
 
+def test_a_bad_obstacle_value_is_taken_as_none_and_an_iterator_is_read_once():
+    world = v6([], noise=0.0, **ON)
+    world.step()
+    core, tr = world.core, world.core.traffic
+    m = tr._missions["pinky1"]
+    core.on_robot_state("pinky1", m.x, m.y, 0.0, "IDLE", obstacle=1)
+    assert m.obstacle is None
+    core.on_robot_state("pinky1", m.x, m.y, 0.0, "BLOCKED", obstacle=iter([1.0, 0.4, 0.05]))
+    assert m.obstacle == (1.0, 0.4, 0.05)
+
+
 @pytest.mark.parametrize("place", [EAST, SOUTH_WEST])
 def test_with_the_switch_off_reported_places_change_nothing(place):
     told = run(v6([obj(*place)]), 120.0)

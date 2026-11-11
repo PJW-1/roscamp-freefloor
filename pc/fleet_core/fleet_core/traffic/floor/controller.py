@@ -101,6 +101,7 @@ FIRST_MOVE_WAIT_S = 5.0  # 자리가 가라앉지 않아도 이만큼 기다렸�
 STAND_REPORTS = 50  # 서 있는 로봇의 자리로 평균 낼 최근 보고 수(10 Hz면 5 s): 조금씩 밀린 로봇을 따라간다
 STAND_STILL_M = 0.001  # 서 있는 보고가 모두 이 안에 모이면 잡음이 없다: 모으지 않고 떠난다
 STAND_JUMP_M = 0.12  # 보고가 평균에서 이보다 멀면 로봇이 옮겨진 것으로 보고 평균을 다시 시작한다
+RAW_REPORTS = 10  # 막힘 표시가 비킬 몸: 최근 보고 이만큼(10 Hz면 1 s)
 MOVING_REPORTS = 5  # 달리는 로봇의 자리로 평균 낼 최근 보고 수(10 Hz, 0.15 m/s면 3 cm 뒤처진다)
 LAG_M = 0.15  # 평균 낸 자리가 진행점보다 이만큼까지 뒤처질 수 있다고 본다(진행점은 튄 보고로 앞서고 평균은 늦다)
 MOVING_JUMP_M = 0.2  # 달리는 로봇의 보고가 평균에서 이보다 멀면 평균을 다시 시작한다
@@ -297,6 +298,8 @@ class FloorController(TrafficController):
         self._unsettled: dict[str, float | None] = {}
         self._started: set[str] = set()  # 자리 잡은 뒤 MoveTo를 한 번이라도 받은 로봇
         self._recent: dict[str, deque] = {}  # 로봇 -> 달리는 동안의 최근 보고 자리
+        # 로봇 -> 최근 보고 자리 RAW_REPORTS개(튀어도 다시 시작하지 않는다): 막힘 표시가 몸을 비킨다
+        self._raw: dict[str, deque] = {}
         self._span_cache: dict[str, tuple] = {}  # 로봇 -> (경로, 나아간 칸 수, 칸별 시각표)
         self._cross_cache: dict = {}  # (로봇, 로봇) -> 엇갈림(시각표가 바뀌면 다시 구한다)
         # 물러나기(제안). 둘 다 꺼져 있으면 아래 것은 비어 있고 아무 데서도 쓰지 않는다
@@ -460,6 +463,7 @@ class FloorController(TrafficController):
     def _note_standing(self, m: _Mission) -> None:
         """보고 자리를 모은다. 서 있는 동안은 모두(평균에서 STAND_JUMP_M 넘게 튀면 다시),
         달리는 동안은 최근 MOVING_REPORTS개(MOVING_JUMP_M 넘게 튀면 다시)."""
+        self._raw.setdefault(m.name, deque(maxlen=RAW_REPORTS)).append((m.x, m.y))
         recent = self._recent.setdefault(m.name, deque(maxlen=MOVING_REPORTS))
         if not self._stands(m):
             self._stand.pop(m.name, None)
@@ -591,7 +595,7 @@ class FloorController(TrafficController):
         if m.robot_state in NOT_PLACEABLE:
             return
         # 새로 올린 로봇: 예전에 서 있던 자리와 달린 적을 잊는다(첫 출발을 다시 기다린다)
-        for memory in (self._stand, self._recent, self._unsettled):
+        for memory in (self._stand, self._recent, self._unsettled, self._raw):
             memory.pop(m.name, None)
         self._started.discard(m.name)
         cells = self._body_cells(m.x, m.y)
@@ -726,17 +730,21 @@ class FloorController(TrafficController):
 
     def _protected(self) -> set[str]:
         """막힘 표시가 가져가지 않을 칸: 지도에 오른 모든 로봇의 몸. 마지막 보고 자리 둘레 몸 반지름과,
-        평균 자리 둘레 몸 반지름 + 모은 보고가 평균에서 가장 멀리 벗어난 거리(잡음이 없으면 0).
-        다음 보고가 잡음만큼 튀어도 그 몸이 막힌 칸에 닿지 않는다."""
+        평균 자리(_here)와 최근 보고 RAW_REPORTS개의 평균 둘레로 몸 반지름 + 그 보고들이 평균에서
+        가장 멀리 벗어난 거리(잡음이 없고 서 있으면 0). 튄 보고 하나로 평균이 다시 시작해도 몸을
+        비킨다."""
         out = set()
         for r in self._missions.values():
             if not r.placed:
                 continue
-            here = self._here(r)
-            seen = self._stand.get(r.name) or self._recent.get(r.name) or ()
-            spread = max((math.dist(here, p) for p in seen), default=0.0)
             out |= self._body_cells(r.x, r.y)
-            out |= self._ids(disk_cells(self.floor, *here, self._body + spread))
+            for seen in (self._stand.get(r.name) or self._recent.get(r.name),
+                         self._raw.get(r.name)):
+                if not seen:
+                    continue
+                mean = self._mean(seen)
+                spread = max(math.dist(mean, p) for p in seen)
+                out |= self._ids(disk_cells(self.floor, *mean, self._body + spread))
         return out
 
     # ---- 물체 자리 보고(floor_obstacle_report, 제안) ----------------------------------------

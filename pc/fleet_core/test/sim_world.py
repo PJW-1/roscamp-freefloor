@@ -423,12 +423,13 @@ class SimWorld:
         물체(뒤나 옆)는 막지 않는다."""
         return bool(self._objects_ahead(r))
 
-    def _objects_ahead(self, r) -> list:
-        """_object_ahead가 보는 물체들 (x, y, 반지름)."""
+    def _objects_ahead(self, r, look=None) -> list:
+        """_object_ahead가 보는 물체들 (x, y, 반지름). look: 볼 거리(기본은 제동 거리)."""
         objects = self.objects_now()
         if not objects:
             return []
-        look = OBJECT_LOOK_M + r.speed * DT  # 다음 걸음이 물체를 건너뛰지 않는다
+        if look is None:
+            look = OBJECT_LOOK_M + r.speed * DT  # 다음 걸음이 물체를 건너뛰지 않는다
         if r.goal_kind == "move" and r.target is not None:
             line = [(r.x, r.y), *r.via, r.target]
         else:
@@ -677,13 +678,13 @@ class SimWorld:
                 self.core.on_robot_state(r.name, x, y, yaw, state, battery=level, **extra)
 
     def _object_seen(self, r):
-        """로봇이 본 물체 (x, y, 반지름): 갈 길 앞을 막는 물체(_objects_ahead), 없으면(후진 중)
-        몸에서 OBJECT_SEEN_M 안의 가장 가까운 지금 물체. 자리가 없는 막힘(blocked 고장)이나 끈
-        세계(report_obstacle)는 None(옛 로봇)."""
+        """로봇이 본 물체 (x, y, 반지름): 갈 길 OBJECT_SEEN_M 안에서 몸이 닿는 가장 가까운 물체
+        (후진해도 앞에 남는다). 앞에 물체가 없는 막힘(blocked 고장)이나 끈 세계(report_obstacle)는
+        None(옛 로봇)."""
         if not self.report_obstacle:
             return None
         best = None
-        for ox, oy, radius in self._objects_ahead(r) or self.objects_now():
+        for ox, oy, radius in self._objects_ahead(r, OBJECT_SEEN_M):
             gap = math.dist((ox, oy), (r.x, r.y)) - radius - self.params.robot_radius_m
             if gap <= OBJECT_SEEN_M and (best is None or gap < best[0]):
                 best = (gap, (ox, oy, radius))
