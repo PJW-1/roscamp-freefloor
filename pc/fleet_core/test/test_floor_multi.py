@@ -66,6 +66,8 @@ def _cycle_spans(monkeypatch):
 
         def counted_check(t):  # 관제가 순환을 보는 바로 그때 같은 그래프를 본다
             graph = wait_graph(traffic.zones)
+            for name, busy in traffic._line_waits().items():  # 접근선 차례 대기도 관제처럼 본다
+                graph.setdefault(name, set()).update(busy)
             graph.pop(BLOCK_OWNER, None)
             cycle = set(find_cycle(graph) or ())
             if now["since"] is not None and t - now["seen"] > 1.0:
