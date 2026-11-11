@@ -9,14 +9,13 @@ import hashlib
 import math
 from dataclasses import replace
 
-import compare_floor
 import pytest
 from fleet_core.common.commands import MoveCmd, RetreatCmd
 from fleet_core.common.params import load_params
 from fleet_core.traffic.floor.controller import _along
 from fleet_core.traffic.floor.planner import Route
 from floor_world import FloorWorld
-from test_floor_arena_v4 import LOCKS, THREE, scenario
+from test_floor_arena_v4 import LOCKS, THREE, compare_floor, scenario
 from test_sim_world_object import ONE, ORDER
 
 RETREAT_CODES = ("FLOOR_RETREAT_START", "FLOOR_RETREAT_DONE", "FLOOR_RETREAT_FAILED",
@@ -322,6 +321,46 @@ def test_corridor_members_back_one_at_a_time_from_the_rear_and_end_together(monk
     assert starts and ends
     assert all(not active and not behind for _, active, behind in starts), starts
     assert all(set(states.values()) == {"OUT"} for states in ends), ends
+
+
+def test_a_follower_whose_record_lags_after_a_report_gap_waits_until_it_catches_up(monkeypatch):
+    """보고가 끊겼다 돌아온 직후 통로 비우기가 시작되면, 뒤따르던 로봇의 진행점과 보낸 경로
+    기록은 로봇보다 뒤에 있다(진행점은 보고 한 번에 FOLLOW_AHEAD_M까지만 나아간다). 그때 로봇
+    자리에서 기록 끝까지 곧은 선으로 물러나지 않고, 기록이 따라잡은 뒤에 물러난다.
+    공통 설정의 앞 잠금(0.15 m)은 FOLLOW_AHEAD_M과 같아 보고 한 번에 따라잡으므로, pinky2가
+    떠날 때 기본값 0.5 m로 바꾼다."""
+    world = arena([obj(*MIDDLE, 20.0, 60.0)], robots=2, count=2, heartbeat_timeout_s=5.0,
+                  **CORRIDOR)
+    tr = world.core.traffic
+    real_state, real_step = world.core.on_robot_state, tr._corridor_step
+    gaps = {}  # 시각 -> pinky2 자리가 기록 끝을 넘은 거리
+
+    def on_state(robot, *a, **k):
+        if robot == "pinky2" and 41.5 <= world.t < 43.3:
+            return None  # 보고가 1.8 s 끊긴다(달리는 중)
+        return real_state(robot, *a, **k)
+
+    def corridor_step(m, back, now):
+        found = tr._foot(m)
+        if m.name == "pinky2" and found is not None:
+            record, s, _, off = found
+            gaps[round(now, 3)] = off if s >= record.length - 1e-6 else 0.0
+        return real_step(m, back, now)
+
+    monkeypatch.setattr(world.core, "on_robot_state", on_state)
+    monkeypatch.setattr(tr, "_corridor_step", corridor_step)
+    while world.t < 120.0:
+        world.step()
+        if abs(world.t - 40.0) < 1e-6:
+            tr.params = replace(tr.params, floor_lock_ahead_m=0.5)
+    (_, ev), = events(world, "FLOOR_CORRIDOR_CLEAR")[:1]
+    assert "'pinky2'" in ev.detail
+    assert max(gaps.values()) > 0.05, gaps  # 기록이 뒤처진 채 통로 비우기가 시작됐다
+    sent = [(t, c) for t, c in retreats(world) if c.robot == "pinky2"]
+    assert sent, "once the record caught up it backs out"
+    for t, _ in sent:
+        assert gaps[round(t, 3)] <= 0.05, (t, gaps[round(t, 3)])
+    assert not [ev for _, ev in events(world, "FLOOR_RETREAT_FAILED") if ev.robot == "pinky2"]
 
 
 def test_a_dropped_retreat_goal_keeps_its_cells(monkeypatch):
