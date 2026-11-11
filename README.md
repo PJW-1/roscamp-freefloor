@@ -6,6 +6,28 @@
 
 폴더 구조는 `04_GitHub_저장소_구성안.pdf`를 따릅니다. 인터페이스, 지도, 수치는 아직 팀 합의 전의 초안이며 작업공간 위치도 미정입니다.
 
+## 지금 상태 (2026-11-11 낮 통합 기준)
+
+아래 숫자는 가짜 로봇(머리 없는 실행)과 Gazebo에서 나온 것입니다. 실물 경기장 지도 `arena_v4`만 실물 핑키의 라이다 스캔으로 만들었습니다(`docs/실측_2026-11-10.md` 7절).
+
+- **교통 방식**: `traffic_mode`가 `lanes`(기본, 레인 관제) 또는 `freefloor`(자유바닥, `pc/fleet_core/fleet_core/traffic/floor`)입니다. 자유바닥은 넓은 바닥을 3 cm 칸 잠금과 자유 경로로 다니고, 좁은 통로와 도크 앞만 지도에 그린 고정 선으로 다닙니다.
+- **실물 경기장 지도**: `arena_v4`(벽 안쪽 1.98 x 0.99 m, 물체 4개). 서쪽 출고와 남동쪽 작업대를 8자로 한 방향으로 돕니다. Gazebo 시나리오는 `gz_arena_v4`, `gz_arena_v4_two`, `gz_arena_v4_slow_work`이고 실행 명령은 각 시나리오 파일 머리에 있습니다.
+- **기본으로 꺼 둔 기능**(`pc/fleet_core/fleet_core/data/fleet_params.yaml`):
+
+| 파라미터 | 켜면 | 꺼 둔 이유 |
+|---|---|---|
+| `floor_shortcut` | 지도에 그린 지름길을 탄다 | Gazebo 2판 모두 `arena_v4` 지름길 모퉁이를 돌다 물체 3 모서리에 걸렸다 |
+| `floor_junction_box` | 한 방향 선이 만나는 갈림길을 통째로 잡거나 그 앞에 선다 | 가운데 통로 잠금이 0.6 m쯤으로 길어진다. 켠 Gazebo 1판이 실패했고(다시 돌린 1판은 통과) 원인을 확정하지 못했다 |
+| `floor_block_retreat`, `floor_corridor_clear` | 막힌 로봇을 `Retreat`로 물러나게 한다(계약 0.9-draft, 팀 합의 전) | 관제 쪽은 Gazebo와 실물에서 돌린 적이 없다 |
+| `battery_low_pct`(0이면 끔) | 배터리가 낮은 로봇이 새 일을 받지 않고 대기 지점으로 간다 | 제안값, 실측 전 |
+
+- **Gazebo**(최종 코드, 구성마다 1판, 위 기능 모두 꺼짐): `gz_arena_v4` 8/8 출고 267.6 s, `gz_arena_v4_two` 10/10 384.8 s, `gz_arena_v4_slow_work` 8/8 297.0 s, `gz_arena_1110_random` 8/8 262.7 s. 네 판 모두 쥔 칸 밖 표본 0, 로봇 중심 최소 거리 0.25 m 이상입니다. 구성마다 1판이라 드물게 생기는 문제가 없다고는 말할 수 없습니다.
+- **시험**: `fleet_core` 1678, `fleet_manager` 101, `pinky_fsm` 208, `pinky_nav_config` 19, `fake_robots` 527, `fleet_gz_sim` 402 통과.
+- **`main`에 없는 것**: 브랜치 `twoway-on-main`(양방향 통로와 방향 표시, 새 지도 `arena_v4_twoway`). 머리 없는 96판은 기존 지도와 거의 같았고, Gazebo 2판 중 1판이 실패해 넣지 않았습니다. 기록은 그 브랜치의 `docs/worklog_freefloor_twoway_2026-11-11.md`에 있습니다.
+- **작업 기록**: `docs/worklog_freefloor_integrate_2026-11-11.md`(통합과 남은 일), `docs/worklog_freefloor_2026-11-11.md`(지름길, 출구선), `docs/worklog_freefloor_retreat_2026-11-11.md`(후진).
+
+아래 구조 설명과 시나리오 표는 레인 관제(`traffic_mode: lanes`) 기준으로 쓴 것입니다. 자유바닥의 실험 결과(11-09)는 `docs/freefloor/README.md`에 있습니다.
+
 FMS(fleet manager, RCS)는 핑키 플릿에 일을 나눠 주고(배분), 길을 정리하고(교통), 스테이션에 작업을 요청합니다(핸드셰이크). 팔의 동작 자체는 스테이션이 합니다. FMS는 프로세스 하나이고, 안에 `orders`와 `traffic` 두 모듈이 있습니다.
 
 ### 모듈 의존성 (누가 누구를 import하나)
