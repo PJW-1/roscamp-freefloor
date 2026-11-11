@@ -424,10 +424,11 @@ def test_switches_off_run_exactly_as_before(faults):
     assert "retreats" not in off.core.traffic.metrics
 
 
-# 이 기능 전 커밋(4a46878)에 교차 상자 브랜치(60cb528)를 합친 트리에서 같은 도우미로 잰 값.
-# 교차 상자가 기본 잠금을 바꾸므로 4a46878만의 값(0ddd4c4c, 989bb439, 39b8fe28)과는 다르다
+# 이 기능 전 커밋(4a46878)에 교차 상자 브랜치(60cb528)와 기본 동작을 바꾸는 두 수정(c5a4247
+# 주차 칸, 19bf1ac 첫 자리)을 합친 트리에서 같은 도우미로 잰 값. 4a46878만의 값(0ddd4c4c,
+# 989bb439, 39b8fe28)과 다르고, 두 수정 전에는 middle이 7b1b382a였다
 BASE_DIGESTS = {
-    "none": "eb0d63e9f751a702", "middle": "7b1b382a99108c0b", "no_fork": "a726b74ef551b9e0",
+    "none": "eb0d63e9f751a702", "middle": "5a512c1e5fd25c50", "no_fork": "a726b74ef551b9e0",
 }
 
 
