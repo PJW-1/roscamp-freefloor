@@ -267,24 +267,26 @@ def test_a_way_against_a_held_one_way_line_is_not_taken(monkeypatch):
 
 
 def test_the_front_robot_alone_backs_out_of_the_corridor_at_once():
-    world = run(arena([obj(*MIDDLE, 20.0, 60.0)], robots=2, count=2, **CORRIDOR), 400.0)
+    # 교차 상자 규칙에서는 물체가 40 s에 나타날 때 통로에 한 대(pinky2)만 있다
+    world = run(arena([obj(*MIDDLE, 40.0, 60.0)], robots=2, count=2, **CORRIDOR), 400.0)
     (t_mark, _), = events(world, "FLOOR_BLOCKED")[:1]
     (t_cc, ev), = events(world, "FLOOR_CORRIDOR_CLEAR")
     assert t_cc - t_mark < 0.5, "a corridor does not wait floor_retreat_after_s"
-    assert ev.level == "INFO" and "['pinky1']" in ev.detail
+    assert ev.level == "INFO" and "['pinky2']" in ev.detail
     (t_r, cmd), = retreats(world)[:1]
-    assert cmd.robot == "pinky1" and cmd.distance_m <= world.core.traffic.params.floor_retreat_max_m
+    assert cmd.robot == "pinky2" and cmd.distance_m <= world.core.traffic.params.floor_retreat_max_m
     cleared = [t for t, ev in events(world, "FLOOR_CLEARED") if "planning again" in ev.detail]
     assert cleared
     assert shipped(world) == 2 and world.min_gap > 0.2 and world.min_object_gap > 0.0
 
 
 def test_two_robots_in_the_corridor_back_out_rear_first():
-    world = run(arena([obj(*MIDDLE, 40.0, 60.0)], robots=2, count=2, **CORRIDOR), 400.0)
+    # 교차 상자 규칙에서는 물체가 20 s에 나타날 때 둘이 통로에 있다(pinky2가 뒤)
+    world = run(arena([obj(*MIDDLE, 20.0, 60.0)], robots=2, count=2, **CORRIDOR), 400.0)
     (_, ev), = events(world, "FLOOR_CORRIDOR_CLEAR")
-    assert "['pinky1', 'pinky2']" in ev.detail  # 뒤에서부터
+    assert "['pinky2', 'pinky1']" in ev.detail  # 뒤에서부터
     order = [c.robot for _, c in retreats(world)]
-    assert order[:2] == ["pinky1", "pinky2"]
+    assert order[:2] == ["pinky2", "pinky1"]
     starts = [t for t, ev in events(world, "FLOOR_RETREAT_START")]
     dones = [t for t, ev in events(world, "FLOOR_RETREAT_DONE")]
     assert dones[0] <= starts[1], "the front robot waits until the one behind has moved"
@@ -344,6 +346,24 @@ def test_a_dropped_retreat_goal_keeps_its_cells(monkeypatch):
     assert not tr._back["pinky1"].cells
 
 
+def test_a_lost_retreat_goal_keeps_its_cells():
+    """결과를 잃은 Retreat(LOST)는 로봇이 섰는지 모른다: 물러날 칸을 놓지 않는다."""
+    world = arena([obj(*MIDDLE, 0.0, 300.0)], **SOLO)
+    tr = world.core.traffic
+    while not retreats(world) and world.t < 120.0:
+        world.step()
+    way = set(tr._back["pinky1"].cells)
+    (_, cmd), = retreats(world)
+    assert way
+    world.core.on_goal_lost("pinky1", cmd.goal_id)
+    assert way <= set(tr._back["pinky1"].cells)
+    for _ in range(5):
+        world.step()
+    assert way <= tr.zones.held_set("pinky1")
+    world.core.on_retreat_result("pinky1", cmd.goal_id, False, "CANCELED")  # 늦게 온 결과: 섰다
+    assert not tr._back["pinky1"].cells
+
+
 def test_with_both_switches_on_the_corridor_rule_decides_on_a_line():
     both = run(arena([obj(*MIDDLE, 20.0, 60.0)], robots=2, count=2, **CORRIDOR, **SOLO), 400.0)
     alone = run(arena([obj(*MIDDLE, 20.0, 60.0)], robots=2, count=2, **CORRIDOR), 400.0)
@@ -365,8 +385,10 @@ def test_switches_off_run_exactly_as_before(faults):
     assert "retreats" not in off.core.traffic.metrics
 
 
-BASE_DIGESTS = {  # 4a46878(이 기능 전)에서 같은 도우미로 잰 값
-    "none": "0ddd4c4cfbc66ee5", "middle": "989bb439a631ebc3", "no_fork": "39b8fe2815672dc7",
+# 이 기능 전 커밋(4a46878)에 교차 상자 브랜치(60cb528)를 합친 트리에서 같은 도우미로 잰 값.
+# 교차 상자가 기본 잠금을 바꾸므로 4a46878만의 값(0ddd4c4c, 989bb439, 39b8fe28)과는 다르다
+BASE_DIGESTS = {
+    "none": "eb0d63e9f751a702", "middle": "7b1b382a99108c0b", "no_fork": "a726b74ef551b9e0",
 }
 
 

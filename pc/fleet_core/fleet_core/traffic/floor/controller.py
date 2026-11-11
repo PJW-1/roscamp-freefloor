@@ -2381,7 +2381,8 @@ class FloorController(TrafficController):
         for k, (x, y) in enumerate(way):
             a, b = (way[k + 1], way[k]) if k + 1 < len(way) else (way[k], way[k - 1])
             poses.append((x, y, math.atan2(b[1] - a[1], b[0] - a[0])))  # 보는 방향(가는 쪽 반대)
-        distance = sum(math.dist(a, b) for a, b in zip(way, way[1:], strict=False))
+        # 구간 길이를 더한 값이 한도를 소수 끝자리만큼 넘지 않게 한다(1.0000000000000002 m)
+        distance = round(sum(math.dist(a, b) for a, b in zip(way, way[1:], strict=False)), 6)
         goal_id = self._next_goal_id()
         m.goal = _Goal(RETREAT, goal_id)
         self._out.append(RetreatCmd(m.name, goal_id, distance,
@@ -2395,8 +2396,9 @@ class FloorController(TrafficController):
     def on_retreat_result(self, robot, goal_id, success, reason="") -> None:
         m = self._missions.get(robot)
         back = self._back.get(robot)
-        if back is not None and back.goal_id == goal_id:
+        if back is not None and back.goal_id == goal_id and reason != "LOST":
             back.cells, back.goal_id = frozenset(), None  # 로봇이 섰다: 물러날 칸이 더 필요 없다
+        # LOST는 섰는지 모른다: 칸을 그대로 쥔다. 늦은 결과, 다음 Retreat, 일의 끝에서 놓는다
         if m is None or m.goal is None or m.goal.id != goal_id or m.goal.kind != RETREAT:
             return
         m.goal = None
