@@ -117,6 +117,10 @@ FOOT_LOOK_M = 0.5  # 로봇 자리를 지나온 길 끝 이만큼 안에서 찾�
 TRAIL_STEP_M = 0.02  # 보낸 경로 기록에 진행점을 이만큼마다 적는다
 BACK_DONE_M = 0.02  # 통로: 설 곳까지 이만큼 안이면 다 물러났다
 RETREAT_TRIES = 2  # 통로: Retreat가 잇달아 이만큼 실패하면 그 자리에서 나온 것으로 친다
+# 통로: 로봇 자리가 기록 끝을 이만큼 넘으면 기록이 뒤처졌다(보고 끊김 뒤). 곧은 선을 짓지 않고
+# 따라잡을 때까지 기다린다. 기록 간격(TRAIL_STEP_M)과 평균 자리의 잡음보다 크고, 이 길이의 곧은
+# 선은 꺾인 길에서 칸 여유(cell_margin_m 0.03 m)만큼도 벗어나지 않는다
+STALE_TRAIL_M = 0.05
 SOLO, CORRIDOR = "solo", "corridor"
 SEARCH, BACKING, REROUTED, HOLD, TURN, OUT = (
     "SEARCH", "BACKING", "REROUTED", "HOLD", "TURN", "OUT")
@@ -2471,7 +2475,7 @@ class FloorController(TrafficController):
             self._cancel_goal(r)
         leg = self._legs[name]
         if leg.route is not None:
-            leg.s_lock = leg.s_sent = leg.s
+            leg.s_lock = leg.s  # 보낸 끝은 둔다: 뒤처진 진행점과 기록이 로봇을 따라잡게
         self.zones.cancel_all_requests(name)
         self._back[name] = _Back(CORRIDOR, TURN, owner, line=line)
 
@@ -2524,12 +2528,25 @@ class FloorController(TrafficController):
                 back.state, back.out_at, back.wait_since = OUT, now, None
             return
         self._trim_mark(m)
+        if back.target is None:
+            self._set_targets(back.owner)  # 기록을 따라잡은 뒤 설 곳을 다시 정한다
         found = self._foot(m)
         if found is None or back.target is None:
             self._back_fail(m, back, "no record of the way it came to back along")
             back.state, back.out_at = OUT, now  # 다시 해도 같다: 그 자리를 끝으로 친다
             return
         record, s, here, off = found
+        if not back.retreated and s >= record.length - AT_END_M and off > STALE_TRAIL_M:
+            # 기록이 로봇보다 뒤에 있다: 따라잡을 때까지 물러나지 않는다(설 곳은 그 뒤 다시 정한다)
+            back.target = None
+            if back.wait_since is None:
+                back.wait_since = now
+            elif now - back.wait_since >= self.params.floor_retreat_after_s:
+                self._event("WARN", "FLOOR_RETREAT_FAILED",
+                            f"the record of its way stays {off:.2f} m behind it for "
+                            f"{self.params.floor_retreat_after_s:.0f} s: stays where it is", m.name)
+                back.state, back.out_at, back.wait_since = OUT, now, None
+            return
         left = s - back.target
         if left <= BACK_DONE_M:
             back.state, back.out_at = OUT, now
